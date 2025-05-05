@@ -1,4 +1,5 @@
 #include "display_handler.h"
+#include "battery.h" // Include battery functions
 #include "config.h"
 #include "system_info.h" // Include global system info
 #include <Arduino.h>     // For Serial
@@ -151,11 +152,17 @@ void updateDisplay() {
   // Line 8: Battery (Placeholder) - Bottom right corner
   String battLabel = "Bat:";
   String battValueStr;
-  if (gSystemInfo.batteryLevel >= 0.0f) {
-    snprintf(buffer, sizeof(buffer), "%.1f",
-             gSystemInfo.batteryLevel); // Use snprintf
-    battValueStr = buffer;              // Assuming it's percentage or voltage
-                           // battValueStr += "%"; // Add unit if needed
+  if (gSystemInfo.batteryVoltage >= 0.0f) {
+    snprintf(buffer, sizeof(buffer), "%.2f",
+             gSystemInfo.batteryVoltage); // Use snprintf
+    battValueStr = buffer;                // Assuming it's percentage or voltage
+    battValueStr += "V";                  // Add unit if needed
+    battValueStr += "/";
+    snprintf(buffer, sizeof(buffer), "%.0f",
+             estimateBatteryLevel(gSystemInfo.batteryVoltage *
+                                  1000)); // Use snprintf
+    battValueStr += buffer;               // Append battery level
+    battValueStr += "%";                  // Add percentage sign
   } else {
     battValueStr = "N/A";
   }

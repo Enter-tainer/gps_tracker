@@ -27,7 +27,7 @@ struct SystemInfo {
   bool dateTimeValid = false;
 
   // System Status
-  float batteryLevel = -1.0f;  // Percentage or voltage, -1.0 indicates N/A
+  float batteryVoltage = -1.0f; // voltage, -1.0 indicates N/A
   GpsState gpsState = GPS_OFF; // Current state of the GPS module
   // String gpsStatusText = "OFF"; // Removed - will be generated in display
   // handler

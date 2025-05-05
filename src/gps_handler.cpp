@@ -117,7 +117,8 @@ void handleGPS() {
   switch (gSystemInfo.gpsState) { // Use global state
   case GPS_OFF:
     // Check if it's time to start a new fix attempt
-    if (now - lastFixAttemptTime >= GPS_FIX_INTERVAL) {
+    if (now - lastFixAttemptTime >= GPS_FIX_INTERVAL ||
+        lastFixAttemptTime == 0) {
       Serial.println("Starting GPS fix attempt...");
       powerOnGPS();
       lastFixAttemptTime = now;  // Record the start time of this attempt cycle

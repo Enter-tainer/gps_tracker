@@ -1,4 +1,5 @@
 #include "Adafruit_TinyUSB.h" // Keep for Serial
+#include "battery.h"          // Include battery functions
 #include "button_handler.h"
 #include "config.h"
 #include "display_handler.h"
@@ -43,6 +44,9 @@ void setup() {
   // Initialize Button
   initButton();
 
+  // Initialize Battery (if needed)
+  initBattery();
+
   // No initial GPS message here, handleGPS will manage it.
   Serial.println("Setup Complete. Entering loop.");
 }
@@ -53,6 +57,7 @@ void loop() {
   handleGPS();    // Call GPS handler (updates gSystemInfo)
   handleButton(); // Call Button handler (could potentially update gSystemInfo
                   // in the future)
+  handleBattery();
 
   // Periodically update the display from gSystemInfo
   if (now - lastDisplayUpdateTime >= DISPLAY_UPDATE_INTERVAL_MS) {
