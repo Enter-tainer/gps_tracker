@@ -1,13 +1,15 @@
 #include "gps_handler.h"
 #include "config.h"
-#include "display_handler.h" // Need displayInfo
+// #include "display_handler.h" // No longer needed here
+#include "system_info.h" // Include the new header
 #include <Arduino.h>
 
 // Define GPS objects and state variables
 TinyGPSPlus gps;
 HardwareSerial &gpsSerial = GPS_SERIAL; // Use definition from config.h
-unsigned long lastGpsDisplayUpdate = 0;
-GpsState currentGpsState = GPS_OFF;   // Start with GPS off
+// unsigned long lastGpsDisplayUpdate = 0; // Removed - display updated
+// centrally GpsState currentGpsState = GPS_OFF; // State now managed in
+// gSystemInfo
 unsigned long lastFixAttemptTime = 0; // Initialize to 0
 unsigned long currentFixStartTime = 0;
 
@@ -33,6 +35,7 @@ void powerOffGPS() {
 #endif
   // Reset GPS data when turning off to avoid showing stale data
   gps = TinyGPSPlus();
+  // Also reset relevant fields in gSystemInfo
 }
 
 // Function to initialize GPS communication and power pin
@@ -47,93 +50,71 @@ void initGPS() {
   Serial.println(
       "Warning: PIN_GPS_EN not defined. GPS power control disabled.");
 #endif
-  // Set lastFixAttemptTime initially so the first attempt starts after
-  // GPS_FIX_INTERVAL We subtract the interval so the first check passes
-  // immediately in the loop if needed, or simply set to 0 to wait for the first
-  // interval. Let's wait.
+  gSystemInfo.gpsState = GPS_OFF; // Set initial state in global struct
   lastFixAttemptTime = millis();
   Serial.println("GPS Handler Initialized. Waiting for first fix interval.");
 }
 
-// Function to populate GpsInfo struct
-void populateGpsInfo(TinyGPSPlus &gpsData, GpsInfo &info) {
-  info.locationValid = gpsData.location.isValid();
-  if (info.locationValid) {
-    info.latitude = String(gpsData.location.lat(), 6);
-    info.longitude = String(gpsData.location.lng(), 6);
-    info.satellites = String(gpsData.satellites.value());
-    info.altitude = String(gpsData.altitude.meters()) + "m";
+// Function to update the global gSystemInfo struct from TinyGPSPlus data
+void updateGpsSystemInfo(TinyGPSPlus &gpsData) {
+  gSystemInfo.locationValid = gpsData.location.isValid();
+  if (gSystemInfo.locationValid) {
+    gSystemInfo.latitude = gpsData.location.lat();       // Store as double
+    gSystemInfo.longitude = gpsData.location.lng();      // Store as double
+    gSystemInfo.satellites = gpsData.satellites.value(); // Store as uint32_t
+    gSystemInfo.altitude = gpsData.altitude.meters();    // Store as float
   } else {
-    info.latitude = "N/A";
-    info.longitude = "N/A";
-    info.satellites = "N/A";
-    info.altitude = "N/A";
+    // Reset numerical values if location is invalid
+    gSystemInfo.latitude = 0.0;
+    gSystemInfo.longitude = 0.0;
+    gSystemInfo.satellites =
+        gpsData.satellites.isValid() ? gpsData.satellites.value() : 0;
+    gSystemInfo.altitude = 0.0f;
   }
 
   if (gpsData.hdop.isValid()) {
-    info.hdop = String(gpsData.hdop.value() / 100.0, 1);
+    gSystemInfo.hdop = gpsData.hdop.value() / 100.0f; // Store as float
   } else {
-    info.hdop = "N/A";
+    gSystemInfo.hdop = 99.9f; // Use a default invalid value
   }
 
   if (gpsData.speed.isValid()) {
-    info.speed = String(gpsData.speed.kmph(), 1) + "km/h";
+    gSystemInfo.speed = gpsData.speed.kmph(); // Store as float
   } else {
-    info.speed = "N/A";
+    gSystemInfo.speed = -1.0f; // Use -1.0 to indicate invalid speed
   }
 
   if (gpsData.course.isValid()) {
-    info.course = String(gpsData.course.deg(), 1);
+    gSystemInfo.course = gpsData.course.deg(); // Store as float
   } else {
-    info.course = "N/A";
+    gSystemInfo.course = -1.0f; // Use -1.0 to indicate invalid course
   }
 
-  info.dateTimeValid = gpsData.date.isValid() && gpsData.time.isValid();
-  if (info.dateTimeValid) {
-    info.date = String(gpsData.date.year()) + "-" +
-                String(gpsData.date.month()) + "-" + String(gpsData.date.day());
-    // Format time with leading zeros if needed (optional)
-    char timeBuffer[9];
-    snprintf(timeBuffer, sizeof(timeBuffer), "%02d:%02d:%02d",
-             gpsData.time.hour(), gpsData.time.minute(), gpsData.time.second());
-    info.time = String(timeBuffer);
+  gSystemInfo.dateTimeValid = gpsData.date.isValid() && gpsData.time.isValid();
+  if (gSystemInfo.dateTimeValid) {
+    gSystemInfo.year = gpsData.date.year();
+    gSystemInfo.month = gpsData.date.month();
+    gSystemInfo.day = gpsData.date.day();
+    gSystemInfo.hour = gpsData.time.hour();
+    gSystemInfo.minute = gpsData.time.minute();
+    gSystemInfo.second = gpsData.time.second();
   } else {
-    info.date = "N/A";
-    info.time = "N/A";
+    // Reset date/time values if invalid
+    gSystemInfo.year = 0;
+    gSystemInfo.month = 0;
+    gSystemInfo.day = 0;
+    gSystemInfo.hour = 0;
+    gSystemInfo.minute = 0;
+    gSystemInfo.second = 0;
   }
 }
 
-// Function to format GpsInfo into display lines
-int formatGpsInfoLines(const GpsInfo &info, String lines[], int maxLines) {
-  int lineCount = 0;
-
-  if (lineCount < maxLines)
-    lines[lineCount++] = "Lat: " + info.latitude;
-  if (lineCount < maxLines)
-    lines[lineCount++] = "Lng: " + info.longitude;
-  // Combine Sats and Alt
-  if (lineCount < maxLines)
-    lines[lineCount++] = "Sats:" + info.satellites + " Alt:" + info.altitude;
-  if (lineCount < maxLines)
-    lines[lineCount++] = "HDOP: " + info.hdop;
-  if (lineCount < maxLines)
-    lines[lineCount++] = "Spd: " + info.speed;
-  if (lineCount < maxLines)
-    lines[lineCount++] = "Course: " + info.course;
-  if (lineCount < maxLines)
-    lines[lineCount++] = "Date: " + info.date;
-  if (lineCount < maxLines)
-    lines[lineCount++] = "Time: " + info.time;
-
-  return lineCount;
-}
-
-// Function to handle GPS state, data reading, parsing, power, and display
-// update
+// Function to handle GPS state, data reading, parsing, power, and updating
+// gSystemInfo
 void handleGPS() {
   unsigned long now = millis();
 
-  switch (currentGpsState) {
+  switch (gSystemInfo.gpsState) { // Use global state
   case GPS_OFF:
     // Check if it's time to start a new fix attempt
     if (now - lastFixAttemptTime >= GPS_FIX_INTERVAL) {
@@ -141,18 +122,16 @@ void handleGPS() {
       powerOnGPS();
       lastFixAttemptTime = now;  // Record the start time of this attempt cycle
       currentFixStartTime = now; // Record when the GPS was actually turned on
-      currentGpsState = GPS_WAITING_FIX;
-      // Display searching message immediately
-      String searchingMsg[] = {"Searching for", "GPS signal..."};
-      displayInfo(searchingMsg, 2);
-      lastGpsDisplayUpdate = now; // Update display time
+      gSystemInfo.gpsState = GPS_WAITING_FIX; // Update global state
     }
     break;
 
-  case GPS_WAITING_FIX:
-    // Process available GPS data while powered on
+  case GPS_WAITING_FIX: { // Process available GPS data while powered on
     while (gpsSerial.available() > 0) {
-      gps.encode(gpsSerial.read());
+      if (gps.encode(gpsSerial.read())) {
+        // A new sentence was parsed, update system info immediately
+        updateGpsSystemInfo(gps);
+      }
     }
 
     // Check if we have a valid location, date, AND time fix
@@ -162,78 +141,69 @@ void handleGPS() {
     bool minTimeElapsed = (now - currentFixStartTime >= GPS_MIN_POWER_ON_TIME);
 
     if (fullFix) {
-      // We have a fix, update display regardless of min time
-      // Check if it's time to update the display based on interval or if it's
-      // the first fix display
-      if (now - lastGpsDisplayUpdate > GPS_DISPLAY_INTERVAL ||
-          currentGpsState == GPS_WAITING_FIX /* Force update on first fix */) {
-        Serial.println("GPS Full Fix Acquired (Location, Date, Time)!");
-        GpsInfo currentGpsInfo;
-        populateGpsInfo(gps, currentGpsInfo); // Populate the struct
-
-        const int MAX_GPS_LINES = 8;
-        String gpsLines[MAX_GPS_LINES];
-        int lineCount =
-            formatGpsInfoLines(currentGpsInfo, gpsLines, MAX_GPS_LINES);
-
-        displayInfo(gpsLines, lineCount); // Display the formatted lines
-        lastGpsDisplayUpdate = now;
-      }
+      // We have a full fix. Update state. Display handled in main loop.
+      gSystemInfo.gpsState = GPS_FIX_ACQUIRED; // Update state
+      Serial.println("GPS Full Fix Acquired (Location, Date, Time)!");
+      // Update system info one last time for this fix cycle
+      updateGpsSystemInfo(gps);
 
       // Now check if we can power off (fix acquired AND min time elapsed)
       if (minTimeElapsed) {
         Serial.println("Minimum power on time elapsed. Turning GPS OFF.");
-        powerOffGPS();             // Turn GPS off
-        currentGpsState = GPS_OFF; // Go back to idle state
-      } else {
-        // Keep GPS ON, waiting for minimum power on time to pass
-        // Serial.println("Fix acquired, but waiting for min power on time.");
-        // // Optional debug message
+        powerOffGPS(); // Turn GPS off (also resets gps object and info)
+        gSystemInfo.gpsState = GPS_OFF; // Go back to idle state
       }
 
     } else if (now - currentFixStartTime >= GPS_FIX_ATTEMPT_TIMEOUT) {
       // Timeout waiting for a fix in this attempt
       Serial.println("GPS fix attempt timed out.");
-      // Display timeout message along with any partial data
-      GpsInfo currentGpsInfo;
-      populateGpsInfo(gps,
-                      currentGpsInfo); // Populate with potentially partial data
+      // Update system info with whatever partial data we might have
+      updateGpsSystemInfo(gps);
 
-      const int MAX_GPS_LINES = 8;
-      String gpsLines[MAX_GPS_LINES];
-      gpsLines[0] = "GPS Timeout";
-      int lineCount = 1;
-      if (currentGpsInfo.locationValid) {
-        gpsLines[lineCount++] = "Lat: " + currentGpsInfo.latitude;
-        gpsLines[lineCount++] = "Lng: " + currentGpsInfo.longitude;
-      } else {
-        gpsLines[lineCount++] = "(No Fix)";
-      }
-      // Optionally add time/date if they became valid just before timeout
-      if (currentGpsInfo.dateTimeValid) {
-        if (lineCount < MAX_GPS_LINES)
-          gpsLines[lineCount++] = "Time: " + currentGpsInfo.time;
-      }
-
-      displayInfo(gpsLines, lineCount);
-      lastGpsDisplayUpdate = now; // Update display time
-
-      powerOffGPS();             // Turn GPS off on timeout
-      currentGpsState = GPS_OFF; // Go back to idle state
+      powerOffGPS(); // Turn GPS off on timeout (also resets gps object and
+                     // info)
+      gSystemInfo.gpsState = GPS_OFF; // Go back to idle state
 
     } else {
       // Still waiting for fix or minimum power on time, no timeout yet.
-      // Update display periodically to show "Searching..."
-      if (now - lastGpsDisplayUpdate > GPS_DISPLAY_INTERVAL) {
-        String searchingMsg[] = {"Searching...",
-                                 "Satellites: " +
-                                     (gps.satellites.isValid()
-                                          ? String(gps.satellites.value())
-                                          : "N/A")};
-        displayInfo(searchingMsg, 2);
-        lastGpsDisplayUpdate = now;
+      // Update system info continuously as data comes in (done in gps.encode
+      // loop) Display update handled in main loop
+      if (gSystemInfo.gpsState != GPS_WAITING_FIX) {
+        gSystemInfo.gpsState = GPS_WAITING_FIX;
       }
     }
     break;
+  }
+  case GPS_FIX_ACQUIRED:
+    // GPS has a fix, but we might still be waiting for min power on time
+    // Process available GPS data to keep info fresh
+    while (gpsSerial.available() > 0) {
+      if (gps.encode(gpsSerial.read())) {
+        updateGpsSystemInfo(gps);
+      }
+    }
+
+    // Check if minimum power on time has elapsed
+    bool minTimeElapsedAfterFix =
+        (now - currentFixStartTime >= GPS_MIN_POWER_ON_TIME);
+    if (minTimeElapsedAfterFix) {
+      Serial.println(
+          "Minimum power on time elapsed after fix. Turning GPS OFF.");
+      powerOffGPS(); // Turn GPS off (also resets gps object and info)
+      gSystemInfo.gpsState = GPS_OFF; // Go back to idle state
+    }
+    // Otherwise, just stay in this state, keep updating data, display handled
+    // in main loop
+    break;
+  }
+  // Process serial data regardless of state if GPS is potentially on
+  // (WAITING_FIX or FIX_ACQUIRED)
+  if (gSystemInfo.gpsState == GPS_WAITING_FIX ||
+      gSystemInfo.gpsState == GPS_FIX_ACQUIRED) {
+    while (gpsSerial.available() > 0) {
+      if (gps.encode(gpsSerial.read())) {
+        updateGpsSystemInfo(gps);
+      }
+    }
   }
 }

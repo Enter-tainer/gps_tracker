@@ -3,8 +3,17 @@
 #include "config.h"
 #include "display_handler.h"
 #include "gps_handler.h"
+#include "system_info.h" // Include system info
 #include <Arduino.h>
 #include <Wire.h> // Keep for Wire.begin()
+
+// Define the global SystemInfo instance
+SystemInfo gSystemInfo;
+
+// Display update timing
+unsigned long lastDisplayUpdateTime = 0;
+const unsigned long DISPLAY_UPDATE_INTERVAL_MS =
+    33; // Update display every 1 second
 
 void setup() {
   // Initialize Serial communication (for debugging)
@@ -19,14 +28,16 @@ void setup() {
   // Initialize Display
   if (initDisplay()) {
     // Display initialized successfully
-    String bootMessage[] = {"GPS Tracker", "Initializing..."};
-    displayInfo(bootMessage, 1); // Show a simple boot message
+    // String bootMessage[] = {"GPS Tracker", "Initializing..."}; // Removed
+    // displayInfo(bootMessage, 1); // Removed - updateDisplay will handle it
+    updateDisplay(); // Show initial empty/default state from gSystemInfo
+    lastDisplayUpdateTime = millis(); // Set initial time
   } else {
     // Handle display initialization failure (e.g., continue without display)
     Serial.println("Display Init Failed!");
   }
 
-  // Initialize GPS (will start in OFF state)
+  // Initialize GPS (will start in OFF state and update gSystemInfo)
   initGPS();
 
   // Initialize Button
@@ -37,10 +48,20 @@ void setup() {
 }
 
 void loop() {
-  handleGPS();    // Call GPS handler (manages state, power, timing)
-  handleButton(); // Call Button handler
+  unsigned long now = millis();
+
+  handleGPS();    // Call GPS handler (updates gSystemInfo)
+  handleButton(); // Call Button handler (could potentially update gSystemInfo
+                  // in the future)
+
+  // Periodically update the display from gSystemInfo
+  if (now - lastDisplayUpdateTime >= DISPLAY_UPDATE_INTERVAL_MS) {
+    updateDisplay();
+    lastDisplayUpdateTime = now;
+  }
 
   // The loop runs as fast as possible.
   // handleGPS and handleButton are designed to be non-blocking.
   // Power saving is achieved by turning the GPS module off in handleGPS.
+  // Display updates are now throttled.
 }

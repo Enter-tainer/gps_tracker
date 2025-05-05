@@ -29,7 +29,7 @@ const unsigned long HOLD_DURATION = 50;  // Required hold duration in ms
 const unsigned long GPS_FIX_INTERVAL =
     10000; // Interval between GPS fix attempts (10 seconds in ms)
 const unsigned long GPS_FIX_ATTEMPT_TIMEOUT =
-    5000; // Max time to wait for a fix within an attempt (5 seconds in ms)
+    30000; // Max time to wait for a fix within an attempt (30 seconds in ms)
 const unsigned long GPS_MIN_POWER_ON_TIME =
     1000; // Minimum time GPS stays powered on after starting an attempt (1
           // second in ms)

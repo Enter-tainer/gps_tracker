@@ -1,6 +1,7 @@
 #ifndef DISPLAY_HANDLER_H
 #define DISPLAY_HANDLER_H
 
+#include "system_info.h" // Include system info definition
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <Arduino.h>
@@ -12,7 +13,7 @@ extern Adafruit_SSD1306 display;
 // Function to initialize the display
 bool initDisplay();
 
-// Helper function to print multiple lines to OLED and Serial
-void displayInfo(const String lines[], int numLines);
+// Function Prototypes
+void updateDisplay(); // New function to render gSystemInfo
 
 #endif // DISPLAY_HANDLER_H

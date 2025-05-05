@@ -26,17 +26,7 @@ void initButton() {
 
 // --- Button Action Handler ---
 // This function is called when a valid button hold is detected.
-void onButtonHeld() {
-  Serial.println("Button Held Action Triggered!");
-  String btnMsg[] = {"Button Held!"};
-  displayInfo(btnMsg, 1);
-  delay(500); // Show message briefly (consider making this non-blocking if
-              // needed)
-  lastGpsDisplayUpdate = 0; // Force GPS display update after button message
-  // ----------------------------------------
-}
-// ---------------------------\
-
+void onButtonHeld() { Serial.println("Button Held Action Triggered!"); }
 
 // Function to handle button press with debounce and hold duration requirement
 void handleButton() {
