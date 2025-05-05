@@ -21,13 +21,27 @@ struct GpsInfo {
 };
 // -----------------------
 
+// GPS State Machine
+enum GpsState { GPS_OFF, GPS_WAITING_FIX };
+
 // Declare GPS objects (defined in cpp)
 extern TinyGPSPlus gps;
 extern HardwareSerial &gpsSerial;
 extern unsigned long lastGpsDisplayUpdate; // Keep track of last update time
+extern GpsState currentGpsState;           // Current state of the GPS handler
+extern unsigned long
+    lastFixAttemptTime; // Time the last fix attempt was started
+extern unsigned long currentFixStartTime; // Time the current fix attempt
+                                          // started (when GPS was powered on)
 
 // Function to initialize GPS communication
 void initGPS();
+
+// Function to explicitly power on the GPS module
+void powerOnGPS();
+
+// Function to explicitly power off the GPS module
+void powerOffGPS();
 
 // Function to populate GpsInfo struct
 void populateGpsInfo(TinyGPSPlus &gpsData, GpsInfo &info);

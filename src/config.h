@@ -25,9 +25,18 @@ const unsigned long GPS_NO_FIX_MSG_INTERVAL =
 const unsigned long DEBOUNCE_DELAY = 50; // Debounce time in milliseconds
 const unsigned long HOLD_DURATION = 50;  // Required hold duration in ms
 
-// Optional: GPS Power Enable Pin (if used)
-// #define PIN_GPS_EN YOUR_GPS_ENABLE_PIN
-// #define GPS_POWER_TOGGLE // Uncomment if power needs toggling (LOW->HIGH)
-// instead of just HIGH
+// GPS Power and Timing Settings
+const unsigned long GPS_FIX_INTERVAL =
+    10000; // Interval between GPS fix attempts (10 seconds in ms)
+const unsigned long GPS_FIX_ATTEMPT_TIMEOUT =
+    5000; // Max time to wait for a fix within an attempt (5 seconds in ms)
+const unsigned long GPS_MIN_POWER_ON_TIME =
+    1000; // Minimum time GPS stays powered on after starting an attempt (1
+          // second in ms)
+
+// Optional: GPS Power Enable Pin (if used) - Commented out as we define
+// PIN_GPS_EN above #define PIN_GPS_EN YOUR_GPS_ENABLE_PIN #define
+// GPS_POWER_TOGGLE // Uncomment if power needs toggling (LOW->HIGH) instead of
+// just HIGH
 
 #endif // CONFIG_H

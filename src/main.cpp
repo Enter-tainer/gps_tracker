@@ -19,23 +19,28 @@ void setup() {
   // Initialize Display
   if (initDisplay()) {
     // Display initialized successfully
+    String bootMessage[] = {"GPS Tracker", "Initializing..."};
+    displayInfo(bootMessage, 1); // Show a simple boot message
   } else {
     // Handle display initialization failure (e.g., continue without display)
+    Serial.println("Display Init Failed!");
   }
 
-  // Initialize GPS
+  // Initialize GPS (will start in OFF state)
   initGPS();
 
   // Initialize Button
   initButton();
 
-  String initMsg[] = {"System Initialized", "Waiting for GPS..."};
-  displayInfo(initMsg, 2); // Show initial message
+  // No initial GPS message here, handleGPS will manage it.
+  Serial.println("Setup Complete. Entering loop.");
 }
 
 void loop() {
-  handleGPS();    // Call GPS handler
+  handleGPS();    // Call GPS handler (manages state, power, timing)
   handleButton(); // Call Button handler
 
-  // No delay needed here usually, as handlers manage their own timing/blocking
+  // The loop runs as fast as possible.
+  // handleGPS and handleButton are designed to be non-blocking.
+  // Power saving is achieved by turning the GPS module off in handleGPS.
 }

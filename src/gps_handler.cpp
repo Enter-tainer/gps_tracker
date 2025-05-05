@@ -3,28 +3,56 @@
 #include "display_handler.h" // Need displayInfo
 #include <Arduino.h>
 
-// Define GPS objects
+// Define GPS objects and state variables
 TinyGPSPlus gps;
 HardwareSerial &gpsSerial = GPS_SERIAL; // Use definition from config.h
 unsigned long lastGpsDisplayUpdate = 0;
+GpsState currentGpsState = GPS_OFF;   // Start with GPS off
+unsigned long lastFixAttemptTime = 0; // Initialize to 0
+unsigned long currentFixStartTime = 0;
 
-// Function to initialize GPS communication
+// Function to explicitly power on the GPS module
+void powerOnGPS() {
+#ifdef PIN_GPS_EN
+  pinMode(PIN_GPS_EN, OUTPUT);
+  digitalWrite(PIN_GPS_EN, HIGH); // Assuming HIGH turns GPS ON
+  Serial.println("GPS Power ON");
+  // Optional: Add a small delay if the module needs time to stabilize after
+  // power on delay(100);
+#else
+  Serial.println("Warning: PIN_GPS_EN not defined. Cannot control GPS power.");
+#endif
+}
+
+// Function to explicitly power off the GPS module
+void powerOffGPS() {
+#ifdef PIN_GPS_EN
+  pinMode(PIN_GPS_EN, OUTPUT);
+  digitalWrite(PIN_GPS_EN, LOW); // Assuming LOW turns GPS OFF
+  Serial.println("GPS Power OFF");
+#endif
+  // Reset GPS data when turning off to avoid showing stale data
+  gps = TinyGPSPlus();
+}
+
+// Function to initialize GPS communication and power pin
 void initGPS() {
   gpsSerial.begin(GPS_BAUD_RATE);
   Serial.println("GPS Serial Initialized");
 
-// Optional: Enable GPS module power if PIN_GPS_EN is defined and used
 #ifdef PIN_GPS_EN
   pinMode(PIN_GPS_EN, OUTPUT);
-#ifdef GPS_POWER_TOGGLE // If power needs toggling
-  digitalWrite(PIN_GPS_EN, LOW);
-  delay(100);
-  digitalWrite(PIN_GPS_EN, HIGH);
-#else // If power is just enable high
-  digitalWrite(PIN_GPS_EN, HIGH); // Or LOW depending on module logic
+  powerOffGPS(); // Ensure GPS is off initially
+#else
+  Serial.println(
+      "Warning: PIN_GPS_EN not defined. GPS power control disabled.");
 #endif
-  Serial.println("GPS Power Enabled");
-#endif
+  // Set lastFixAttemptTime initially so the first attempt starts after
+  // GPS_FIX_INTERVAL We subtract the interval so the first check passes
+  // immediately in the loop if needed, or simply set to 0 to wait for the first
+  // interval. Let's wait.
+  lastFixAttemptTime = millis();
+  Serial.println("GPS Handler Initialized. Waiting for first fix interval.");
 }
 
 // Function to populate GpsInfo struct
@@ -100,37 +128,112 @@ int formatGpsInfoLines(const GpsInfo &info, String lines[], int maxLines) {
   return lineCount;
 }
 
-// Function to handle GPS data reading, parsing, and display update
+// Function to handle GPS state, data reading, parsing, power, and display
+// update
 void handleGPS() {
-  bool newData = false;
-  // Process available GPS data
-  while (gpsSerial.available() > 0) {
-    if (gps.encode(gpsSerial.read())) {
-      newData = true; // Mark that new data has been parsed
-    }
-  }
-
-  // Update display periodically if new data was received or enough time has
-  // passed
   unsigned long now = millis();
-  if (newData && (now - lastGpsDisplayUpdate > GPS_DISPLAY_INTERVAL)) {
-    lastGpsDisplayUpdate = now;
 
-    GpsInfo currentGpsInfo;
-    populateGpsInfo(gps, currentGpsInfo); // Populate the struct
+  switch (currentGpsState) {
+  case GPS_OFF:
+    // Check if it's time to start a new fix attempt
+    if (now - lastFixAttemptTime >= GPS_FIX_INTERVAL) {
+      Serial.println("Starting GPS fix attempt...");
+      powerOnGPS();
+      lastFixAttemptTime = now;  // Record the start time of this attempt cycle
+      currentFixStartTime = now; // Record when the GPS was actually turned on
+      currentGpsState = GPS_WAITING_FIX;
+      // Display searching message immediately
+      String searchingMsg[] = {"Searching for", "GPS signal..."};
+      displayInfo(searchingMsg, 2);
+      lastGpsDisplayUpdate = now; // Update display time
+    }
+    break;
 
-    const int MAX_GPS_LINES = 8; // Max lines after combining Sats/Alt
-    String gpsLines[MAX_GPS_LINES];
-    int lineCount = formatGpsInfoLines(currentGpsInfo, gpsLines,
-                                       MAX_GPS_LINES); // Format lines
+  case GPS_WAITING_FIX:
+    // Process available GPS data while powered on
+    while (gpsSerial.available() > 0) {
+      gps.encode(gpsSerial.read());
+    }
 
-    displayInfo(gpsLines, lineCount); // Display the formatted lines
+    // Check if we have a valid location, date, AND time fix
+    bool fullFix =
+        gps.location.isValid() && gps.date.isValid() && gps.time.isValid();
+    // Check if minimum power on time has elapsed
+    bool minTimeElapsed = (now - currentFixStartTime >= GPS_MIN_POWER_ON_TIME);
 
-  } else if (now > GPS_NO_FIX_TIMEOUT && gps.sentencesWithFix() == 0 &&
-             (now - lastGpsDisplayUpdate > GPS_NO_FIX_MSG_INTERVAL)) {
-    // If no fix after timeout, show message periodically
-    lastGpsDisplayUpdate = now; // Prevent spamming the message
-    String noFixMsg[] = {"No GPS fix.", "Check antenna", "and wiring."};
-    displayInfo(noFixMsg, 3);
+    if (fullFix) {
+      // We have a fix, update display regardless of min time
+      // Check if it's time to update the display based on interval or if it's
+      // the first fix display
+      if (now - lastGpsDisplayUpdate > GPS_DISPLAY_INTERVAL ||
+          currentGpsState == GPS_WAITING_FIX /* Force update on first fix */) {
+        Serial.println("GPS Full Fix Acquired (Location, Date, Time)!");
+        GpsInfo currentGpsInfo;
+        populateGpsInfo(gps, currentGpsInfo); // Populate the struct
+
+        const int MAX_GPS_LINES = 8;
+        String gpsLines[MAX_GPS_LINES];
+        int lineCount =
+            formatGpsInfoLines(currentGpsInfo, gpsLines, MAX_GPS_LINES);
+
+        displayInfo(gpsLines, lineCount); // Display the formatted lines
+        lastGpsDisplayUpdate = now;
+      }
+
+      // Now check if we can power off (fix acquired AND min time elapsed)
+      if (minTimeElapsed) {
+        Serial.println("Minimum power on time elapsed. Turning GPS OFF.");
+        powerOffGPS();             // Turn GPS off
+        currentGpsState = GPS_OFF; // Go back to idle state
+      } else {
+        // Keep GPS ON, waiting for minimum power on time to pass
+        // Serial.println("Fix acquired, but waiting for min power on time.");
+        // // Optional debug message
+      }
+
+    } else if (now - currentFixStartTime >= GPS_FIX_ATTEMPT_TIMEOUT) {
+      // Timeout waiting for a fix in this attempt
+      Serial.println("GPS fix attempt timed out.");
+      // Display timeout message along with any partial data
+      GpsInfo currentGpsInfo;
+      populateGpsInfo(gps,
+                      currentGpsInfo); // Populate with potentially partial data
+
+      const int MAX_GPS_LINES = 8;
+      String gpsLines[MAX_GPS_LINES];
+      gpsLines[0] = "GPS Timeout";
+      int lineCount = 1;
+      if (currentGpsInfo.locationValid) {
+        gpsLines[lineCount++] = "Lat: " + currentGpsInfo.latitude;
+        gpsLines[lineCount++] = "Lng: " + currentGpsInfo.longitude;
+      } else {
+        gpsLines[lineCount++] = "(No Fix)";
+      }
+      // Optionally add time/date if they became valid just before timeout
+      if (currentGpsInfo.dateTimeValid) {
+        if (lineCount < MAX_GPS_LINES)
+          gpsLines[lineCount++] = "Time: " + currentGpsInfo.time;
+      }
+
+      displayInfo(gpsLines, lineCount);
+      lastGpsDisplayUpdate = now; // Update display time
+
+      powerOffGPS();             // Turn GPS off on timeout
+      currentGpsState = GPS_OFF; // Go back to idle state
+
+    } else {
+      // Still waiting for fix or minimum power on time, no timeout yet.
+      // Update display periodically to show "Searching..."
+      if (now - lastGpsDisplayUpdate > GPS_DISPLAY_INTERVAL) {
+        String searchingMsg[] = {"Searching...",
+                                 "Satellites: " +
+                                     (gps.satellites.isValid()
+                                          ? String(gps.satellites.value())
+                                          : "N/A")};
+        displayInfo(searchingMsg, 2);
+        lastGpsDisplayUpdate = now;
+      }
+    }
+    break;
   }
 }
