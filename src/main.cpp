@@ -55,6 +55,8 @@ void setup() {
   // Initialize Battery (if needed)
   initBattery();
 
+  initInternalFlash();
+
   // No initial GPS message here, handleGPS will manage it.
   Serial.println("Setup Complete. Entering loop.");
 }
@@ -73,8 +75,5 @@ void loop() {
     lastDisplayUpdateTime = now;
   }
 
-  // The loop runs as fast as possible.
-  // handleGPS and handleButton are designed to be non-blocking.
-  // Power saving is achieved by turning the GPS module off in handleGPS.
-  // Display updates are now throttled.
+  listInternalFlashContents(); // List contents of Internal Flash (for testing)
 }
