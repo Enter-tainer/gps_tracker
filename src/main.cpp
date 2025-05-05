@@ -4,7 +4,8 @@
 #include "config.h"
 #include "display_handler.h"
 #include "gps_handler.h"
-#include "system_info.h" // Include system info
+#include "littlefs_handler.h" // Include Internal Flash handler
+#include "system_info.h"      // Include system info
 #include <Arduino.h>
 #include <Wire.h> // Keep for Wire.begin()
 
@@ -22,6 +23,13 @@ void setup() {
   // while (!Serial); // Optional: Wait for Serial connection
 
   Serial.println("Starting GPS Tracker...");
+
+  // Initialize Internal Flash first
+  if (!initInternalFlash()) { // Call renamed function
+    Serial.println(
+        "CRITICAL: Internal Flash initialization failed. Logging disabled.");
+    // Handle error appropriately
+  }
 
   // Initialize I2C (needed for SSD1306)
   Wire.begin();

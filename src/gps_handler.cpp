@@ -1,8 +1,10 @@
 #include "gps_handler.h"
 #include "config.h"
 // #include "display_handler.h" // No longer needed here
+#include "gpx_logger.h"  // <--- Add GPX Logger header
 #include "system_info.h" // Include the new header
 #include <Arduino.h>
+#include <stdint.h> // For uint32_t, int32_t
 
 // Define GPS objects and state variables
 TinyGPSPlus gps;
@@ -51,7 +53,6 @@ void initGPS() {
       "Warning: PIN_GPS_EN not defined. GPS power control disabled.");
 #endif
   gSystemInfo.gpsState = GPS_OFF; // Set initial state in global struct
-  lastFixAttemptTime = millis();
   Serial.println("GPS Handler Initialized. Waiting for first fix interval.");
 }
 
@@ -109,6 +110,77 @@ void updateGpsSystemInfo(TinyGPSPlus &gpsData) {
   }
 }
 
+// Helper function to convert GPS date/time to an approximate Unix timestamp
+// NOTE: This is a simplified calculation and doesn't account for leap seconds
+// or time zones. For accurate timestamps, consider using TimeLib.h or an RTC.
+uint32_t dateTimeToUnixTimestamp(uint16_t year, uint8_t month, uint8_t day,
+                                 uint8_t hour, uint8_t minute, uint8_t second) {
+  if (year < 1970 || year > 2038)
+    return 0; // Basic validity check
+
+  // Number of days from 1970 to the beginning of the given year (ignoring leap
+  // years for simplicity in calculation start)
+  uint32_t days = (year - 1970) * 365;
+
+  // Add leap year days
+  for (uint16_t y = 1972; y < year;
+       y += 4) { // Start from 1972, the first leap year after 1970
+    days++;
+  }
+  // Check if the current year is a leap year and if the date is after Feb 28
+  bool isLeap = (year % 4 == 0); // Simplified leap year check
+  if (isLeap && month > 2) {
+    days++;
+  }
+
+  // Days in months (non-leap year)
+  const uint8_t daysInMonth[] = {0,  31, 28, 31, 30, 31, 30,
+                                 31, 31, 30, 31, 30, 31};
+
+  // Add days for the months passed in the current year
+  for (uint8_t m = 1; m < month; m++) {
+    days += daysInMonth[m];
+  }
+
+  // Add days in the current month
+  days += (day - 1);
+
+  // Calculate total seconds
+  uint32_t seconds = days * 86400UL; // 86400 seconds in a day
+  seconds += hour * 3600UL;
+  seconds += minute * 60UL;
+  seconds += second;
+
+  return seconds;
+}
+
+// --- Helper Function to Log Point and Power Off ---
+static void logFixAndPowerOff() {
+  Serial.println("Logging GPX point and turning GPS OFF...");
+
+  // Calculate timestamp
+  uint32_t timestamp = dateTimeToUnixTimestamp(
+      gps.date.year(), gps.date.month(), gps.date.day(), gps.time.hour(),
+      gps.time.minute(), gps.time.second());
+
+  // Get float values directly from gps object
+  float lat_float = gps.location.lat();
+  float lon_float = gps.location.lng();
+  float alt_m = gps.altitude.meters();
+
+  // Append the point
+
+  if (gps.hdop.hdop() / 100.f <= GPS_HDOP_THRESHOLD) {
+    appendGpxPoint(timestamp, lat_float, lon_float, alt_m);
+  }
+  Serial.println("GPX Point logged.");
+
+  // Power off and reset state
+  powerOffGPS();
+  gSystemInfo.gpsState = GPS_OFF;
+}
+// --------------------------------------------------
+
 // Function to handle GPS state, data reading, parsing, power, and updating
 // gSystemInfo
 void handleGPS() {
@@ -127,49 +199,62 @@ void handleGPS() {
     }
     break;
 
-  case GPS_WAITING_FIX: { // Process available GPS data while powered on
+  case GPS_WAITING_FIX: {
+    // Process available GPS data while powered on
+    bool dataParsed = false;
     while (gpsSerial.available() > 0) {
       if (gps.encode(gpsSerial.read())) {
         // A new sentence was parsed, update system info immediately
         updateGpsSystemInfo(gps);
+        dataParsed = true; // Mark that we processed data
       }
     }
 
-    // Check if we have a valid location, date, AND time fix
-    bool fullFix =
-        gps.location.isValid() && gps.date.isValid() && gps.time.isValid();
-    // Check if minimum power on time has elapsed
+    // Check if we have a valid location, date, AND time fix AFTER processing
+    // all available data
+    bool fullFix = gps.location.isValid() && gps.date.isValid() &&
+                   gps.time.isValid() && gps.altitude.isValid();
     bool minTimeElapsed = (now - currentFixStartTime >= GPS_MIN_POWER_ON_TIME);
 
     if (fullFix) {
       // We have a full fix. Update state. Display handled in main loop.
       gSystemInfo.gpsState = GPS_FIX_ACQUIRED; // Update state
-      Serial.println("GPS Full Fix Acquired (Location, Date, Time)!");
-      // Update system info one last time for this fix cycle
-      updateGpsSystemInfo(gps);
+      Serial.println("GPS Full Fix Acquired (Location, Date, Time, Altitude)!");
 
-      // Now check if we can power off (fix acquired AND min time elapsed)
-      if (minTimeElapsed) {
-        Serial.println("Minimum power on time elapsed. Turning GPS OFF.");
-        powerOffGPS(); // Turn GPS off (also resets gps object and info)
-        gSystemInfo.gpsState = GPS_OFF; // Go back to idle state
+      // Update system info one last time for this fix cycle (might be redundant
+      // if dataParsed was true, but safe)
+      if (!dataParsed) { // If no new data was parsed just before the check,
+                         // update info now
+        updateGpsSystemInfo(gps);
       }
+
+      // Check if we can power off immediately (fix acquired AND min time
+      // elapsed)
+      if (minTimeElapsed) {
+        // *** Call the helper function ***
+        logFixAndPowerOff();
+      }
+      // If minTimeElapsed is false, we stay in GPS_FIX_ACQUIRED until it is
+      // true
 
     } else if (now - currentFixStartTime >= GPS_FIX_ATTEMPT_TIMEOUT) {
       // Timeout waiting for a fix in this attempt
       Serial.println("GPS fix attempt timed out.");
-      // Update system info with whatever partial data we might have
-      updateGpsSystemInfo(gps);
+      // Update system info with whatever partial data we might have (already
+      // done in loop if dataParsed)
+      if (!dataParsed) {
+        updateGpsSystemInfo(gps);
+      }
 
-      powerOffGPS(); // Turn GPS off on timeout (also resets gps object and
-                     // info)
+      // *** Power off without logging on timeout ***
+      powerOffGPS();
       gSystemInfo.gpsState = GPS_OFF; // Go back to idle state
 
     } else {
       // Still waiting for fix or minimum power on time, no timeout yet.
-      // Update system info continuously as data comes in (done in gps.encode
-      // loop) Display update handled in main loop
-      if (gSystemInfo.gpsState != GPS_WAITING_FIX) {
+      // System info is updated continuously as data comes in (done in
+      // gps.encode loop) Display update handled in main loop
+      if (gSystemInfo.gpsState != GPS_WAITING_FIX) { // Ensure state is correct
         gSystemInfo.gpsState = GPS_WAITING_FIX;
       }
     }
@@ -181,6 +266,9 @@ void handleGPS() {
     while (gpsSerial.available() > 0) {
       if (gps.encode(gpsSerial.read())) {
         updateGpsSystemInfo(gps);
+        // NOTE: We already logged the point when the fix was first acquired.
+        // We don't log again here unless the requirements change to log
+        // continuously while the fix is held and power is on.
       }
     }
 
@@ -188,23 +276,13 @@ void handleGPS() {
     bool minTimeElapsedAfterFix =
         (now - currentFixStartTime >= GPS_MIN_POWER_ON_TIME);
     if (minTimeElapsedAfterFix) {
-      Serial.println(
-          "Minimum power on time elapsed after fix. Turning GPS OFF.");
-      powerOffGPS(); // Turn GPS off (also resets gps object and info)
-      gSystemInfo.gpsState = GPS_OFF; // Go back to idle state
+      // *** Call the helper function ***
+      logFixAndPowerOff();
     }
     // Otherwise, just stay in this state, keep updating data, display handled
     // in main loop
     break;
   }
-  // Process serial data regardless of state if GPS is potentially on
-  // (WAITING_FIX or FIX_ACQUIRED)
-  if (gSystemInfo.gpsState == GPS_WAITING_FIX ||
-      gSystemInfo.gpsState == GPS_FIX_ACQUIRED) {
-    while (gpsSerial.available() > 0) {
-      if (gps.encode(gpsSerial.read())) {
-        updateGpsSystemInfo(gps);
-      }
-    }
-  }
+  // Redundant check removed: The processing loops within WAITING_FIX and
+  // FIX_ACQUIRED handle serial data.
 }

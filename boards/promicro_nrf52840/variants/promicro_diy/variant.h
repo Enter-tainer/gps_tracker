@@ -114,6 +114,8 @@ NRF52 PRO MICRO PIN ASSIGNMENT
 #define PIN_SPI_MOSI (32 + 15) // P1.15
 #define PIN_SPI_SCK (32 + 11)  // P1.11
 
+#define SS LORA_CS // Define the default SPI Chip Select pin
+
 #define LORA_MISO PIN_SPI_MISO
 #define LORA_MOSI PIN_SPI_MOSI
 #define LORA_SCK PIN_SPI_SCK

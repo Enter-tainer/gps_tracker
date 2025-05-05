@@ -33,6 +33,11 @@ const unsigned long GPS_FIX_ATTEMPT_TIMEOUT =
 const unsigned long GPS_MIN_POWER_ON_TIME =
     1000; // Minimum time GPS stays powered on after starting an attempt (1
           // second in ms)
+const float GPS_HDOP_THRESHOLD = 10; // only keep GPS point if HDOP is
+// below this threshold
+
+#define INTERNAL_FLASH_PART1_SIZE                                              \
+  640 * 1024 // Size of the first partition(640kB)
 
 // Optional: GPS Power Enable Pin (if used) - Commented out as we define
 // PIN_GPS_EN above #define PIN_GPS_EN YOUR_GPS_ENABLE_PIN #define
