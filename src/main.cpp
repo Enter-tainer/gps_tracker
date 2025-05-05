@@ -68,6 +68,8 @@ void loop() {
   handleButton(); // Call Button handler (could potentially update gSystemInfo
                   // in the future)
   handleBattery();
+  checkDisplayTimeout(); // Check if the display should turn off due to
+                         // inactivity
 
   // Periodically update the display from gSystemInfo
   if (now - lastDisplayUpdateTime >= DISPLAY_UPDATE_INTERVAL_MS) {

@@ -1,6 +1,6 @@
 #include "button_handler.h"
 #include "config.h"
-#include "display_handler.h" // For displaying button message
+#include "display_handler.h" // For toggling display
 #include "gps_handler.h"     // For resetting GPS update timer
 #include <Arduino.h>
 
@@ -26,7 +26,11 @@ void initButton() {
 
 // --- Button Action Handler ---
 // This function is called when a valid button hold is detected.
-void onButtonHeld() { Serial.println("Button Held Action Triggered!"); }
+void onButtonHeld() {
+  Serial.println("Button Held Action Triggered!");
+  resetDisplayTimeout(); // Reset display timeout
+  toggleDisplay(); // Toggle display on press
+}
 
 // Function to handle button press with debounce and hold duration requirement
 void handleButton() {

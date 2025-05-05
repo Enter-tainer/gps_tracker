@@ -8,6 +8,47 @@
 // Define the display object
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
+// Track display state
+bool isDisplayOn = true;
+unsigned long lastActivityTime = 0; // Track time of last activity for auto-off
+
+// Function to reset the display auto-off timer
+void resetDisplayTimeout() {
+  lastActivityTime = millis();
+  // Serial.println("Display timeout reset"); // Optional debug message
+}
+
+// Function to turn the display ON
+void turnDisplayOn() {
+  if (!isDisplayOn) {
+    display.ssd1306_command(SSD1306_DISPLAYON);
+    isDisplayOn = true;
+    resetDisplayTimeout(); // Reset timer when display turns on
+    Serial.println("Display ON");
+    updateDisplay(); // Update display immediately when turned on
+  }
+}
+
+// Function to turn the display OFF
+void turnDisplayOff() {
+  if (isDisplayOn) {
+    display.clearDisplay();
+    display.display(); // Show cleared screen before turning off
+    display.ssd1306_command(SSD1306_DISPLAYOFF);
+    isDisplayOn = false;
+    Serial.println("Display OFF");
+  }
+}
+
+// Function to toggle the display state
+void toggleDisplay() {
+  if (isDisplayOn) {
+    turnDisplayOff();
+  } else {
+    turnDisplayOn();
+  }
+}
+
 // Function to initialize the display
 bool initDisplay() {
   if (!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
@@ -15,6 +56,9 @@ bool initDisplay() {
     return false;
   }
   Serial.println(F("SSD1306 Initialized"));
+  isDisplayOn = true; // Start with display on
+  lastActivityTime = millis();
+  turnDisplayOn();   // Explicitly turn on (this will also reset the timer)
   display.display(); // show splash screen (Adafruit logo)
   delay(500);        // Pause
   display.clearDisplay();
@@ -28,6 +72,11 @@ bool initDisplay() {
 
 // Function to update the display based on the global gSystemInfo
 void updateDisplay() {
+  if (!isDisplayOn)
+    return; // Do nothing if display is off
+
+  // No need to reset timer here, only on explicit actions
+
   display.clearDisplay();
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
@@ -175,4 +224,12 @@ void updateDisplay() {
   display.print(battValueStr);
 
   display.display();
+}
+
+// Function to check and handle display timeout (call this in main loop)
+void checkDisplayTimeout() {
+  if (isDisplayOn && (millis() - lastActivityTime > DISPLAY_TIMEOUT_MS)) {
+    Serial.println("Display timeout reached.");
+    turnDisplayOff();
+  }
 }

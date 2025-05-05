@@ -9,11 +9,17 @@
 
 // Declare the display object (defined in cpp)
 extern Adafruit_SSD1306 display;
+extern bool isDisplayOn; // Track display state
 
 // Function to initialize the display
 bool initDisplay();
 
 // Function Prototypes
 void updateDisplay(); // New function to render gSystemInfo
+void toggleDisplay(); // Function to toggle display on/off
+void turnDisplayOn(); // Function to explicitly turn display on
+void turnDisplayOff(); // Function to explicitly turn display off
+void resetDisplayTimeout(); // Function to reset the auto-off timer
+void checkDisplayTimeout(); // Function to check the auto-off timer
 
 #endif // DISPLAY_HANDLER_H
