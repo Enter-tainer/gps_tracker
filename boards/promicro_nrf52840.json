@@ -58,7 +58,7 @@
   "name": "ProMicro compatible nRF52840",
   "upload": {
     "maximum_ram_size": 248832,
-    "maximum_size": 139264,
+    "maximum_size": 172032,
     "speed": 115200,
     "protocol": "nrfutil",
     "protocols": [

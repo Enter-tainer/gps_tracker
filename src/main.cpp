@@ -2,6 +2,7 @@
 #include "Adafruit_TinyUSB.h" // Keep for Serial
 #include "InternalFileSystem.h" // Make sure this is the correct header for InternalFS
 #include "battery.h"            // Include battery functions
+#include "ble_handler.h"
 #include "button_handler.h"
 #include "config.h"
 #include "display_handler.h"
@@ -23,7 +24,7 @@ void setup() {
   // Serial.begin(115200); // Keep this for initial boot messages if necessary,
   // or remove if Log handles all
   Log.begin(); // Initialize our logger
-
+  delay(1000); // Wait for Serial to initialize
   Log.println("Starting GPS Tracker...");
 
   // Initialize Internal Flash first
@@ -57,6 +58,7 @@ void setup() {
   initBattery();
 
   initInternalFlash();
+  BleHandler::setup();
 
   // No initial GPS message here, handleGPS will manage it.
   Log.println("Setup Complete. Entering loop.");

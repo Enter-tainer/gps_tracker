@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BLE File Transfer</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .container { max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ccc; border-radius: 8px; }
+        button { padding: 10px 15px; margin: 5px; cursor: pointer; }
+        #fileList { list-style-type: none; padding: 0; }
+        #fileList li { padding: 8px; border-bottom: 1px solid #eee; cursor: pointer; }
+        #fileList li:hover { background-color: #f0f0f0; }
+        #fileList li.selected { background-color: #e0e0ff; }
+        #progressBarContainer { width: 100%; background-color: #f3f3f3; border-radius: 5px; margin-top: 10px;}
+        #progressBar { width: 0%; height: 20px; background-color: #4CAF50; text-align: center; line-height: 20px; color: white; border-radius: 5px;}
+        .log-area { margin-top:15px; padding:10px; border:1px solid #ddd; height: 150px; overflow-y:scroll; background-color:#f9f9f9; font-size:0.9em; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>nRF52840 BLE File Transfer</h2>
+        <button id="connectButton">Connect to Device</button>
+        <button id="disconnectButton" disabled>Disconnect</button>
+        <p>Status: <span id="status">Disconnected</span></p>
+
+        <hr>
+        <h3>Files on Device</h3>
+        <button id="listFilesButton" disabled>List Files</button>
+        <ul id="fileList"></ul>
+
+        <hr>
+        <h3>File Transfer</h3>
+        <p>Selected File: <span id="selectedFileName">-</span></p>
+        <button id="downloadButton" disabled>Download Selected File</button>
+        <button id="abortButton" disabled>Abort Transfer</button>
+        <div id="progressBarContainer">
+            <div id="progressBar">0%</div>
+        </div>
+        <p>Bytes Transferred: <span id="bytesTransferred">0</span> / <span id="totalFileSize">0</span></p>
+        <a id="downloadLink" style="display:none">Download Complete File</a>
+
+        <div class="log-area" id="logOutput">Logs will appear here...</div>
+    </div>
+
+    <script>
+        const UUID_SVC_FILE_TRANSFER = "4a98bdbd-e8f5-4476-a52c-8e10e5024df5"; // Lowercase for Web Bluetooth
+        const UUID_CHR_CONTROL_POINT = "4a980001-e8f5-4476-a52c-8e10e5024df5";
+        const UUID_CHR_DATA_TRANSFER = "4a980002-e8f5-4476-a52c-8e10e5024df5";
+
+        let bleDevice;
+        let gattServer;
+        let fileTransferService;
+        let controlPointCharacteristic;
+        let dataCharacteristic;
+
+        let fileBuffer = [];
+        let expectedFileSize = 0;
+        let receivedFileSize = 0;
+        let currentTransferringFile = "";
+        let isListingFiles = false;
+        let fileListBuffer = "";
+
+        const connectButton = document.getElementById('connectButton');
+        const disconnectButton = document.getElementById('disconnectButton');
+        const listFilesButton = document.getElementById('listFilesButton');
+        const downloadButton = document.getElementById('downloadButton');
+        const abortButton = document.getElementById('abortButton');
+        const statusDisplay = document.getElementById('status');
+        const fileListUL = document.getElementById('fileList');
+        const selectedFileNameDisplay = document.getElementById('selectedFileName');
+        const progressBar = document.getElementById('progressBar');
+        const bytesTransferredDisplay = document.getElementById('bytesTransferred');
+        const totalFileSizeDisplay = document.getElementById('totalFileSize');
+        const downloadLink = document.getElementById('downloadLink');
+        const logOutput = document.getElementById('logOutput');
+
+        function log(message) {
+            console.log(message);
+            const time = new Date().toLocaleTimeString();
+            logOutput.innerHTML = `[${time}] ${message}<br>` + logOutput.innerHTML;
+        }
+
+        connectButton.addEventListener('click', async () => {
+            try {
+                log('Requesting Bluetooth device...');
+                bleDevice = await navigator.bluetooth.requestDevice({
+                    filters: [{ services: [UUID_SVC_FILE_TRANSFER] }],
+                    optionalServices: [UUID_SVC_FILE_TRANSFER] // Might be needed on some platforms
+                });
+                log(`Device selected: ${bleDevice.name || bleDevice.id}`);
+                statusDisplay.textContent = `Connecting to ${bleDevice.name || bleDevice.id}...`;
+                bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
+                gattServer = await bleDevice.gatt.connect();
+                log('Connected to GATT server.');
+                statusDisplay.textContent = `Connected to ${bleDevice.name || bleDevice.id}`;
+
+                fileTransferService = await gattServer.getPrimaryService(UUID_SVC_FILE_TRANSFER);
+                log('Got File Transfer Service.');
+
+                controlPointCharacteristic = await fileTransferService.getCharacteristic(UUID_CHR_CONTROL_POINT);
+                log('Got Control Point Characteristic.');
+                dataCharacteristic = await fileTransferService.getCharacteristic(UUID_CHR_DATA_TRANSFER);
+                log('Got Data Transfer Characteristic.');
+
+                await dataCharacteristic.startNotifications();
+                dataCharacteristic.addEventListener('characteristicvaluechanged', handleNotifications);
+                log('Started notifications on Data Characteristic.');
+
+                connectButton.disabled = true;
+                disconnectButton.disabled = false;
+                listFilesButton.disabled = false;
+
+            } catch (error) {
+                log(`Error connecting: ${error}`);
+                statusDisplay.textContent = `Error: ${error.message.substring(0,30)}`;
+                resetUIState();
+            }
+        });
+
+        disconnectButton.addEventListener('click', async () => {
+            if (gattServer && gattServer.connected) {
+                log('Disconnecting from device...');
+                gattServer.disconnect();
+            } else {
+                log('Already disconnected.');
+                onDisconnected(); // Ensure UI reset
+            }
+        });
+
+        function onDisconnected() {
+            log('Device disconnected.');
+            statusDisplay.textContent = 'Disconnected';
+            resetUIState();
+            bleDevice.removeEventListener('gattserverdisconnected', onDisconnected);
+        }
+        
+        function resetUIState() {
+            connectButton.disabled = false;
+            disconnectButton.disabled = true;
+            listFilesButton.disabled = true;
+            downloadButton.disabled = true;
+            abortButton.disabled = true;
+            fileListUL.innerHTML = '';
+            selectedFileNameDisplay.textContent = '-';
+            resetTransferState();
+        }
+
+
+        listFilesButton.addEventListener('click', async () => {
+            if (!controlPointCharacteristic) {
+                log('Control Point Characteristic not available.');
+                return;
+            }
+            log('Requesting file list...');
+            fileListUL.innerHTML = ''; // Clear previous list
+            isListingFiles = true;
+            fileListBuffer = "";
+            try {
+                const command = new Uint8Array([0x01]); // LIST_FILES
+                await controlPointCharacteristic.writeValueWithoutResponse(command);
+                log('LIST_FILES command sent.');
+            } catch (error) {
+                log(`Error sending LIST_FILES command: ${error}`);
+                isListingFiles = false;
+            }
+        });
+
+        function handleNotifications(event) {
+            const value = event.target.value; // DataView
+            const decoder = new TextDecoder(); // Default UTF-8
+
+            if (isListingFiles) {
+                if (value.byteLength === 0) { // EOF for list
+                    log('File list EOF received.');
+                    isListingFiles = false;
+                    // Process the complete buffer if any partial data was left
+                    if (fileListBuffer.length > 0) {
+                        processAndDisplayFileEntry(fileListBuffer);
+                        fileListBuffer = "";
+                    }
+                    return;
+                }
+                const receivedString = decoder.decode(value);
+                log(`File list data: "${receivedString}"`);
+                fileListBuffer += receivedString;
+
+                // Process entries separated by potential implicit newlines or just concatenated
+                // The device sends "filename:size" then EOF (empty packet)
+                // It seems each file entry is sent as a separate notification.
+                processAndDisplayFileEntry(fileListBuffer);
+                fileListBuffer = ""; // Reset after processing
+
+            } else if (currentTransferringFile) { // If a transfer is active
+                if (value.byteLength === 0) { // EOF for file data
+                    log(`EOF for file ${currentTransferringFile}. Transfer complete.`);
+                    if (receivedFileSize === expectedFileSize) {
+                        finalizeDownload();
+                    } else {
+                        log(`Warning: Received ${receivedFileSize} bytes, expected ${expectedFileSize}. File might be incomplete.`);
+                        finalizeDownload(); // Still try to offer what was received
+                    }
+                    resetTransferState();
+                    return;
+                }
+
+                const firstChunk = fileBuffer.length === 0 && expectedFileSize === 0;
+                if (firstChunk) {
+                    const potentialSizeMsg = decoder.decode(value);
+                    if (potentialSizeMsg.startsWith("SIZE:")) {
+                        expectedFileSize = parseInt(potentialSizeMsg.substring(5), 10);
+                        totalFileSizeDisplay.textContent = expectedFileSize;
+                        log(`Expected file size for ${currentTransferringFile}: ${expectedFileSize} bytes.`);
+                        // Don't add this "SIZE:" message to the file buffer
+                        // Request the first actual data chunk
+                        if (expectedFileSize > 0 || expectedFileSize === 0) { // Allow 0 byte files
+                             setTimeout(getChunk, 50); // Small delay before first GET_CHUNK
+                        } else {
+                             log("Invalid file size received.");
+                             abortTransfer();
+                        }
+                        return;
+                    } else {
+                        // If the first chunk wasn't a SIZE message, assume direct data (old protocol)
+                        // or an error. For now, we expect SIZE: first.
+                        log("Warning: First data chunk was not a SIZE message. Aborting.");
+                        abortTransfer(); // Or handle as direct data if protocol changes
+                        return;
+                    }
+                }
+                
+                // Append actual file data
+                const dataChunk = new Uint8Array(value.buffer);
+                fileBuffer.push(dataChunk);
+                receivedFileSize += dataChunk.byteLength;
+                updateProgressBar();
+                bytesTransferredDisplay.textContent = receivedFileSize;
+
+                log(`Received chunk for ${currentTransferringFile}: ${dataChunk.byteLength} bytes. Total: ${receivedFileSize}/${expectedFileSize}`);
+
+                if (receivedFileSize < expectedFileSize) {
+                    setTimeout(getChunk, 10); // Request next chunk with a small delay
+                } else if (receivedFileSize === expectedFileSize) {
+                    log(`File ${currentTransferringFile} fully received (${receivedFileSize} bytes).`);
+                    finalizeDownload();
+                    resetTransferState();
+                } else {
+                     log(`Error: Received more data (${receivedFileSize}) than expected (${expectedFileSize}).`);
+                     abortTransfer();
+                }
+            } else {
+                log(`Unexpected notification: ${decoder.decode(value)}`);
+            }
+        }
+
+        function processAndDisplayFileEntry(entryString) {
+            const parts = entryString.split(':');
+            if (parts.length === 2) {
+                const fileName = parts[0].trim();
+                const fileSize = parseInt(parts[1].trim(), 10);
+                if (fileName) {
+                    const li = document.createElement('li');
+                    li.textContent = `${fileName} (${fileSize} bytes)`;
+                    li.dataset.filename = fileName;
+                    li.dataset.filesize = fileSize;
+                    li.addEventListener('click', () => {
+                        document.querySelectorAll('#fileList li').forEach(item => item.classList.remove('selected'));
+                        li.classList.add('selected');
+                        selectedFileNameDisplay.textContent = fileName;
+                        downloadButton.disabled = false;
+                    });
+                    fileListUL.appendChild(li);
+                }
+            } else if (entryString.startsWith("ERROR:") || entryString.startsWith("INFO:")) {
+                 log(`Device message: ${entryString}`);
+            }
+        }
+
+
+        downloadButton.addEventListener('click', async () => {
+            const selectedLi = document.querySelector('#fileList li.selected');
+            if (!selectedLi || !controlPointCharacteristic) {
+                log('No file selected or characteristic not available.');
+                return;
+            }
+            currentTransferringFile = selectedLi.dataset.filename;
+            // expectedFileSize = parseInt(selectedLi.dataset.filesize, 10); // Size now comes from "SIZE:" message
+            
+            log(`Starting transfer for ${currentTransferringFile}...`);
+            resetTransferState(false); // Reset previous transfer but keep filename
+            totalFileSizeDisplay.textContent = "Waiting for size..."; // Will be updated by SIZE: message
+            downloadButton.disabled = true;
+            abortButton.disabled = false;
+            downloadLink.style.display = 'none';
+
+
+            try {
+                const encoder = new TextEncoder();
+                const filenameBytes = encoder.encode(currentTransferringFile);
+                const command = new Uint8Array(1 + filenameBytes.length + 1); // 0x02 + filename + null terminator
+                command[0] = 0x02; // START_TRANSFER
+                command.set(filenameBytes, 1);
+                command[1 + filenameBytes.length] = 0x00; // Null terminator
+
+                await controlPointCharacteristic.writeValueWithoutResponse(command);
+                log(`START_TRANSFER command for "${currentTransferringFile}" sent.`);
+                // First data chunk (or SIZE: message) will be requested by notification handler after SIZE:
+            } catch (error) {
+                log(`Error sending START_TRANSFER command: ${error}`);
+                resetTransferState();
+            }
+        });
+
+        async function getChunk() {
+            if (!controlPointCharacteristic || !currentTransferringFile || receivedFileSize >= expectedFileSize && expectedFileSize > 0) {
+                // Do not request chunk if transfer is complete or not active
+                if (receivedFileSize >= expectedFileSize && expectedFileSize > 0) {
+                    log("GetChunk: Transfer seems complete, not requesting more.");
+                }
+                return;
+            }
+            try {
+                const command = new Uint8Array([0x03]); // GET_CHUNK
+                await controlPointCharacteristic.writeValueWithoutResponse(command);
+                // log('GET_CHUNK command sent.'); // Can be very verbose
+            } catch (error) {
+                log(`Error sending GET_CHUNK command: ${error}`);
+                abortTransfer(); // Abort on error sending get_chunk
+            }
+        }
+
+        abortButton.addEventListener('click', abortTransfer);
+
+        async function abortTransfer() {
+             if (!controlPointCharacteristic) return;
+            log('Aborting transfer...');
+            try {
+                const command = new Uint8Array([0x04]); // ABORT_TRANSFER
+                await controlPointCharacteristic.writeValueWithoutResponse(command);
+                log('ABORT_TRANSFER command sent.');
+            } catch (error) {
+                log(`Error sending ABORT_TRANSFER command: ${error}`);
+            }
+            resetTransferState();
+        }
+        
+        function resetTransferState(fullReset = true) {
+            fileBuffer = [];
+            if (fullReset) { // Keep filename if only resetting for a new transfer of same file
+                 currentTransferringFile = "";
+                 selectedFileNameDisplay.textContent = "-";
+            }
+            expectedFileSize = 0;
+            receivedFileSize = 0;
+            bytesTransferredDisplay.textContent = "0";
+            totalFileSizeDisplay.textContent = "0";
+            progressBar.style.width = '0%';
+            progressBar.textContent = '0%';
+            abortButton.disabled = true;
+            // downloadButton should be re-enabled only when a file is selected
+            if (document.querySelector('#fileList li.selected')) {
+                 downloadButton.disabled = false;
+            } else {
+                 downloadButton.disabled = true;
+            }
+            downloadLink.style.display = 'none';
+            downloadLink.href = '#';
+        }
+
+        function updateProgressBar() {
+            if (expectedFileSize > 0) {
+                const percentage = Math.round((receivedFileSize / expectedFileSize) * 100);
+                progressBar.style.width = percentage + '%';
+                progressBar.textContent = percentage + '%';
+            } else if (expectedFileSize === 0 && receivedFileSize === 0) { // For 0-byte files
+                progressBar.style.width = '100%';
+                progressBar.textContent = '100%';
+            }
+        }
+
+        function finalizeDownload() {
+            if (fileBuffer.length > 0 || expectedFileSize === 0) { // Allow download of 0-byte files
+                const completeFile = new Blob(fileBuffer, { type: 'application/octet-stream' });
+                downloadLink.href = URL.createObjectURL(completeFile);
+                downloadLink.download = currentTransferringFile || "downloaded_file";
+                downloadLink.textContent = `Download "${currentTransferringFile || "file"}" (${receivedFileSize} bytes)`;
+                downloadLink.style.display = 'block';
+                log(`File ready for download: ${currentTransferringFile || "file"} (${receivedFileSize} bytes)`);
+            } else {
+                log("No data received to finalize download.");
+            }
+            // UI state for buttons will be handled by resetTransferState or subsequent actions
+            if (document.querySelector('#fileList li.selected')) {
+                 downloadButton.disabled = false; // Re-enable for another download
+            }
+             abortButton.disabled = true;
+        }
+
+    </script>
+</body>
+</html>

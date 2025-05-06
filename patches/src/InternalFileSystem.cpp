@@ -26,12 +26,12 @@
 #include "flash/flash_nrf5x.h"
 
 #ifdef NRF52840_XXAA
-#define LFS_FLASH_ADDR 0x48000
+#define LFS_FLASH_ADDR 0x50000
 #else
 #define LFS_FLASH_ADDR 0x6D000
 #endif
 
-#define LFS_FLASH_TOTAL_SIZE (172 * FLASH_NRF52_PAGE_SIZE)
+#define LFS_FLASH_TOTAL_SIZE (164 * FLASH_NRF52_PAGE_SIZE)
 #define LFS_BLOCK_SIZE 128
 
 //--------------------------------------------------------------------+
