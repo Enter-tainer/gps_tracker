@@ -10,8 +10,8 @@
 
 // Declare the display object (defined in cpp)
 extern Adafruit_SSD1306 display;
+const unsigned long DISPLAY_UPDATE_INTERVAL_MS = 100;
 extern bool isDisplayOn; // Track display state
-
 // Function to initialize the display
 bool initDisplay();
 

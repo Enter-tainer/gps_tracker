@@ -12,6 +12,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 // Track display state
 bool isDisplayOn = true;
 unsigned long lastActivityTime = 0; // Track time of last activity for auto-off
+SoftwareTimer displayRefreshTimer;  // Timer for display refresh
 
 // Function to reset the display auto-off timer
 void resetDisplayTimeout() {
@@ -27,6 +28,12 @@ void turnDisplayOn() {
     resetDisplayTimeout(); // Reset timer when display turns on
     Log.println("Display ON");
     updateDisplay(); // Update display immediately when turned on
+    // It's generally safe to call start() on an already started or stopped
+    // timer. If it was stopped, it starts. If already running, behavior might
+    // vary (e.g., restart or no-op). For Adafruit_TinyUSB SoftwareTimer,
+    // start() will start it if stopped or reset it if running.
+    displayRefreshTimer.start();
+    Log.println("Display refresh timer started/restarted.");
   }
 }
 
@@ -38,6 +45,8 @@ void turnDisplayOff() {
     display.ssd1306_command(SSD1306_DISPLAYOFF);
     isDisplayOn = false;
     Log.println("Display OFF");
+    displayRefreshTimer.stop();
+    Log.println("Display refresh timer stopped.");
   }
 }
 
@@ -68,6 +77,10 @@ bool initDisplay() {
   display.setCursor(0, 0);             // Default cursor position
   // display.println("OLED Initialized"); // Don't show this, let first update
   // handle it display.display(); delay(500);
+  displayRefreshTimer.begin(DISPLAY_UPDATE_INTERVAL_MS,
+                            refreshDisplayTimerCallback, NULL,
+                            true); // Start the timer for display refresh
+  displayRefreshTimer.start();     // Start the timer
   return true;
 }
 

@@ -13,10 +13,8 @@
 // Define the global SystemInfo instance
 SystemInfo gSystemInfo;
 
-const unsigned long DISPLAY_UPDATE_INTERVAL_MS = 100;
 const unsigned long BATTERY_UPDATE_INTERVAL_MS = 10000;
 
-SoftwareTimer displayRefreshTimer; // Timer for display refresh
 SoftwareTimer batteryCheckTimer;   // Timer for battery check
 void setup() {
   // Initialize Serial communication (for debugging)
@@ -60,11 +58,6 @@ void setup() {
 
   // No initial GPS message here, handleGPS will manage it.
   Log.println("Setup Complete. Entering loop.");
-
-  displayRefreshTimer.begin(DISPLAY_UPDATE_INTERVAL_MS,
-                            refreshDisplayTimerCallback, NULL,
-                            true); // Start the timer for display refresh
-  displayRefreshTimer.start();     // Start the timer
 
   batteryCheckTimer.begin(BATTERY_UPDATE_INTERVAL_MS, updateBatteryInfo, NULL,
                           true); // Start the timer for battery check
