@@ -2,6 +2,7 @@
 #include "config.h"
 #include "display_handler.h" // For toggling display
 #include "gps_handler.h"     // For resetting GPS update timer
+#include "littlefs_handler.h"
 #include "logger.h"
 #include <Arduino.h>
 
@@ -21,6 +22,7 @@ void initButton() {
 
 void onButtonPushed() {
   Log.println("Button Held Action Triggered!");
+  listInternalFlashContents(); // List files on button press
   resetDisplayTimeout(); // Reset display timeout
   toggleDisplay();       // Toggle display on press
 }

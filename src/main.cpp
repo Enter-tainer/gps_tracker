@@ -1,5 +1,7 @@
+#include "Adafruit_LittleFS.h"
 #include "Adafruit_TinyUSB.h" // Keep for Serial
-#include "battery.h"          // Include battery functions
+#include "InternalFileSystem.h" // Make sure this is the correct header for InternalFS
+#include "battery.h"            // Include battery functions
 #include "button_handler.h"
 #include "config.h"
 #include "display_handler.h"
@@ -15,7 +17,7 @@ SystemInfo gSystemInfo;
 
 const unsigned long BATTERY_UPDATE_INTERVAL_MS = 10000;
 
-SoftwareTimer batteryCheckTimer;   // Timer for battery check
+SoftwareTimer batteryCheckTimer; // Timer for battery check
 void setup() {
   // Initialize Serial communication (for debugging)
   // Serial.begin(115200); // Keep this for initial boot messages if necessary,
