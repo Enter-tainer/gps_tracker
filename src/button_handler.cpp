@@ -6,9 +6,8 @@
 #include <Arduino.h>
 
 // Button state variables
-unsigned long lastButtonCheckTime = 0;
-bool lastButtonState = HIGH;    // Assuming INPUT_PULLUP, HIGH is released
-bool currentButtonState = HIGH; // Debounced state
+static unsigned long lastValidInterruptTime = 0; // ADDED
+bool currentButtonState = HIGH;                  // Debounced state
 unsigned long pressStartTime =
     0; // Time when the button press started (after debounce)
 bool actionTriggeredForPress =
@@ -17,11 +16,10 @@ bool actionTriggeredForPress =
 void initButton() {
   pinMode(BUTTON_PIN, INPUT_PULLUP);
   Log.println("Button Pin Initialized");
+  attachInterrupt(BUTTON_PIN, handleButton, FALLING);
 }
 
-// --- Button Action Handler ---
-// This function is called when a valid button hold is detected.
-void onButtonHeld() {
+void onButtonPushed() {
   Log.println("Button Held Action Triggered!");
   resetDisplayTimeout(); // Reset display timeout
   toggleDisplay();       // Toggle display on press
@@ -29,41 +27,16 @@ void onButtonHeld() {
 
 // Function to handle button press with debounce and hold duration requirement
 void handleButton() {
-  int reading = digitalRead(BUTTON_PIN);
-  bool stateChanged = false;
+  unsigned long currentTime = millis();
 
-  // --- Debounce Logic ---
-  if (reading != lastButtonState) {
-    lastButtonCheckTime = millis();
+  // New debounce logic: if an interrupt occurs too soon after the last one
+  // that was allowed to proceed, ignore this current interrupt.
+  if (currentTime - lastValidInterruptTime < DEBOUNCE_DELAY) {
+    return; // Ignore this interrupt
   }
+  // This interrupt is not being ignored due to rate-limiting.
+  // Mark this time as the last time an interrupt was processed.
+  lastValidInterruptTime = currentTime;
 
-  if ((millis() - lastButtonCheckTime) > DEBOUNCE_DELAY) {
-    if (reading != currentButtonState) {
-      currentButtonState = reading;
-      stateChanged = true;
-    }
-  }
-  lastButtonState = reading;
-
-  // --- State Machine based on Debounced State ---
-  if (stateChanged) {
-    if (currentButtonState == LOW) { // Button pressed
-      pressStartTime = millis();
-      actionTriggeredForPress = false;
-      Log.println("Button Press Detected (Debounced)");
-    } else { // Button released
-      Log.println("Button Released (Debounced)");
-      pressStartTime = 0;
-      actionTriggeredForPress = false;
-    }
-  }
-
-  // --- Check for Hold Duration and Trigger Action ---
-  if (currentButtonState == LOW && pressStartTime > 0 &&
-      !actionTriggeredForPress) {
-    if (millis() - pressStartTime >= HOLD_DURATION) {
-      onButtonHeld();
-      actionTriggeredForPress = true;
-    }
-  }
+  onButtonPushed();
 }

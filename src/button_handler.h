@@ -11,6 +11,6 @@ void handleButton();
 
 // Function called when a valid button hold is detected (needs to be implemented
 // by user or here)
-void onButtonHeld();
+void onButtonPushed();
 
 #endif // BUTTON_HANDLER_H

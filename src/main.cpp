@@ -72,7 +72,5 @@ void setup() {
 }
 
 void loop() {
-  handleGPS();    // Call GPS handler (updates gSystemInfo)
-  handleButton(); // Call Button handler (could potentially update gSystemInfo
-                  // in the future)
+  handleGPS(); // Call GPS handler (updates gSystemInfo)
 }
