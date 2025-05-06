@@ -1,6 +1,7 @@
 #ifndef DISPLAY_HANDLER_H
 #define DISPLAY_HANDLER_H
 
+#include "logger.h"
 #include "system_info.h" // Include system info definition
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
@@ -20,6 +21,11 @@ void toggleDisplay(); // Function to toggle display on/off
 void turnDisplayOn(); // Function to explicitly turn display on
 void turnDisplayOff(); // Function to explicitly turn display off
 void resetDisplayTimeout(); // Function to reset the auto-off timer
-void checkDisplayTimeout(); // Function to check the auto-off timer
-
+bool checkDisplayTimeout(); // Function to check the auto-off timer
+inline void refreshDisplayTimerCallback(TimerHandle_t _handle) {
+  if (checkDisplayTimeout()) {
+    return;
+  }
+  updateDisplay(); // Call the update function
+}
 #endif // DISPLAY_HANDLER_H

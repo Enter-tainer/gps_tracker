@@ -13,11 +13,9 @@
 // Define the global SystemInfo instance
 SystemInfo gSystemInfo;
 
-// Display update timing
-unsigned long lastDisplayUpdateTime = 0;
-const unsigned long DISPLAY_UPDATE_INTERVAL_MS =
-    33; // Update display every 1 second
+const unsigned long DISPLAY_UPDATE_INTERVAL_MS = 100;
 
+SoftwareTimer displayRefreshTimer; // Timer for display refresh
 void setup() {
   // Initialize Serial communication (for debugging)
   // Serial.begin(115200); // Keep this for initial boot messages if necessary,
@@ -40,7 +38,6 @@ void setup() {
   if (initDisplay()) {
     Log.println("Display Initialized Successfully.");
     updateDisplay(); // Show initial empty/default state from gSystemInfo
-    lastDisplayUpdateTime = millis(); // Set initial time
   } else {
     // Handle display initialization failure (e.g., continue without display)
     Log.println("Display Init Failed!");
@@ -61,21 +58,16 @@ void setup() {
 
   // No initial GPS message here, handleGPS will manage it.
   Log.println("Setup Complete. Entering loop.");
+
+  displayRefreshTimer.begin(DISPLAY_UPDATE_INTERVAL_MS,
+                            refreshDisplayTimerCallback, NULL,
+                            true); // Start the timer for display refresh
+  displayRefreshTimer.start();     // Start the timer
 }
 
 void loop() {
-  unsigned long now = millis();
-
   handleGPS();    // Call GPS handler (updates gSystemInfo)
   handleButton(); // Call Button handler (could potentially update gSystemInfo
                   // in the future)
   handleBattery();
-  checkDisplayTimeout(); // Check if the display should turn off due to
-                         // inactivity
-
-  // Periodically update the display from gSystemInfo
-  if (now - lastDisplayUpdateTime >= DISPLAY_UPDATE_INTERVAL_MS) {
-    updateDisplay();
-    lastDisplayUpdateTime = now;
-  }
 }

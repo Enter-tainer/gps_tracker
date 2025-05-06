@@ -14,15 +14,9 @@ unsigned long pressStartTime =
 bool actionTriggeredForPress =
     false; // Flag to ensure action triggers only once per press
 
-// Function to initialize the button pin
 void initButton() {
-// BUTTON_PIN should be defined in variant.h or config.h
-#ifdef BUTTON_PIN
   pinMode(BUTTON_PIN, INPUT_PULLUP);
   Log.println("Button Pin Initialized");
-#else
-  Log.println("WARNING: BUTTON_PIN not defined!");
-#endif
 }
 
 // --- Button Action Handler ---
@@ -30,12 +24,11 @@ void initButton() {
 void onButtonHeld() {
   Log.println("Button Held Action Triggered!");
   resetDisplayTimeout(); // Reset display timeout
-  toggleDisplay(); // Toggle display on press
+  toggleDisplay();       // Toggle display on press
 }
 
 // Function to handle button press with debounce and hold duration requirement
 void handleButton() {
-#ifdef BUTTON_PIN // Only run if button pin is defined
   int reading = digitalRead(BUTTON_PIN);
   bool stateChanged = false;
 
@@ -73,5 +66,4 @@ void handleButton() {
       actionTriggeredForPress = true;
     }
   }
-#endif // BUTTON_PIN
 }

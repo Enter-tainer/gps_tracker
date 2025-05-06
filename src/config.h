@@ -9,7 +9,7 @@
 #define OLED_RESET -1       // Reset pin # (or -1 if sharing Arduino reset pin)
 #define SCREEN_ADDRESS 0x3C // I2C address for 128x64 SSD1306
 #define DISPLAY_TIMEOUT_MS                                                     \
-  5000 // Auto screen off timeout in milliseconds (5 seconds)
+  30000 // Auto screen off timeout in milliseconds (30 seconds)
 
 // GPS settings
 #define GPS_SERIAL Serial1 // HardwareSerial port for GPS (e.g., Serial1)

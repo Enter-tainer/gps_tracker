@@ -228,9 +228,11 @@ void updateDisplay() {
 }
 
 // Function to check and handle display timeout (call this in main loop)
-void checkDisplayTimeout() {
+bool checkDisplayTimeout() {
   if (isDisplayOn && (millis() - lastActivityTime > DISPLAY_TIMEOUT_MS)) {
     Log.println("Display timeout reached.");
     turnDisplayOff();
+    return true; // Display was turned off due to timeout
   }
+  return false; // No timeout occurred
 }
