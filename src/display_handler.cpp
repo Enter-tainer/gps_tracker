@@ -1,8 +1,9 @@
 #include "display_handler.h"
 #include "battery.h" // Include battery functions
 #include "config.h"
+#include "logger.h"
 #include "system_info.h" // Include global system info
-#include <Arduino.h>     // For Serial
+#include <Arduino.h>     // For Log
 #include <Wire.h>        // Include Wire for display
 
 // Define the display object
@@ -15,7 +16,7 @@ unsigned long lastActivityTime = 0; // Track time of last activity for auto-off
 // Function to reset the display auto-off timer
 void resetDisplayTimeout() {
   lastActivityTime = millis();
-  // Serial.println("Display timeout reset"); // Optional debug message
+  // Log.println("Display timeout reset"); // Optional debug message
 }
 
 // Function to turn the display ON
@@ -24,7 +25,7 @@ void turnDisplayOn() {
     display.ssd1306_command(SSD1306_DISPLAYON);
     isDisplayOn = true;
     resetDisplayTimeout(); // Reset timer when display turns on
-    Serial.println("Display ON");
+    Log.println("Display ON");
     updateDisplay(); // Update display immediately when turned on
   }
 }
@@ -36,7 +37,7 @@ void turnDisplayOff() {
     display.display(); // Show cleared screen before turning off
     display.ssd1306_command(SSD1306_DISPLAYOFF);
     isDisplayOn = false;
-    Serial.println("Display OFF");
+    Log.println("Display OFF");
   }
 }
 
@@ -52,10 +53,10 @@ void toggleDisplay() {
 // Function to initialize the display
 bool initDisplay() {
   if (!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
-    Serial.println(F("SSD1306 allocation failed"));
+    Log.println(F("SSD1306 allocation failed"));
     return false;
   }
-  Serial.println(F("SSD1306 Initialized"));
+  Log.println(F("SSD1306 Initialized"));
   isDisplayOn = true; // Start with display on
   lastActivityTime = millis();
   turnDisplayOn();   // Explicitly turn on (this will also reset the timer)
@@ -229,7 +230,7 @@ void updateDisplay() {
 // Function to check and handle display timeout (call this in main loop)
 void checkDisplayTimeout() {
   if (isDisplayOn && (millis() - lastActivityTime > DISPLAY_TIMEOUT_MS)) {
-    Serial.println("Display timeout reached.");
+    Log.println("Display timeout reached.");
     turnDisplayOff();
   }
 }

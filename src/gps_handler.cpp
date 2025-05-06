@@ -2,6 +2,7 @@
 #include "config.h"
 // #include "display_handler.h" // No longer needed here
 #include "gpx_logger.h"  // <--- Add GPX Logger header
+#include "logger.h"      // <--- Add Logger header
 #include "system_info.h" // Include the new header
 #include <Arduino.h>
 #include <stdint.h> // For uint32_t, int32_t
@@ -20,11 +21,11 @@ void powerOnGPS() {
 #ifdef PIN_GPS_EN
   pinMode(PIN_GPS_EN, OUTPUT);
   digitalWrite(PIN_GPS_EN, HIGH); // Assuming HIGH turns GPS ON
-  Serial.println("GPS Power ON");
+  Log.println("GPS Power ON");
   // Optional: Add a small delay if the module needs time to stabilize after
   // power on delay(100);
 #else
-  Serial.println("Warning: PIN_GPS_EN not defined. Cannot control GPS power.");
+  Log.println("Warning: PIN_GPS_EN not defined. Cannot control GPS power.");
 #endif
 }
 
@@ -33,7 +34,7 @@ void powerOffGPS() {
 #ifdef PIN_GPS_EN
   pinMode(PIN_GPS_EN, OUTPUT);
   digitalWrite(PIN_GPS_EN, LOW); // Assuming LOW turns GPS OFF
-  Serial.println("GPS Power OFF");
+  Log.println("GPS Power OFF");
 #endif
   // Reset GPS data when turning off to avoid showing stale data
   gps = TinyGPSPlus();
@@ -43,17 +44,16 @@ void powerOffGPS() {
 // Function to initialize GPS communication and power pin
 void initGPS() {
   gpsSerial.begin(GPS_BAUD_RATE);
-  Serial.println("GPS Serial Initialized");
+  Log.println("GPS Serial Initialized");
 
 #ifdef PIN_GPS_EN
   pinMode(PIN_GPS_EN, OUTPUT);
   powerOffGPS(); // Ensure GPS is off initially
 #else
-  Serial.println(
-      "Warning: PIN_GPS_EN not defined. GPS power control disabled.");
+  Log.println("Warning: PIN_GPS_EN not defined. GPS power control disabled.");
 #endif
   gSystemInfo.gpsState = GPS_OFF; // Set initial state in global struct
-  Serial.println("GPS Handler Initialized. Waiting for first fix interval.");
+  Log.println("GPS Handler Initialized. Waiting for first fix interval.");
 }
 
 // Function to update the global gSystemInfo struct from TinyGPSPlus data
@@ -156,7 +156,7 @@ uint32_t dateTimeToUnixTimestamp(uint16_t year, uint8_t month, uint8_t day,
 
 // --- Helper Function to Log Point and Power Off ---
 static void logFixAndPowerOff() {
-  Serial.println("Logging GPX point and turning GPS OFF...");
+  Log.println("Logging GPX point and turning GPS OFF...");
 
   // Calculate timestamp
   uint32_t timestamp = dateTimeToUnixTimestamp(
@@ -173,7 +173,7 @@ static void logFixAndPowerOff() {
   if (gps.hdop.hdop() / 100.f <= GPS_HDOP_THRESHOLD) {
     appendGpxPoint(timestamp, lat_float, lon_float, alt_m);
   }
-  Serial.println("GPX Point logged.");
+  Log.println("GPX Point logged.");
 
   // Power off and reset state
   powerOffGPS();
@@ -191,7 +191,7 @@ void handleGPS() {
     // Check if it's time to start a new fix attempt
     if (now - lastFixAttemptTime >= GPS_FIX_INTERVAL ||
         lastFixAttemptTime == 0) {
-      Serial.println("Starting GPS fix attempt...");
+      Log.println("Starting GPS fix attempt...");
       powerOnGPS();
       lastFixAttemptTime = now;  // Record the start time of this attempt cycle
       currentFixStartTime = now; // Record when the GPS was actually turned on
@@ -219,7 +219,7 @@ void handleGPS() {
     if (fullFix) {
       // We have a full fix. Update state. Display handled in main loop.
       gSystemInfo.gpsState = GPS_FIX_ACQUIRED; // Update state
-      Serial.println("GPS Full Fix Acquired (Location, Date, Time, Altitude)!");
+      Log.println("GPS Full Fix Acquired (Location, Date, Time, Altitude)!");
 
       // Update system info one last time for this fix cycle (might be redundant
       // if dataParsed was true, but safe)
@@ -239,7 +239,7 @@ void handleGPS() {
 
     } else if (now - currentFixStartTime >= GPS_FIX_ATTEMPT_TIMEOUT) {
       // Timeout waiting for a fix in this attempt
-      Serial.println("GPS fix attempt timed out.");
+      Log.println("GPS fix attempt timed out.");
       // Update system info with whatever partial data we might have (already
       // done in loop if dataParsed)
       if (!dataParsed) {

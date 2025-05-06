@@ -3,6 +3,7 @@
 #include "InternalFileSystem.h" // Make sure this is the correct header for InternalFS
 #include "config.h"             // Include for MAX_GPX_FILES
 #include "gpx_logger.h"
+#include "logger.h" // <--- Add Logger header
 #include <Arduino.h>
 #include <TimeLib.h> // Include for time functions (year, month, day)
 #include <algorithm> // For std::sort
@@ -25,11 +26,11 @@ void manageOldFiles() {
   std::vector<std::string> gpxFiles;
   File root = InternalFS.open("/");
   if (!root) {
-    Serial.println("Failed to open root directory for cleanup");
+    Log.println("Failed to open root directory for cleanup");
     return;
   }
   if (!root.isDirectory()) {
-    Serial.println("Root is not a directory");
+    Log.println("Root is not a directory");
     root.close();
     return;
   }
@@ -59,14 +60,14 @@ void manageOldFiles() {
 
     // Calculate how many files to delete
     int filesToDelete = gpxFiles.size() - MAX_GPX_FILES;
-    Serial.printf("Found %d GPX files, need to delete %d oldest files.\n",
-                  gpxFiles.size(), filesToDelete);
+    Log.printf("Found %d GPX files, need to delete %d oldest files.\n",
+               gpxFiles.size(), filesToDelete);
 
     // Delete the oldest files
     for (int i = 0; i < filesToDelete; ++i) {
-      Serial.printf("Deleting old log file: %s\n", gpxFiles[i].c_str());
+      Log.printf("Deleting old log file: %s\n", gpxFiles[i].c_str());
       if (!InternalFS.remove(gpxFiles[i].c_str())) {
-        Serial.printf("Failed to delete %s\n", gpxFiles[i].c_str());
+        Log.printf("Failed to delete %s\n", gpxFiles[i].c_str());
         // Continue trying to delete others even if one fails
       }
     }
@@ -89,7 +90,7 @@ bool RotateLogFileIfNeeded(uint32_t timestamp) {
     if (isFileOpen) {
       currentGpxFile.close(); // Close the previous day's file
       isFileOpen = false;     // Mark as closed
-      Serial.printf("Closed log file: %s\n", currentFilename.c_str());
+      Log.printf("Closed log file: %s\n", currentFilename.c_str());
     }
 
     // Format the new filename: /YYYYMMDD.gpx
@@ -98,7 +99,7 @@ bool RotateLogFileIfNeeded(uint32_t timestamp) {
     currentFilename = String(filenameBuffer);
     currentFileDate = newDate; // Update the current date
 
-    Serial.printf("Switching to log file: %s\n", currentFilename.c_str());
+    Log.printf("Switching to log file: %s\n", currentFilename.c_str());
 
     // Manage old files before opening the new one
     manageOldFiles();
@@ -107,7 +108,7 @@ bool RotateLogFileIfNeeded(uint32_t timestamp) {
     File openedFile = InternalFS.open(currentFilename.c_str(), FILE_O_WRITE);
 
     if (!openedFile) { // Check if the open operation failed
-      Serial.printf("Failed to open log file: %s\n", currentFilename.c_str());
+      Log.printf("Failed to open log file: %s\n", currentFilename.c_str());
       currentFilename = ""; // Reset filename if open failed
       currentFileDate = 0;  // Reset date
       isFileOpen = false;   // Ensure marked as not open
@@ -116,8 +117,7 @@ bool RotateLogFileIfNeeded(uint32_t timestamp) {
       // Open succeeded, assign the valid file handle
       currentGpxFile = openedFile; // Assign the returned File object
       isFileOpen = true;           // Mark as open
-      Serial.printf("Successfully opened log file: %s\n",
-                    currentFilename.c_str());
+      Log.printf("Successfully opened log file: %s\n", currentFilename.c_str());
     }
   }
 
@@ -127,18 +127,18 @@ bool RotateLogFileIfNeeded(uint32_t timestamp) {
 
 // Initialize Internal Flash File System
 bool initInternalFlash() {
-  Serial.println("Initializing Internal Flash Filesystem...");
+  Log.println("Initializing Internal Flash Filesystem...");
   // Wait for Filesystem to setup
   // Note: begin() might format if it's the first time or corrupted.
   if (!InternalFS.begin()) {
-    Serial.println("Failed to mount internal filesystem!");
-    Serial.println("Try formatting the filesystem?");
+    Log.println("Failed to mount internal filesystem!");
+    Log.println("Try formatting the filesystem?");
     // Optionally add formatting code here if needed, e.g.:
     InternalFS.format();
-    Serial.println("Filesystem formatted.");
+    Log.println("Filesystem formatted.");
     return false;
   }
-  Serial.println("Internal Filesystem mounted successfully.");
+  Log.println("Internal Filesystem mounted successfully.");
   // Perform initial cleanup check in case the device restarted mid-day
   manageOldFiles();
 
@@ -154,7 +154,7 @@ bool initInternalFlash() {
 bool writeGpsLogData(const GpxPointInternal &entry) {
   // Ensure the correct file is open for the entry's timestamp
   if (!RotateLogFileIfNeeded(entry.timestamp)) {
-    Serial.println("Cannot write GPS data: Log file not ready.");
+    Log.println("Cannot write GPS data: Log file not ready.");
     return false;
   }
 
@@ -163,10 +163,10 @@ bool writeGpsLogData(const GpxPointInternal &entry) {
       currentGpxFile.write((const uint8_t *)&entry, sizeof(GpxPointInternal));
 
   if (bytesWritten != sizeof(GpxPointInternal)) {
-    Serial.printf("Failed to write GPS data to %s. Expected %d, wrote %d\n",
-                  currentFilename.c_str(),
-                  (int)sizeof(GpxPointInternal), // Cast size_t to int
-                  (int)bytesWritten);            // Cast size_t to int
+    Log.printf("Failed to write GPS data to %s. Expected %d, wrote %d\n",
+               currentFilename.c_str(),
+               (int)sizeof(GpxPointInternal), // Cast size_t to int
+               (int)bytesWritten);            // Cast size_t to int
     // Attempt to close and mark as not open on error
     currentGpxFile.close();
     isFileOpen = false;   // Mark as closed due to error
@@ -193,12 +193,12 @@ void listDirectoryRecursive(File dir, int indentLevel) {
 
     // Print indentation
     for (int i = 0; i < indentLevel; i++) {
-      Serial.print("  ");
+      Log.print("  ");
     }
 
     if (entry.isDirectory()) {
-      Serial.print("DIR : ");
-      Serial.println(entry.name());
+      Log.print("DIR : ");
+      Log.println(entry.name());
       // Recursively list the subdirectory contents
       // Note: entry.name() might return just the name, not the full path.
       // Construct the full path if necessary for InternalFS.open()
@@ -214,12 +214,12 @@ void listDirectoryRecursive(File dir, int indentLevel) {
       listDirectoryRecursive(entry, indentLevel + 1);
     } else {
       // Print file name and size
-      Serial.print("FILE: ");
-      Serial.print(entry.name());
-      Serial.print("\tSIZE: ");
+      Log.print("FILE: ");
+      Log.print(entry.name());
+      Log.print("\tSIZE: ");
       char sizeBuf[12];
       sprintf(sizeBuf, "%lu", entry.size()); // Use %lu for unsigned long
-      Serial.println(sizeBuf);
+      Log.println(sizeBuf);
     }
     entry.close(); // Close the entry handle
   }
@@ -227,22 +227,22 @@ void listDirectoryRecursive(File dir, int indentLevel) {
 
 // Modified function to start the recursive listing
 void listInternalFlashContents() {
-  Serial.println("--- Listing Internal Flash Contents (Recursive) ---");
+  Log.println("--- Listing Internal Flash Contents (Recursive) ---");
   File root = InternalFS.open("/");
   if (!root) {
-    Serial.println("Failed to open root directory.");
+    Log.println("Failed to open root directory.");
     return;
   }
   if (!root.isDirectory()) {
-    Serial.println("Root is not a directory.");
+    Log.println("Root is not a directory.");
     root.close();
     return;
   }
 
-  Serial.println("DIR : /"); // Print root directory
+  Log.println("DIR : /"); // Print root directory
   listDirectoryRecursive(root,
                          1); // Start recursion from root with indent level 1
 
   root.close();
-  Serial.println("--------------------------------------------------");
+  Log.println("--------------------------------------------------");
 }

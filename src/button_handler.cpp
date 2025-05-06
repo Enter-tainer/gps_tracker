@@ -2,6 +2,7 @@
 #include "config.h"
 #include "display_handler.h" // For toggling display
 #include "gps_handler.h"     // For resetting GPS update timer
+#include "logger.h"
 #include <Arduino.h>
 
 // Button state variables
@@ -18,16 +19,16 @@ void initButton() {
 // BUTTON_PIN should be defined in variant.h or config.h
 #ifdef BUTTON_PIN
   pinMode(BUTTON_PIN, INPUT_PULLUP);
-  Serial.println("Button Pin Initialized");
+  Log.println("Button Pin Initialized");
 #else
-  Serial.println("WARNING: BUTTON_PIN not defined!");
+  Log.println("WARNING: BUTTON_PIN not defined!");
 #endif
 }
 
 // --- Button Action Handler ---
 // This function is called when a valid button hold is detected.
 void onButtonHeld() {
-  Serial.println("Button Held Action Triggered!");
+  Log.println("Button Held Action Triggered!");
   resetDisplayTimeout(); // Reset display timeout
   toggleDisplay(); // Toggle display on press
 }
@@ -56,9 +57,9 @@ void handleButton() {
     if (currentButtonState == LOW) { // Button pressed
       pressStartTime = millis();
       actionTriggeredForPress = false;
-      Serial.println("Button Press Detected (Debounced)");
+      Log.println("Button Press Detected (Debounced)");
     } else { // Button released
-      Serial.println("Button Released (Debounced)");
+      Log.println("Button Released (Debounced)");
       pressStartTime = 0;
       actionTriggeredForPress = false;
     }

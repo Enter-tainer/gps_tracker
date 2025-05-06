@@ -5,6 +5,7 @@
 #include "display_handler.h"
 #include "gps_handler.h"
 #include "littlefs_handler.h" // Include Internal Flash handler
+#include "logger.h"           // Include Logger
 #include "system_info.h"      // Include system info
 #include <Arduino.h>
 #include <Wire.h> // Keep for Wire.begin()
@@ -19,14 +20,15 @@ const unsigned long DISPLAY_UPDATE_INTERVAL_MS =
 
 void setup() {
   // Initialize Serial communication (for debugging)
-  Serial.begin(115200);
-  // while (!Serial); // Optional: Wait for Serial connection
+  // Serial.begin(115200); // Keep this for initial boot messages if necessary,
+  // or remove if Log handles all
+  Log.begin(); // Initialize our logger
 
-  Serial.println("Starting GPS Tracker...");
+  Log.println("Starting GPS Tracker...");
 
   // Initialize Internal Flash first
   if (!initInternalFlash()) { // Call renamed function
-    Serial.println(
+    Log.println(
         "CRITICAL: Internal Flash initialization failed. Logging disabled.");
     // Handle error appropriately
   }
@@ -36,21 +38,21 @@ void setup() {
 
   // Initialize Display
   if (initDisplay()) {
-    // Display initialized successfully
-    // String bootMessage[] = {"GPS Tracker", "Initializing..."}; // Removed
-    // displayInfo(bootMessage, 1); // Removed - updateDisplay will handle it
+    Log.println("Display Initialized Successfully.");
     updateDisplay(); // Show initial empty/default state from gSystemInfo
     lastDisplayUpdateTime = millis(); // Set initial time
   } else {
     // Handle display initialization failure (e.g., continue without display)
-    Serial.println("Display Init Failed!");
+    Log.println("Display Init Failed!");
   }
 
   // Initialize GPS (will start in OFF state and update gSystemInfo)
   initGPS();
+  Log.println("GPS Initialized.");
 
   // Initialize Button
   initButton();
+  Log.println("Button Handler Initialized.");
 
   // Initialize Battery (if needed)
   initBattery();
@@ -58,7 +60,7 @@ void setup() {
   initInternalFlash();
 
   // No initial GPS message here, handleGPS will manage it.
-  Serial.println("Setup Complete. Entering loop.");
+  Log.println("Setup Complete. Entering loop.");
 }
 
 void loop() {
@@ -76,6 +78,4 @@ void loop() {
     updateDisplay();
     lastDisplayUpdateTime = now;
   }
-
-  listInternalFlashContents(); // List contents of Internal Flash (for testing)
 }
