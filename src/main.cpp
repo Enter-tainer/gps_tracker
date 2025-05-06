@@ -14,8 +14,10 @@
 SystemInfo gSystemInfo;
 
 const unsigned long DISPLAY_UPDATE_INTERVAL_MS = 100;
+const unsigned long BATTERY_UPDATE_INTERVAL_MS = 10000;
 
 SoftwareTimer displayRefreshTimer; // Timer for display refresh
+SoftwareTimer batteryCheckTimer;   // Timer for battery check
 void setup() {
   // Initialize Serial communication (for debugging)
   // Serial.begin(115200); // Keep this for initial boot messages if necessary,
@@ -63,11 +65,14 @@ void setup() {
                             refreshDisplayTimerCallback, NULL,
                             true); // Start the timer for display refresh
   displayRefreshTimer.start();     // Start the timer
+
+  batteryCheckTimer.begin(BATTERY_UPDATE_INTERVAL_MS, updateBatteryInfo, NULL,
+                          true); // Start the timer for battery check
+  batteryCheckTimer.start();     // Start the timer
 }
 
 void loop() {
   handleGPS();    // Call GPS handler (updates gSystemInfo)
   handleButton(); // Call Button handler (could potentially update gSystemInfo
                   // in the future)
-  handleBattery();
 }

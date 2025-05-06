@@ -2,6 +2,7 @@
 #include "system_info.h"
 #include "variant.h" // Includes board-specific definitions like BATTERY_PIN, REAL_VBAT_MV_PER_LSB etc.
 #include <Arduino.h>
+#include <timers.h>
 
 // EMA滤波系数，值越小，平滑效果越强，但响应越慢
 // 范围0.0-1.0，推荐值在0.1-0.3之间
@@ -117,7 +118,7 @@ float estimateBatteryLevel(float voltageMv) {
   return 0.0f;
 }
 
-void handleBattery() {
+void updateBatteryInfo(TimerHandle_t handle) {
   // 读取电池电压并使用浮点计算更新系统信息
   uint32_t voltageMv = readBatteryVoltageMv();
   if (voltageMv > 0) {

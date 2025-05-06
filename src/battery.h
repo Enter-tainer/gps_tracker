@@ -1,8 +1,8 @@
 #ifndef BATTERY_H
 #define BATTERY_H
 
+#include <Arduino.h>
 #include <stdint.h>
-
 /**
  * @brief Initializes the ADC for battery voltage reading.
  *
@@ -21,7 +21,8 @@ void initBattery();
  */
 uint32_t readBatteryVoltageMv();
 
-void handleBattery(); // Function to handle battery reading and updates
+void updateBatteryInfo(
+    TimerHandle_t handle); // Function to handle battery reading and updates
 
 /**
  * @brief Estimates battery level using floating point calculations.
