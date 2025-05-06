@@ -58,7 +58,7 @@ void setup() {
 
   // No initial GPS message here, handleGPS will manage it.
   Log.println("Setup Complete. Entering loop.");
-
+  updateBatteryInfo(NULL); // Initial battery check
   batteryCheckTimer.begin(BATTERY_UPDATE_INTERVAL_MS, updateBatteryInfo, NULL,
                           true); // Start the timer for battery check
   batteryCheckTimer.start();     // Start the timer
@@ -66,4 +66,5 @@ void setup() {
 
 void loop() {
   handleGPS(); // Call GPS handler (updates gSystemInfo)
+  delay(50);
 }
