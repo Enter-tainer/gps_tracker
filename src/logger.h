@@ -37,10 +37,13 @@ public:
 
   void printf(const char *format, ...) {
     if (enabled_ && serial_) {
+      char buf[256]; // 缓冲区用于格式化字符串
       va_list args;
       va_start(args, format);
-      serial_->printf(format, args);
+      vsnprintf(buf, sizeof(buf), format,
+                args); // 使用 vsnprintf 格式化字符串到缓冲区
       va_end(args);
+      serial_->print(buf); // 输出格式化后的字符串
     }
   }
 

@@ -1,11 +1,13 @@
 #include "ble_handler.h"
+#include "file_transfer_protocol.h"
 #include <InternalFileSystem.h>
 
 // BLE Services
 BLEDis bledis; // Device Information Service
 BLEUart bleuart;
 // BLEBas blebas; // Battery Service
-
+static FileTransferProtocol
+    fileTransferProtocol(&bleuart); // File Transfer Protocol
 // File transfer state variables
 static Adafruit_LittleFS_Namespace::File
     currentFile(InternalFS); // File object for the active transfer
@@ -25,7 +27,7 @@ void BleHandler::connect_callback(uint16_t conn_handle) {
     conn->requestPHY();
     conn->requestDataLengthUpdate();
     conn->requestMtuExchange(247); // Request max MTU
-    delay(100);                    // Wait for MTU exchange to complete
+    delay(1000);                   // Wait for MTU exchange to complete
     uint16_t mtu = conn->getMtu();
     negotiatedMtuPayloadSize = mtu - 3; // 3 bytes for ATT header
     Log.print("BLE: Negotiated MTU:");
@@ -41,21 +43,7 @@ void BleHandler::disconnect_callback(uint16_t conn_handle, uint8_t reason) {
   negotiatedMtuPayloadSize = BLE_DEFAULT_MTU_PAYLOAD; // Reset to default
 }
 
-void bleuart_rx_callback(uint16_t conn_hdl) {
-
-  uint32_t count = bleuart.available();
-  auto res = bleuart.readString();
-
-  bleuart.flush(); // empty rx fifo
-
-  Log.print("RX ");
-  Log.print(count);
-  Log.print(" bytes from UART\n");
-  Log.print("RX: ");
-  Log.print(res.c_str());
-  Log.print("\n");
-  bleuart.write(res.c_str(), res.length());
-}
+void bleuart_rx_callback(uint16_t conn_hdl) { fileTransferProtocol.process(); }
 
 void bleuart_notify_callback(uint16_t conn_hdl, bool enabled) {
   if (enabled) {
