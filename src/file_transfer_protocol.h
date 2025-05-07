@@ -31,7 +31,7 @@ private:
   File _currentOpenFile{InternalFS};
   File _currentDirectory{InternalFS};
   bool _fileOpened;
-  uint8_t _buffer[128]; // 命令接收缓冲区
+  uint8_t _buffer[570]; // 命令接收缓冲区
   uint8_t _cmdId;
   uint16_t _payloadLength;
   uint8_t _cmdState;

@@ -589,6 +589,46 @@
                 }
             }
         }
+        
+        function decodeBinaryGpx(data) {
+//             #pragma pack(push, 1)
+// typedef struct {
+//   uint32_t timestamp;            // Unix 时间戳 (秒)
+//   int32_t latitude_scaled_1e7;   // 纬度 (度 * 10^7)
+//   int32_t longitude_scaled_1e7;  // 经度 (度 * 10^7)
+//   int32_t altitude_m_scaled_1e2; // 海拔 (米 * 100)
+// } GpxPointInternal;
+// #pragma pack(pop)
+            const gpxPoints = [];
+            const view = new DataView(data.buffer);
+            for (let i = 0; i < data.byteLength; i += 16) {
+                const timestamp = view.getUint32(i, true);
+                const latitude = view.getInt32(i + 4, true) / 1e7;
+                const longitude = view.getInt32(i + 8, true) / 1e7;
+                const altitude = view.getInt32(i + 12, true) / 100;
+                gpxPoints.push({ timestamp, latitude, longitude, altitude });
+            }
+            return gpxPoints;
+        }
+        
+        function GpxPointsToGpxTrack(gpxPoints) {
+            let gpxData = '<?xml version="1.0" encoding="UTF-8"?>\n';
+            gpxData += '<gpx version="1.1" creator="MGT GPS Tracker">\n';
+            gpxData += '  <trk>\n';
+            gpxData += '    <name>Track</name>\n';
+            gpxData += '    <trkseg>\n';
+            for (const point of gpxPoints) {
+                const date = new Date(point.timestamp * 1000);
+                gpxData += `      <trkpt lat="${point.latitude}" lon="${point.longitude}">\n`;
+                gpxData += `        <ele>${point.altitude}</ele>\n`;
+                gpxData += `        <time>${date.toISOString()}</time>\n`;
+                gpxData += '      </trkpt>\n';
+            }
+            gpxData += '    </trkseg>\n';
+            gpxData += '  </trk>\n';
+            gpxData += '</gpx>\n';
+            return gpxData;
+        }
 
         function assembleAndDisplayFile() {
             if (currentOpenFile.chunks.length > 0) {
@@ -600,14 +640,11 @@
                     offset += chunk.length;
                 }
                 
-                // Try to decode as UTF-8. If it fails, it might be binary.
-                // For simplicity, we'll show in textarea. For binary, a hex viewer or direct download is better.
-                try {
-                    fileContentTextarea.value = utf8Decoder.decode(fullFileBytes);
-                } catch (e) {
-                    fileContentTextarea.value = `--- Binary Data (${fullFileBytes.length} bytes) ---\nPreview not available. Use "Save to Disk".`;
-                    log("File content appears to be binary or invalid UTF-8.", "error");
-                }
+                const gpxPoints = decodeBinaryGpx(fullFileBytes);
+                console.log(gpxPoints);
+                const gpxData = GpxPointsToGpxTrack(gpxPoints);
+                console.log(gpxData);
+                fileContentTextarea.value = gpxData;
 
                 fileContentArea.style.display = 'block';
                 saveFileButton.style.display = 'inline-block';
