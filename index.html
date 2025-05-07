@@ -44,15 +44,24 @@
     </div>
 
     <script>
-        const UUID_SVC_FILE_TRANSFER = "4a98bdbd-e8f5-4476-a52c-8e10e5024df5"; // Lowercase for Web Bluetooth
-        const UUID_CHR_CONTROL_POINT = "4a980001-e8f5-4476-a52c-8e10e5024df5";
-        const UUID_CHR_DATA_TRANSFER = "4a980002-e8f5-4476-a52c-8e10e5024df5";
+        // const UUID_SVC_FILE_TRANSFER = "4a98bdbd-e8f5-4476-a52c-8e10e5024df5"; // Lowercase for Web Bluetooth
+        // const UUID_CHR_CONTROL_POINT = "4a980001-e8f5-4476-a52c-8e10e5024df5";
+        // const UUID_CHR_DATA_TRANSFER = "4a980002-e8f5-4476-a52c-8e10e5024df5";
+
+        // Standard Nordic BLE UART Service UUIDs
+        const UUID_SVC_NORDIC_UART = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+        const UUID_CHR_NORDIC_UART_RX = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"; // Device to Client (Notifications)
+        const UUID_CHR_NORDIC_UART_TX = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"; // Client to Device (Write)
+
 
         let bleDevice;
         let gattServer;
-        let fileTransferService;
-        let controlPointCharacteristic;
-        let dataCharacteristic;
+        // let fileTransferService;
+        // let controlPointCharacteristic;
+        // let dataCharacteristic;
+        let uartService;
+        let rxCharacteristic;
+        let txCharacteristic;
 
         let fileBuffer = [];
         let expectedFileSize = 0;
@@ -75,6 +84,31 @@
         const downloadLink = document.getElementById('downloadLink');
         const logOutput = document.getElementById('logOutput');
 
+        // Add a simple text input and send button for UART TX
+        const uartSendText = document.createElement('input');
+        uartSendText.type = 'text';
+        uartSendText.id = 'uartSendText';
+        uartSendText.placeholder = 'Enter text to send';
+        uartSendText.style.marginTop = '10px';
+        uartSendText.disabled = true;
+
+        const uartSendButton = document.createElement('button');
+        uartSendButton.id = 'uartSendButton';
+        uartSendButton.textContent = 'Send Text via UART';
+        uartSendButton.disabled = true;
+        
+        // Insert new elements for UART testing
+        const fileTransferSection = document.querySelector('h3').nextElementSibling.nextElementSibling.nextElementSibling; // Get the <hr> after "Files on Device"
+        if (fileTransferSection && fileTransferSection.nextElementSibling) {
+            const referenceNode = fileTransferSection.nextElementSibling; // The H3 "File Transfer"
+            referenceNode.parentNode.insertBefore(uartSendText, referenceNode);
+            referenceNode.parentNode.insertBefore(uartSendButton, referenceNode);
+            // Add a small separator
+            const newHr = document.createElement('hr');
+            referenceNode.parentNode.insertBefore(newHr, referenceNode);
+        }
+
+
         function log(message) {
             console.log(message);
             const time = new Date().toLocaleTimeString();
@@ -83,10 +117,11 @@
 
         connectButton.addEventListener('click', async () => {
             try {
-                log('Requesting Bluetooth device...');
+                log('Requesting Bluetooth device for UART...');
                 bleDevice = await navigator.bluetooth.requestDevice({
-                    filters: [{ services: [UUID_SVC_FILE_TRANSFER] }],
-                    optionalServices: [UUID_SVC_FILE_TRANSFER] // Might be needed on some platforms
+                    // filters: [{ services: [UUID_SVC_FILE_TRANSFER] }], // Old file transfer service
+                    // optionalServices: [UUID_SVC_FILE_TRANSFER]
+                    filters: [{ services: [UUID_SVC_NORDIC_UART] }],
                 });
                 log(`Device selected: ${bleDevice.name || bleDevice.id}`);
                 statusDisplay.textContent = `Connecting to ${bleDevice.name || bleDevice.id}...`;
@@ -95,21 +130,35 @@
                 log('Connected to GATT server.');
                 statusDisplay.textContent = `Connected to ${bleDevice.name || bleDevice.id}`;
 
-                fileTransferService = await gattServer.getPrimaryService(UUID_SVC_FILE_TRANSFER);
-                log('Got File Transfer Service.');
+                // fileTransferService = await gattServer.getPrimaryService(UUID_SVC_FILE_TRANSFER);
+                // log('Got File Transfer Service.');
+                uartService = await gattServer.getPrimaryService(UUID_SVC_NORDIC_UART);
+                log('Got Nordic UART Service.');
 
-                controlPointCharacteristic = await fileTransferService.getCharacteristic(UUID_CHR_CONTROL_POINT);
-                log('Got Control Point Characteristic.');
-                dataCharacteristic = await fileTransferService.getCharacteristic(UUID_CHR_DATA_TRANSFER);
-                log('Got Data Transfer Characteristic.');
+                // controlPointCharacteristic = await fileTransferService.getCharacteristic(UUID_CHR_CONTROL_POINT);
+                // log('Got Control Point Characteristic.');
+                // dataCharacteristic = await fileTransferService.getCharacteristic(UUID_CHR_DATA_TRANSFER);
+                // log('Got Data Transfer Characteristic.');
 
-                await dataCharacteristic.startNotifications();
-                dataCharacteristic.addEventListener('characteristicvaluechanged', handleNotifications);
-                log('Started notifications on Data Characteristic.');
+                rxCharacteristic = await uartService.getCharacteristic(UUID_CHR_NORDIC_UART_RX);
+                log('Got RX Characteristic.');
+                txCharacteristic = await uartService.getCharacteristic(UUID_CHR_NORDIC_UART_TX);
+                log('Got TX Characteristic.');
+
+                // await dataCharacteristic.startNotifications();
+                // dataCharacteristic.addEventListener('characteristicvaluechanged', handleNotifications);
+                await rxCharacteristic.startNotifications();
+                rxCharacteristic.addEventListener('characteristicvaluechanged', handleUartRxNotifications);
+                log('Started notifications on RX Characteristic.');
 
                 connectButton.disabled = true;
                 disconnectButton.disabled = false;
-                listFilesButton.disabled = false;
+                // listFilesButton.disabled = false; // Disable file specific buttons for UART
+                listFilesButton.disabled = true; 
+                downloadButton.disabled = true;
+                uartSendText.disabled = false;
+                uartSendButton.disabled = false;
+
 
             } catch (error) {
                 log(`Error connecting: ${error}`);
@@ -141,6 +190,8 @@
             listFilesButton.disabled = true;
             downloadButton.disabled = true;
             abortButton.disabled = true;
+            uartSendText.disabled = true;
+            uartSendButton.disabled = true;
             fileListUL.innerHTML = '';
             selectedFileNameDisplay.textContent = '-';
             resetTransferState();
@@ -165,6 +216,36 @@
                 isListingFiles = false;
             }
         });
+
+        function handleUartRxNotifications(event) {
+            const value = event.target.value; // DataView
+            const decoder = new TextDecoder(); // Default UTF-8
+            const receivedText = decoder.decode(value);
+            log(`UART RX: ${receivedText}`);
+            // You can process the receivedText here, e.g., display it in a specific area.
+        }
+
+        uartSendButton.addEventListener('click', async () => {
+            if (!txCharacteristic) {
+                log('TX Characteristic not available.');
+                return;
+            }
+            const textToSend = uartSendText.value;
+            if (!textToSend) {
+                log('Nothing to send.');
+                return;
+            }
+            try {
+                const encoder = new TextEncoder();
+                const data = encoder.encode(textToSend);
+                await txCharacteristic.writeValueWithoutResponse(data); // Or writeValue for acknowledged write
+                log(`UART TX: ${textToSend}`);
+                uartSendText.value = ""; // Clear input after sending
+            } catch (error) {
+                log(`Error sending UART data: ${error}`);
+            }
+        });
+
 
         function handleNotifications(event) {
             const value = event.target.value; // DataView

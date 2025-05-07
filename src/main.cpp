@@ -16,7 +16,7 @@
 // Define the global SystemInfo instance
 SystemInfo gSystemInfo;
 
-const unsigned long BATTERY_UPDATE_INTERVAL_MS = 10000;
+const unsigned long BATTERY_UPDATE_INTERVAL_MS = 1000;
 
 SoftwareTimer batteryCheckTimer; // Timer for battery check
 void setup() {

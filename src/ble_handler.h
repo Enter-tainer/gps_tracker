@@ -6,17 +6,6 @@
 #include "system_info.h" // For SYSTEM_INFO_FW_VERSION (optional for device name)
 #include <bluefruit.h>
 
-// --- UUIDs for File Transfer Service ---
-// You should generate your own unique UUIDs for a production application.
-// These are example UUIDs.
-// Service UUID: e.g., use "uuidgen" tool
-#define UUID_SVC_FILE_TRANSFER "4a98bdbd-e8f5-4476-a52c-8e10e5024df5"
-// Characteristic UUIDs:
-#define UUID_CHR_CONTROL_POINT                                                 \
-  "4a980001-e8f5-4476-a52c-8e10e5024df5" // For commands
-#define UUID_CHR_DATA_TRANSFER                                                 \
-  "4a980002-e8f5-4476-a52c-8e10e5024df5" // For data transfer
-
 #define MAX_FILENAME_LEN 64 // Maximum length for a filename
 #define BLE_DEFAULT_MTU_PAYLOAD                                                \
   20 // Default BLE payload size before MTU negotiation
