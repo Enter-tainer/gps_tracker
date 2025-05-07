@@ -249,6 +249,7 @@ void handleGPS() {
       // *** Power off without logging on timeout ***
       powerOffGPS();
       gSystemInfo.gpsState = GPS_OFF; // Go back to idle state
+      lastFixAttemptTime = millis();  // Reset last attempt time
 
     } else {
       // Still waiting for fix or minimum power on time, no timeout yet.

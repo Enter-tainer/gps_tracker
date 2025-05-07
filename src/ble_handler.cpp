@@ -74,7 +74,7 @@ void startAdv(void) {
   Bluefruit.Advertising.restartOnDisconnect(true);
   Bluefruit.Advertising.setInterval(32, 244); // in unit of 0.625 ms
   Bluefruit.Advertising.setFastTimeout(30);   // number of seconds in fast mode
-  Bluefruit.Advertising.start(0); // 0 = Don't stop advertising after n seconds
+  Bluefruit.Advertising.start(30); // 30 = stop advertising after 30 seconds
   Log.print("BLE: Advertising started.");
 }
 
