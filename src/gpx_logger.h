@@ -6,10 +6,10 @@
 // 内部存储的 GPS 航迹点的数据结构 (使用缩放后的整数) - 恢复这个结构体
 #pragma pack(push, 1)
 typedef struct {
-  uint32_t timestamp;           // Unix 时间戳 (秒)
-  int32_t latitude_scaled_1e7;  // 纬度 (度 * 10^7)
-  int32_t longitude_scaled_1e7; // 经度 (度 * 10^7)
-  float altitude_m;             // 海拔 (米)
+  uint32_t timestamp;            // Unix 时间戳 (秒)
+  int32_t latitude_scaled_1e7;   // 纬度 (度 * 10^7)
+  int32_t longitude_scaled_1e7;  // 经度 (度 * 10^7)
+  int32_t altitude_m_scaled_1e2; // 海拔 (米 * 100)
 } GpxPointInternal;
 #pragma pack(pop)
 

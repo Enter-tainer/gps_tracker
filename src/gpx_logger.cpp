@@ -22,7 +22,8 @@ bool appendGpxPoint(uint32_t timestamp, double latitude, double longitude,
   // 缩放并四舍五入到最近的整数
   entry.latitude_scaled_1e7 = static_cast<int32_t>(round(latitude * 1e7));
   entry.longitude_scaled_1e7 = static_cast<int32_t>(round(longitude * 1e7));
-  entry.altitude_m = altitude_m;
+  entry.altitude_m_scaled_1e2 =
+      static_cast<int32_t>(round(altitude_m * 100)); // 海拔缩放到厘米
 
   // 调用 LittleFS handler 来写入数据
   return writeGpsLogData(entry); // Pass the scaled data struct
