@@ -7,9 +7,9 @@
 #pragma pack(push, 1)
 typedef struct {
   uint32_t timestamp;            // Unix 时间戳 (秒)
-  int32_t latitude_scaled_1e7;   // 纬度 (度 * 10^7)
-  int32_t longitude_scaled_1e7;  // 经度 (度 * 10^7)
-  int32_t altitude_m_scaled_1e2; // 海拔 (米 * 100)
+  int32_t latitude_scaled_1e5;   // 纬度 (度 * 10^5)
+  int32_t longitude_scaled_1e5;  // 经度 (度 * 10^5)
+  int32_t altitude_m_scaled_1e1; // 海拔 (米 * 10)
 } GpxPointInternal;
 #pragma pack(pop)
 

@@ -164,13 +164,13 @@ static void logFixAndPowerOff() {
       gps.time.minute(), gps.time.second());
 
   // Get float values directly from gps object
-  float lat_float = gps.location.lat();
-  float lon_float = gps.location.lng();
-  float alt_m = gps.altitude.meters();
+  double lat_float = gps.location.lat();
+  double lon_float = gps.location.lng();
+  double alt_m = gps.altitude.meters();
 
   // Append the point
 
-  if (gps.hdop.hdop() / 100.f <= GPS_HDOP_THRESHOLD) {
+  if (gps.hdop.hdop() <= GPS_HDOP_THRESHOLD) {
     appendGpxPoint(timestamp, lat_float, lon_float, alt_m);
   }
   Log.println("GPX Point logged.");
