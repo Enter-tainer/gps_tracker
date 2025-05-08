@@ -4,6 +4,7 @@
 #include "gps_handler.h"     // For resetting GPS update timer
 #include "littlefs_handler.h"
 #include "logger.h"
+#include "utility/AdaCallback.h" // For ada_callback_fromISR
 #include <Arduino.h>
 
 // Button state variables
@@ -14,17 +15,19 @@ unsigned long pressStartTime =
 bool actionTriggeredForPress =
     false; // Flag to ensure action triggers only once per press
 
+void switchISR() { ada_callback(NULL, 0, handleButton); }
+
 void initButton() {
   pinMode(BUTTON_PIN, INPUT_PULLUP);
   Log.println("Button Pin Initialized");
-  attachInterrupt(BUTTON_PIN, handleButton, FALLING);
+  attachInterrupt(BUTTON_PIN, switchISR, FALLING);
 }
 
 void onButtonPushed() {
   Log.println("Button Held Action Triggered!");
   listInternalFlashContents(); // List files on button press
-  resetDisplayTimeout(); // Reset display timeout
-  toggleDisplay();       // Toggle display on press
+  resetDisplayTimeout();       // Reset display timeout
+  toggleDisplay();             // Toggle display on press
 }
 
 // Function to handle button press with debounce and hold duration requirement
