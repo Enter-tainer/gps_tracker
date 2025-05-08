@@ -5,6 +5,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>BLE UART File Transfer</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js" defer></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet-gpx/2.1.2/gpx.min.js" defer></script>
+    <style>
+        #map {
+            height: 500px;
+        }
+    </style>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -130,13 +138,22 @@
         </div>
 
         <div class="section">
+            <h2>4. Map</h2>
+            <div id="map"></div>
+        </div>
+
+        <div class="section">
             <h2>Log</h2>
             <button id="clearLogButton">Clear Log</button>
             <div id="logOutput"></div>
         </div>
     </div>
 
-    <script>
+    <script type="module">
+        const map = L.map('map');
+        L.tileLayer('http://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: 'Map data &copy; <a href="http://www.osm.org">OpenStreetMap</a>'
+        }).addTo(map);
         class GpsDataDecoder {
             constructor() {
                 // No specific constructor initialization needed for one-shot decoding
@@ -268,9 +285,7 @@
                 return points;
             }
         }
-    </script>
 
-    <script>
         const NRF_UART_SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
         const NRF_UART_RX_CHAR_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"; // Host to Device (Write)
         const NRF_UART_TX_CHAR_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"; // Device to Host (Notify)
@@ -581,9 +596,9 @@
                 } else {
                     const fileSize = payloadView.getUint32(3 + nameLength, true); // Little Endian
                     entryHtml += ` (File, ${fileSize} bytes)`;
-                    // 添加两个按钮：down as gpx 和 down as binary
                     entryHtml += `<br><button class='down-gpx-btn' data-filename='${name}'>down as gpx</button>`;
                     entryHtml += `<button class='down-bin-btn' data-filename='${name}'>down as binary</button>`;
+                    entryHtml += `<br><button class='preview-btn' data-filename='${name}'>preview gpx</button>`;
                 }
             } else if (entryType === 0x01) { // Directory
                 entryHtml += ` (Directory)`;
@@ -618,6 +633,12 @@
                 btn.onclick = async function () {
                     const filename = btn.getAttribute('data-filename');
                     await downloadAndSaveFile(filename, 'bin');
+                };
+            });
+            document.querySelectorAll('.preview-btn').forEach(btn => {
+                btn.onclick = async function () {
+                    const filename = btn.getAttribute('data-filename');
+                    await downloadAndSaveFile(filename, 'gpx-preview');
                 };
             });
         }
@@ -672,7 +693,19 @@
                 link.click();
                 document.body.removeChild(link);
                 URL.revokeObjectURL(link.href);
-            } else {
+            } else if (type === 'gpx-preview') {
+                const gpxPoints = decodeBinaryGpx(fullFileBytes);
+                const gpxData = GpxPointsToGpxTrack(gpxPoints);
+                const blob = new Blob([gpxData], { type: 'application/gpx+xml' });
+                const url = URL.createObjectURL(blob);
+                const gpx = new L.GPX(url, {
+                    async: true,
+                    polyline_options: { color: 'red' },
+                }).on('loaded', (e) => {
+                    map.fitBounds(e.target.getBounds());
+                }).addTo(map);
+            }
+            else {
                 const blob = new Blob([fullFileBytes], { type: 'application/octet-stream' });
                 const link = document.createElement('a');
                 link.href = URL.createObjectURL(blob);
