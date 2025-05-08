@@ -21,6 +21,8 @@ static uint32_t currentFileDate = 0; // Store date as YYYYMMDD for comparison
 static bool isFileOpen =
     false; // Flag to track if currentGpxFile holds a valid open file
 
+static GpsDataEncoder gpsDataEncoder(64);
+
 // Helper function to manage old log files
 void manageOldFiles() {
   std::vector<std::string> gpxFiles;
@@ -157,16 +159,16 @@ bool writeGpsLogData(const GpxPointInternal &entry) {
     Log.println("Cannot write GPS data: Log file not ready.");
     return false;
   }
+  auto len = gpsDataEncoder.encode(entry);
 
   // Write the binary data
-  size_t bytesWritten =
-      currentGpxFile.write((const uint8_t *)&entry, sizeof(GpxPointInternal));
+  size_t bytesWritten = currentGpxFile.write(gpsDataEncoder.getBuffer(), len);
 
-  if (bytesWritten != sizeof(GpxPointInternal)) {
+  if (bytesWritten != len) {
     Log.printf("Failed to write GPS data to %s. Expected %d, wrote %d\n",
                currentFilename.c_str(),
-               (int)sizeof(GpxPointInternal), // Cast size_t to int
-               (int)bytesWritten);            // Cast size_t to int
+               (int)len,           // Cast size_t to int
+               (int)bytesWritten); // Cast size_t to int
     // Attempt to close and mark as not open on error
     currentGpxFile.close();
     isFileOpen = false;   // Mark as closed due to error

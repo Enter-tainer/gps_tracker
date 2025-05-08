@@ -39,7 +39,7 @@ const float GPS_HDOP_THRESHOLD = 10; // only keep GPS point if HDOP is
 // below this threshold
 
 // LittleFS settings
-#define MAX_GPX_FILES 6 // Maximum number of daily GPX files to keep
+#define MAX_GPX_FILES 14 // Maximum number of daily GPX files to keep
 
 // Optional: GPS Power Enable Pin (if used) - Commented out as we define
 // PIN_GPS_EN above #define PIN_GPS_EN YOUR_GPS_ENABLE_PIN #define
