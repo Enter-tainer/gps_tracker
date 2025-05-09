@@ -119,6 +119,7 @@ bool RotateLogFileIfNeeded(uint32_t timestamp) {
       // Open succeeded, assign the valid file handle
       currentGpxFile = openedFile; // Assign the returned File object
       isFileOpen = true;           // Mark as open
+      gpsDataEncoder.clear();
       Log.printf("Successfully opened log file: %s\n", currentFilename.c_str());
     }
   }

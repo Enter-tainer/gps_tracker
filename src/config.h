@@ -33,7 +33,7 @@ const unsigned long GPS_FIX_INTERVAL =
 const unsigned long GPS_FIX_ATTEMPT_TIMEOUT =
     30000; // Max time to wait for a fix within an attempt (30 seconds in ms)
 const unsigned long GPS_MIN_POWER_ON_TIME =
-    1000; // Minimum time GPS stays powered on after starting an attempt (1
+    1500; // Minimum time GPS stays powered on after starting an attempt (1
           // second in ms)
 const float GPS_HDOP_THRESHOLD = 10; // only keep GPS point if HDOP is
 // below this threshold

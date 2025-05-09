@@ -1,20 +1,29 @@
 // filepath: src/gpx_logger.cpp
 #include "gpx_logger.h"
 #include "littlefs_handler.h" // <--- 包含 littlefs_handler
-#include <Arduino.h>          // For Serial
-#include <math.h>             // For round()
+#include "logger.h"
+#include <Arduino.h> // For Serial
+#include <math.h>    // For round()
 
 /**
  * @brief 追加一个新的 GPS 点。
  *        此函数将进行数据缩放，打包并调用文件系统处理程序进行写入。
  */
+uint32_t last_timestamp = 0;
 bool appendGpxPoint(uint32_t timestamp, double latitude, double longitude,
                     float altitude_m) {
   if (timestamp == 0) {
-    Serial.println(
+    Log.println(
         "Warning: Attempted to log point with zero timestamp. Skipping.");
     return false;
   }
+
+  if (timestamp < last_timestamp) {
+    Log.println("Warning: Timestamp is earlier than the last logged point. "
+                "Skipping this point.");
+    return false;
+  }
+  last_timestamp = timestamp;
 
   // 创建 GpxPointInternal 实例并进行缩放
   GpxPointInternal entry;
