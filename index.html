@@ -2,1005 +2,948 @@
 <html lang="en">
 
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BLE UART File Transfer</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js" defer></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet-gpx/2.1.2/gpx.min.js" defer></script>
-    <style>
-        #map {
-            height: 500px;
-        }
-    </style>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            margin: 20px;
-        }
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Web Bluetooth File Explorer with GPX Conversion</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js" defer></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet-gpx/2.1.2/gpx.min.js" defer></script>
+  <style>
+    #map {
+      height: 500px;
+    }
+  </style>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 20px;
+      background-color: #f4f4f4;
+      color: #333;
+    }
 
-        .container {
-            max-width: 800px;
-            margin: auto;
-        }
+    .container {
+      background-color: #fff;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+    }
 
-        .section {
-            margin-bottom: 20px;
-            padding: 15px;
-            border: 1px solid #ccc;
-            border-radius: 5px;
-        }
+    h1,
+    h2 {
+      color: #0056b3;
+    }
 
-        h2 {
-            margin-top: 0;
-        }
+    button,
+    .action-button {
+      background-color: #007bff;
+      color: white;
+      border: none;
+      padding: 8px 12px;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 0.9em;
+      margin: 5px 2px;
+      text-decoration: none;
+      display: inline-block;
+    }
 
-        button {
-            padding: 8px 15px;
-            margin-right: 10px;
-            cursor: pointer;
-        }
+    button:hover,
+    .action-button:hover {
+      background-color: #0056b3;
+    }
 
-        input[type="text"],
-        input[type="number"] {
-            padding: 8px;
-            margin-right: 10px;
-            width: 200px;
-        }
+    button:disabled,
+    .action-button:disabled {
+      background-color: #ccc;
+      cursor: not-allowed;
+    }
 
-        textarea {
-            width: 100%;
-            min-height: 100px;
-            box-sizing: border-box;
-            margin-top: 10px;
-        }
+    #fileList,
+    #messages {
+      margin-top: 15px;
+      padding: 10px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      background-color: #e9ecef;
+      min-height: 100px;
+      max-height: 300px;
+      overflow-y: auto;
+    }
 
-        pre {
-            background-color: #f0f0f0;
-            padding: 10px;
-            border-radius: 3px;
-            white-space: pre-wrap;
-            word-break: break-all;
-        }
+    #fileList .file-entry {
+      padding: 8px 5px;
+      border-bottom: 1px solid #ccc;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
 
-        .log-entry {
-            border-bottom: 1px dotted #eee;
-            padding-bottom: 5px;
-            margin-bottom: 5px;
-            font-size: 0.9em;
-        }
+    #fileList .file-entry:last-child {
+      border-bottom: none;
+    }
 
-        .log-entry.error {
-            color: red;
-        }
+    #fileList .file-name {
+      flex-grow: 1;
+    }
 
-        .file-entry {
-            padding: 5px;
-            border: 1px solid #e0e0e0;
-            margin-bottom: 5px;
-        }
+    #fileList .file-actions button,
+    #fileList .file-actions .action-button {
+      font-size: 0.8em;
+      padding: 5px 8px;
+    }
 
-        #fileContentArea {
-            display: none;
-            margin-top: 15px;
-        }
+    .file-item-name {
+      color: #007bff;
+    }
 
-        progress {
-            width: 100%;
-            height: 20px;
-            margin-top: 5px;
-        }
-    </style>
+    .dir-item-name {
+      color: #28a745;
+      cursor: pointer;
+    }
+
+    .dir-item-name:hover {
+      text-decoration: underline;
+    }
+
+    .status {
+      margin-top: 10px;
+      font-style: italic;
+    }
+
+    .section {
+      margin-bottom: 20px;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 5px;
+      font-weight: bold;
+    }
+
+    input[type="text"] {
+      width: calc(100% - 22px);
+      padding: 8px;
+      margin-bottom: 10px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+  </style>
 </head>
 
 <body>
-    <div class="container">
-        <h1>BLE UART File Transfer</h1>
+  <div class="container">
+    <h1>Web Bluetooth File Explorer & GPX Converter</h1>
 
-        <div class="section">
-            <h2>Connection</h2>
-            <button id="connectButton">Connect to Device</button>
-            <button id="disconnectButton" disabled>Disconnect</button>
-            <label for="chunkSize">Read Chunk Size (bytes):</label>
-            <input type="number" id="chunkSize" value="128" min="16" max="240">
-            <p>Status: <span id="status">Disconnected</span></p>
-        </div>
-
-        <div class="section">
-            <h2>1. List Directory</h2>
-            <label for="listPath">Path (e.g., / or /mydir):</label>
-            <input type="text" id="listPath" value="/">
-            <button id="listDirButton" disabled>List Directory</button>
-            <h3>Directory Contents:</h3>
-            <div id="dirListing"></div>
-        </div>
-
-        <div class="section">
-            <h2>2. Get File Info (CMD ID 0x05)</h2>
-            <label for="getInfoPath">File Path:</label>
-            <input type="text" id="getInfoPath" value="/log.txt">
-            <button id="getFileInfoButton" disabled>Get File Info</button>
-            <p id="fileInfoResult"></p>
-        </div>
-
-        <div class="section">
-            <h2>3. Download File</h2>
-            <label for="openFilePath">File Path to Download:</label>
-            <input type="text" id="openFilePath" value="/log.txt">
-            <button id="downloadFileButton" disabled>Download File</button>
-            <progress id="downloadProgress" value="0" max="100" style="display: none;"></progress>
-            <p id="downloadStatus"></p>
-            <div id="fileContentArea">
-                <h3>File Content:</h3>
-                <textarea id="fileContentTextarea" readonly></textarea>
-                <button id="saveFileButton" style="display:none;">Save to Disk</button>
-            </div>
-        </div>
-
-        <div class="section">
-            <h2>4. Map</h2>
-            <div id="map"></div>
-        </div>
-
-        <div class="section">
-            <h2>Log</h2>
-            <button id="clearLogButton">Clear Log</button>
-            <div id="logOutput"></div>
-        </div>
+    <div class="section">
+      <h2>1. Connection</h2>
+      <button id="connectButton">Connect to Device</button>
+      <div id="status" class="status">Disconnected</div>
     </div>
 
-    <script type="module">
-        const map = L.map('map');
-        L.tileLayer('http://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: 'Map data &copy; <a href="http://www.osm.org">OpenStreetMap</a>'
+    <div class="section">
+      <h2>2. File System</h2>
+      <label for="currentPath">Current Path:</label>
+      <input type="text" id="currentPath" value="/" readonly>
+      <button id="listDirButton" disabled>List Directory</button>
+      <div id="fileList">No files listed.</div>
+    </div>
+
+    <div class="section">
+      <div id="map"></div>
+    </div>
+
+    <div class="section">
+      <h2>3. Device Messages/Log</h2>
+      <div id="messages"></div>
+    </div>
+  </div>
+
+  <script type="module">
+    // --- Configuration ---
+    const UART_SERVICE_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e'; // Example: Nordic UART Service
+    const UART_TX_CHARACTERISTIC_UUID = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
+    const UART_RX_CHARACTERISTIC_UUID = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
+
+    // --- BLE Variables ---
+    let bleDevice;
+    let uartService;
+    let txCharacteristic;
+    let rxCharacteristic;
+    let isConnected = false;
+    let mtuSize = 23;
+
+    // --- DOM Elements ---
+    const connectButton = document.getElementById('connectButton');
+    const listDirButton = document.getElementById('listDirButton');
+    const fileListDiv = document.getElementById('fileList');
+    const messagesDiv = document.getElementById('messages');
+    const statusDiv = document.getElementById('status');
+    const currentPathInput = document.getElementById('currentPath');
+
+    // --- Protocol Constants ---
+    const CMD_ID = { LIST_DIR: 0x01, OPEN_FILE: 0x02, READ_CHUNK: 0x03, CLOSE_FILE: 0x04 };
+    const ENTRY_TYPE = { FILE: 0x00, DIRECTORY: 0x01 };
+
+    // --- Logging ---
+    function log(message, isError = false) {
+      const time = new Date().toLocaleTimeString();
+      messagesDiv.innerHTML += `<div style="${isError ? 'color:red;' : ''}">[${time}] ${message}</div>`;
+      messagesDiv.scrollTop = messagesDiv.scrollHeight;
+      if (isError) console.error(`[Log] ${message}`);
+      else console.log(`[Log] ${message}`);
+    }
+
+    // --- GpsDataDecoder Class (Modified for Robustness) ---
+    class GpsDataDecoder {
+      constructor() { }
+
+      _readVarintS32(view, offsetObj) {
+        let unsigned_val = 0;
+        let shift = 0;
+        let byte;
+        const initialOffset = offsetObj.offset; // For error reporting
+
+        for (let i = 0; i < 5; i++) {
+          if (offsetObj.offset >= view.byteLength) {
+            throw new Error(`Buffer underflow at offset ${initialOffset} while reading varint (byte ${i + 1}).`);
+          }
+          byte = view.getUint8(offsetObj.offset++);
+          unsigned_val |= (byte & 0x7F) << shift;
+          shift += 7;
+          if ((byte & 0x80) === 0) {
+            return (unsigned_val >>> 1) ^ -(unsigned_val & 1);
+          }
+        }
+        throw new Error(`Varint too long or malformed at offset ${initialOffset} (exceeded 5 bytes for s32).`);
+      }
+
+      decode(arrayBuffer) {
+        const points = [];
+        if (!arrayBuffer || arrayBuffer.byteLength === 0) {
+          log("GpsDataDecoder: Input ArrayBuffer is empty or null.", true);
+          return points;
+        }
+
+        const view = new DataView(arrayBuffer);
+        let offsetObj = { offset: 0 };
+
+        let previousPoint = {
+          timestamp: 0, latitude_scaled_1e5: 0,
+          longitude_scaled_1e5: 0, altitude_m_scaled_1e1: 0
+        };
+        let isFirstPoint = true;
+        let pointIndex = 0;
+
+        while (offsetObj.offset < view.byteLength) {
+          const pointStartOffset = offsetObj.offset;
+          try {
+            if (offsetObj.offset + 1 > view.byteLength) {
+              log(`GpsDataDecoder: Buffer underflow at offset ${offsetObj.offset}: cannot read header byte for point ${pointIndex}. Remaining bytes: ${view.byteLength - offsetObj.offset}`, true);
+              break; // Cannot read header, critical
+            }
+            const header = view.getUint8(offsetObj.offset++);
+            let currentPoint = {};
+
+            if (header === 0xFF) { // Full Block
+              if (offsetObj.offset + 16 > view.byteLength) {
+                throw new Error(`Buffer underflow for Full Block payload at offset ${offsetObj.offset}. Needed 16, got ${view.byteLength - offsetObj.offset}.`);
+              }
+              currentPoint.timestamp = view.getUint32(offsetObj.offset, true); offsetObj.offset += 4;
+              currentPoint.latitude_scaled_1e5 = view.getInt32(offsetObj.offset, true); offsetObj.offset += 4;
+              currentPoint.longitude_scaled_1e5 = view.getInt32(offsetObj.offset, true); offsetObj.offset += 4;
+              currentPoint.altitude_m_scaled_1e1 = view.getInt32(offsetObj.offset, true); offsetObj.offset += 4;
+              isFirstPoint = false;
+            } else if ((header & 0x80) === 0) { // Delta Block
+              if (isFirstPoint) {
+                throw new Error("Invalid data: Delta Block found as the first block.");
+              }
+              if ((header & 0xF0) !== 0x00) { // Check reserved bits (4-6)
+                throw new Error(`Invalid Delta Block header: 0x${header.toString(16)}. Reserved bits (4-6) must be 0.`);
+              }
+              currentPoint = { ...previousPoint };
+              const flags = header & 0x0F;
+
+              if ((flags >> 3) & 1) { currentPoint.timestamp = (currentPoint.timestamp + this._readVarintS32(view, offsetObj)) >>> 0; }
+              if ((flags >> 2) & 1) { currentPoint.latitude_scaled_1e5 += this._readVarintS32(view, offsetObj); }
+              if ((flags >> 1) & 1) { currentPoint.longitude_scaled_1e5 += this._readVarintS32(view, offsetObj); }
+              if (flags & 1) { currentPoint.altitude_m_scaled_1e1 += this._readVarintS32(view, offsetObj); }
+            } else {
+              throw new Error(`Invalid block header: 0x${header.toString(16)} at offset ${pointStartOffset}.`);
+            }
+            points.push(currentPoint);
+            previousPoint = currentPoint;
+
+          } catch (e) {
+            log(`GpsDataDecoder: Error decoding point ${pointIndex} at data offset ${pointStartOffset}: ${e.message}. Skipping point.`, true);
+            // Attempt to recover by finding the next potential header. This is speculative.
+            // If the error was due to a varint read, offsetObj.offset might be past the actual error point.
+            // For simplicity, if an error occurred, we assume the rest of *this* point's data is unusable.
+            // We already incremented offset for the header. If it fails after, the offset might be somewhere in the middle of data.
+            // A truly robust recovery is complex. For now, we'll just log and hope the next byte is a valid header.
+            // If the error was in _readVarintS32, offsetObj.offset would have been advanced.
+            // If not, and we need to ensure we move past the failing header:
+            if (offsetObj.offset === pointStartOffset + 1) {
+              // Error might be in header check itself, or first varint. If offset hasn't moved much,
+              // and we want to be sure we don't loop on the same byte:
+              // We could try to advance offsetObj.offset further, but it's risky.
+              // Safest is to break if errors are too frequent or cannot advance.
+              // For now, the loop continues from the current offsetObj.offset.
+            }
+            if (offsetObj.offset <= pointStartOffset) { // If offset didn't advance (e.g. error before any read in block)
+              log(`GpsDataDecoder: Offset did not advance after error at ${pointStartOffset}. Advancing by 1 to prevent infinite loop.`, true);
+              offsetObj.offset = pointStartOffset + 1; // Force advance
+            }
+          }
+          pointIndex++;
+        }
+
+        if (offsetObj.offset !== view.byteLength) {
+          log(`GpsDataDecoder: Finished but not all bytes consumed. Offset: ${offsetObj.offset}, Length: ${view.byteLength}. May indicate trailing data or incomplete final block.`, false);
+        }
+        log(`GpsDataDecoder: Decoded ${points.length} points.`);
+        return points;
+      }
+    }
+    const gpsDecoder = new GpsDataDecoder();
+
+    // --- GPX Conversion ---
+    function pointsToGpxString(points, fileName) {
+      if (!points || points.length === 0) {
+        log("No points to convert to GPX.", true);
+        return null;
+      }
+
+      let gpx = `<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<gpx xmlns="http://www.topografix.com/GPX/1/1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd"
+    version="1.1" creator="MGT GPS">
+  <metadata>
+    <name>${fileName.replace(/\.[^/.]+$/, "")}</name>
+    <time>${new Date(points[0].timestamp * 1000).toISOString()}</time>
+  </metadata>
+  <trk>
+    <name>${fileName.replace(/\.[^/.]+$/, "")}</name>
+    <trkseg>\n`;
+
+      for (const point of points) {
+        const lat = point.latitude_scaled_1e5 / 100000.0;
+        const lon = point.longitude_scaled_1e5 / 100000.0;
+        const ele = point.altitude_m_scaled_1e1 / 10.0;
+        const time = new Date(point.timestamp * 1000).toISOString();
+
+        // Basic validation for coordinates
+        if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+          log(`Skipping invalid point in GPX: Lat ${lat}, Lon ${lon}`, true);
+          continue;
+        }
+
+        gpx += `      <trkpt lat="${lat.toFixed(5)}" lon="${lon.toFixed(5)}">\n`;
+        gpx += `        <ele>${ele.toFixed(1)}</ele>\n`;
+        gpx += `        <time>${time}</time>\n`;
+        gpx += `      </trkpt>\n`;
+      }
+
+      gpx += `    </trkseg>
+  </trk>
+</gpx>`;
+      return gpx;
+    }
+
+
+    // --- UI and File Listing ---
+    function clearFileList() {
+      fileListDiv.innerHTML = '';
+    }
+
+    function addFileEntry(name, type, size = null, path) {
+      const entryDiv = document.createElement('div');
+      entryDiv.className = 'file-entry';
+
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'file-name';
+
+      if (type === ENTRY_TYPE.DIRECTORY) {
+        nameSpan.textContent = `${name} (Dir)`;
+        nameSpan.className += ' dir-item-name';
+        nameSpan.title = `Click to navigate to ${name}`;
+        nameSpan.onclick = () => navigateToDirectory(path, name);
+        entryDiv.appendChild(nameSpan);
+      } else { // File
+        nameSpan.textContent = `${name} (${size === null ? 'N/A' : size} bytes)`;
+        nameSpan.className += ' file-item-name';
+        entryDiv.appendChild(nameSpan);
+
+        const actionsDiv = document.createElement('div');
+        actionsDiv.className = 'file-actions';
+
+        const downloadRawButton = document.createElement('button');
+        downloadRawButton.textContent = 'Download Raw';
+        downloadRawButton.className = 'action-button';
+        downloadRawButton.onclick = () => downloadFile(path, name, size, false);
+        actionsDiv.appendChild(downloadRawButton);
+
+        const downloadGpxButton = document.createElement('button');
+        downloadGpxButton.textContent = 'Download as GPX';
+        downloadGpxButton.className = 'action-button';
+        const previewGpxButton = document.createElement('button');
+        previewGpxButton.textContent = 'Preview GPX';
+        previewGpxButton.className = 'action-button';
+        // Assuming any file could be GPX data, enable for all.
+        // Could check extension like: name.toLowerCase().endsWith('.dat')
+        downloadGpxButton.onclick = () => downloadAndConvertToGpx(path, name, size, true);
+        previewGpxButton.onclick = () => downloadAndConvertToGpx(path, name, size, false);
+        actionsDiv.appendChild(downloadGpxButton);
+        actionsDiv.appendChild(previewGpxButton);
+        entryDiv.appendChild(actionsDiv);
+      }
+      fileListDiv.appendChild(entryDiv);
+    }
+
+
+    // --- Web Bluetooth Functions (Connect, Disconnect, Send) ---
+    connectButton.onclick = async () => {
+      if (!isConnected) {
+        try {
+          log('Requesting Bluetooth device...');
+          bleDevice = await navigator.bluetooth.requestDevice({
+            filters: [{ services: [UART_SERVICE_UUID] }],
+          });
+          log(`Connecting to ${bleDevice.name || `ID: ${bleDevice.id}`}...`);
+          statusDiv.textContent = `Connecting to ${bleDevice.name}...`;
+          const server = await bleDevice.gatt.connect();
+          log('Connected to GATT Server.');
+          uartService = await server.getPrimaryService(UART_SERVICE_UUID);
+          log('UART Service obtained.');
+          txCharacteristic = await uartService.getCharacteristic(UART_TX_CHARACTERISTIC_UUID);
+          log('TX Characteristic obtained.');
+          rxCharacteristic = await uartService.getCharacteristic(UART_RX_CHARACTERISTIC_UUID);
+          log('RX Characteristic obtained.');
+          await rxCharacteristic.startNotifications();
+          rxCharacteristic.addEventListener('characteristicvaluechanged', handleRxData);
+          log('Notifications started.');
+
+          mtuSize = bleDevice.gatt.mtu || 247; // More realistic default if available
+          log(`Assumed/Reported MTU: ${mtuSize} bytes.`);
+
+          isConnected = true;
+          connectButton.textContent = 'Disconnect';
+          statusDiv.textContent = `Connected to ${bleDevice.name || bleDevice.id}`;
+          listDirButton.disabled = false;
+          bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
+          await listDirectory('/');
+        } catch (error) {
+          log(`Error connecting: ${error.message}`, true);
+          console.error("Connection Error:", error);
+          statusDiv.textContent = `Error: ${error.message.substring(0, 50)}...`;
+          if (bleDevice && bleDevice.gatt.connected) bleDevice.gatt.disconnect();
+        }
+      } else {
+        if (bleDevice && bleDevice.gatt.connected) {
+          log('Disconnecting...');
+          bleDevice.gatt.disconnect();
+        } else {
+          onDisconnected();
+        }
+      }
+    };
+
+    function onDisconnected() {
+      log('Device disconnected.');
+      isConnected = false;
+      connectButton.textContent = 'Connect to Device';
+      statusDiv.textContent = 'Disconnected';
+      listDirButton.disabled = true;
+      rxCharacteristic = null; txCharacteristic = null; uartService = null; bleDevice = null;
+      clearFileList();
+      fileListDiv.textContent = 'Disconnected. Connect to a device to list files.';
+      currentPathInput.value = "/";
+    }
+
+    async function sendBleData(data) {
+      if (!txCharacteristic || !isConnected) {
+        log('Error: TX Characteristic not available or not connected.', true);
+        return;
+      }
+      try {
+        // Using writeValueWithoutResponse for speed, as per common UART implementations
+        await txCharacteristic.writeValueWithoutResponse(data);
+        log(`Sent ${data.byteLength} bytes: ${Array.from(new Uint8Array(data)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
+      } catch (error) {
+        log(`Error sending data: ${error}`, true);
+      }
+    }
+
+    // --- Protocol Implementation (LIST_DIR, OPEN_FILE, READ_CHUNK, CLOSE_FILE) ---
+    let currentListDirPromise = null;
+    let listDirEntries = [];
+    let currentOpenFilePromise = null;
+    let currentReadChunkPromise = null;
+    let currentCloseFilePromise = null;
+
+    async function listDirectory(path) {
+      if (!isConnected) { log("Not connected.", true); return; }
+      currentPathInput.value = path;
+      clearFileList();
+      if (path !== "/") { // Add ".." entry for navigation, except for root
+        addFileEntry("..", ENTRY_TYPE.DIRECTORY, null, path.substring(0, path.lastIndexOf('/')) || "/");
+      }
+      log(`Listing directory: ${path}...`);
+      listDirButton.disabled = true;
+      listDirEntries = [];
+
+      return new Promise(async (resolve, reject) => {
+        currentListDirPromise = { resolve, reject, path };
+        const pathBytes = new TextEncoder().encode(path);
+        // Path Length field itself is 1 byte.
+        // If path is "/", Path Length in payload is 1, Path is "/".
+        // If path is "/logs", Path Length is 5, Path is "/logs".
+        // If path is "", spec says Path Length 0 for root. But our code uses "/".
+        // The spec for LIST_DIR CMD Payload: Path Length (1B), Path (ASCII, Variable)
+        // "Path Length: Path field's length. If 0, then list root."
+        // My previous code had: `payloadLength = 1 + pathBytes.byteLength;` and `view.setUint8(offset, pathBytes.byteLength);`
+        // This seems to align with the *spirit* if not the exact wording if path="/" was sent as pathlength=1, path="/".
+        // Let's stick to the spec more closely: if path is "/", send pathLength=0.
+        let actualPathBytesToSend = pathBytes;
+        let pathLengthField = actualPathBytesToSend.byteLength;
+
+        if (path === "/") { // Special handling for root as per spec example (Path Length 0)
+          // However, the example LIST_DIR CMD for root has PayloadLen=1, PathLength=1, Path="/".
+          // This is contradictory. "Path Length: ... If 0, then list root."
+          // vs "Example: CMD ID:01, PayloadLen:1, Payload: PathLength:01, Path:/"
+          // Let's try to follow the "Path Length = 0 for root" if the device expects that.
+          // For now, I will keep the previous logic which sent "/" with length 1, as it was working.
+          // If issues arise, this is a point to check.
+          // The example in proto spec shows: Payload: Path Length (1B) = 0x01, Path (ASCII, Var) = `/` (0x2F)
+          // This means payload for listing root IS: 0x01 0x2F (PathLength byte itself, then path)
+          // So total PayloadLen for LIST_DIR for root is 1 (the PathLength byte) + 1 (the path byte '/'). Total 2.
+          // NO, the example shows for LIST_DIR for root: Payload Len (2B) = 1, Payload: Path Length (1B) = 0.
+          // This seems to mean the "Path" field is empty, and its length is 0.
+          // Let's try the spec: "Path Length: Path field's length. If 0, list root"
+          // So, CMD_ID (1B) | Payload Len (2B) | PathActualLength (1B) | Path (Variable)
+          // If path == "/", send PathActualLength = 0. Payload will be just this 1 byte.
+          // So, command is CMD_ID | 0x0001 (little endian for payload length) | 0x00 (path length is zero)
+          // This seems more consistent.
+
+          let pLengthForPayload; // Length of the "Path" string itself.
+          let pathBytesForPayload;
+
+          if (path === "/") {
+            pLengthForPayload = 0;
+            pathBytesForPayload = new Uint8Array(0); // No path bytes
+          } else {
+            pathBytesForPayload = new TextEncoder().encode(path);
+            pLengthForPayload = pathBytesForPayload.byteLength;
+          }
+
+          const cmdPayloadLength = 1 + pLengthForPayload; // Path Length (1B) + actual path string
+          const buffer = new ArrayBuffer(1 + 2 + cmdPayloadLength); // CMD_ID + OverallPayloadLen_uint16 + (PathLen_uint8 + Path_string)
+          const view = new DataView(buffer);
+
+          let offset = 0;
+          view.setUint8(offset, CMD_ID.LIST_DIR); offset++;
+          view.setUint16(offset, cmdPayloadLength, true); offset += 2; // Overall payload length
+          view.setUint8(offset, pLengthForPayload); offset++;       // Length of the path string that follows
+          if (pLengthForPayload > 0) {
+            new Uint8Array(buffer, offset).set(pathBytesForPayload);
+          }
+
+          await sendBleData(buffer);
+        }
+      }).finally(() => { listDirButton.disabled = false; });
+    }
+    listDirButton.onclick = () => listDirectory(currentPathInput.value);
+
+
+    async function openFile(filePath) {
+      if (!isConnected) { log("Not connected.", true); return Promise.reject("Not connected"); }
+      log(`Opening file: ${filePath}...`);
+      return new Promise(async (resolve, reject) => {
+        currentOpenFilePromise = { resolve, reject, filePath };
+        const pathBytes = new TextEncoder().encode(filePath);
+        const payloadLength = 1 + pathBytes.byteLength; // File Path Length (1B) + File Path string
+        const buffer = new ArrayBuffer(1 + 2 + payloadLength);
+        const view = new DataView(buffer);
+        let offset = 0;
+        view.setUint8(offset, CMD_ID.OPEN_FILE); offset++;
+        view.setUint16(offset, payloadLength, true); offset += 2;
+        view.setUint8(offset, pathBytes.byteLength); offset++;
+        new Uint8Array(buffer, offset).set(pathBytes);
+        await sendBleData(buffer);
+      });
+    }
+
+    async function readFileChunk(offset, bytesToRead) {
+      if (!isConnected) { log("Not connected.", true); return Promise.reject("Not connected"); }
+      log(`Reading chunk: offset=${offset}, length=${bytesToRead}`);
+      return new Promise(async (resolve, reject) => {
+        currentReadChunkPromise = { resolve, reject };
+        const payloadLength = 4 + 2; // Offset (4B) + Bytes to Read (2B)
+        const buffer = new ArrayBuffer(1 + 2 + payloadLength);
+        const view = new DataView(buffer);
+        let idx = 0;
+        view.setUint8(idx, CMD_ID.READ_CHUNK); idx++;
+        view.setUint16(idx, payloadLength, true); idx += 2;
+        view.setUint32(idx, offset, true); idx += 4;
+        view.setUint16(idx, bytesToRead, true);
+        await sendBleData(buffer);
+      });
+    }
+
+    async function closeFile() {
+      if (!isConnected) { log("Not connected.", true); return Promise.reject("Not connected"); }
+      log(`Closing file...`);
+      return new Promise(async (resolve, reject) => {
+        currentCloseFilePromise = { resolve, reject };
+        const payloadLength = 0;
+        const buffer = new ArrayBuffer(1 + 2 + payloadLength);
+        const view = new DataView(buffer);
+        view.setUint8(0, CMD_ID.CLOSE_FILE);
+        view.setUint16(1, payloadLength, true);
+        await sendBleData(buffer);
+      });
+    }
+
+    // --- RX Data Handler ---
+    function handleRxData(event) {
+      const value = event.target.value; // DataView
+      const dataArray = new Uint8Array(value.buffer);
+      log(`Received ${dataArray.byteLength} bytes: ${Array.from(dataArray).map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
+
+      if (dataArray.length < 2) { log("Error: RX data too short for Payload Len.", true); return; }
+      const payloadLen = value.getUint16(0, true);
+      const payload = new DataView(value.buffer, 2, payloadLen);
+      log(`Parsed RX Payload Len: ${payloadLen}`);
+
+      if (payload.byteLength !== payloadLen) {
+        log(`Error: Actual RX payload length (${payload.byteLength}) does not match header (${payloadLen}).`, true);
+      }
+
+      if (currentListDirPromise) {
+        // ... (LIST_DIR_RSP handling - ensuring it uses the current path from the promise)
+        const promise = currentListDirPromise; // Capture before it's potentially nulled
+
+        if (payloadLen === 0) {
+          log("LIST_DIR_RSP: Empty payload or error for path: " + promise.path, true);
+          if (promise.reject) promise.reject("Empty LIST_DIR_RSP");
+          currentListDirPromise = null; return;
+        }
+        if (payloadLen === 1 && payload.byteLength >= 1 && payload.getUint8(0) === 0x00) {
+          log(`LIST_DIR_RSP for ${promise.path}: No more entries (or empty directory). Listing complete.`);
+          if (listDirEntries.length === 0) fileListDiv.innerHTML += `<div>Directory is empty or no entries found.</div>`;
+          if (promise.resolve) promise.resolve(listDirEntries);
+          currentListDirPromise = null; return;
+        }
+        if (payload.byteLength < 3) { // Min: More Flag (1) + Entry Type (1) + Name Length (1)
+          log(`LIST_DIR_RSP for ${promise.path}: Payload too short (${payload.byteLength}B) for minimal entry.`, true);
+          if (promise.reject) promise.reject("LIST_DIR_RSP too short");
+          currentListDirPromise = null; return;
+        }
+
+        let offset = 0;
+        const moreFlag = payload.getUint8(offset); offset++;
+        const entryType = payload.getUint8(offset); offset++;
+        const nameLength = payload.getUint8(offset); offset++;
+
+        if (offset + nameLength > payload.byteLength) {
+          log(`LIST_DIR_RSP for ${promise.path}: Name length (${nameLength}) exceeds payload bounds (${payload.byteLength - offset} available).`, true);
+          if (promise.reject) promise.reject("LIST_DIR_RSP name length error");
+          currentListDirPromise = null; return;
+        }
+        const nameBytes = new Uint8Array(payload.buffer, payload.byteOffset + offset, nameLength);
+        const name = new TextDecoder().decode(nameBytes);
+        offset += nameLength;
+        log(`LIST_DIR_RSP: Path=${promise.path}, More=${moreFlag}, Type=${entryType}, Name=${name}`);
+
+        let fileSize = null;
+        if (entryType === ENTRY_TYPE.FILE) {
+          if (offset + 4 <= payload.byteLength) {
+            fileSize = payload.getUint32(offset, true);
+            log(`  File Size: ${fileSize}`);
+          } else { log(`LIST_DIR_RSP for ${promise.path}: File entry '${name}', but file size is missing or payload too short.`, true); }
+        }
+        // Construct full path for the entry. promise.path is the *directory* being listed.
+        const entryFullPath = (promise.path === '/' ? '/' : promise.path + '/') + name;
+        addFileEntry(name, entryType, fileSize, entryFullPath.replace(/\/\//g, '/'));
+        listDirEntries.push({ name, type: entryType, size: fileSize, path: entryFullPath.replace(/\/\//g, '/') });
+
+        if (moreFlag === 0x00) {
+          log(`LIST_DIR_RSP for ${promise.path}: No more entries. Listing complete.`);
+          if (promise.resolve) promise.resolve(listDirEntries);
+          currentListDirPromise = null;
+        } else {
+          log(`LIST_DIR_RSP for ${promise.path}: More entries exist, requesting next...`);
+          // Re-send LIST_DIR for the *same directory path* (promise.path)
+          const pathForNext = promise.path;
+          let pLengthForPayload;
+          let pathBytesForPayload;
+          if (pathForNext === "/") { pLengthForPayload = 0; pathBytesForPayload = new Uint8Array(0); }
+          else { pathBytesForPayload = new TextEncoder().encode(pathForNext); pLengthForPayload = pathBytesForPayload.byteLength; }
+
+          const cmdPayloadLength = 1 + pLengthForPayload;
+          const buffer = new ArrayBuffer(1 + 2 + cmdPayloadLength);
+          const view = new DataView(buffer);
+          let o = 0;
+          view.setUint8(o, CMD_ID.LIST_DIR); o++;
+          view.setUint16(o, cmdPayloadLength, true); o += 2;
+          view.setUint8(o, pLengthForPayload); o++;
+          if (pLengthForPayload > 0) new Uint8Array(buffer, o).set(pathBytesForPayload);
+          sendBleData(buffer); // The currentListDirPromise remains active for the next response
+        }
+      } else if (currentOpenFilePromise) {
+        const promise = currentOpenFilePromise; currentOpenFilePromise = null;
+        if (payloadLen === 4 && payload.byteLength === 4) {
+          const fileSize = payload.getUint32(0, true);
+          log(`OPEN_FILE_RSP for ${promise.filePath}: Success, File Size = ${fileSize} bytes.`);
+          promise.resolve({ filePath: promise.filePath, fileSize });
+        } else if (payloadLen === 0) {
+          log(`OPEN_FILE_RSP for ${promise.filePath}: Failed to open file.`, true);
+          promise.reject(`Failed to open file: ${promise.filePath}`);
+        } else {
+          log(`OPEN_FILE_RSP for ${promise.filePath}: Unexpected payload length ${payloadLen}.`, true);
+          promise.reject(`OPEN_FILE_RSP unexpected payload for ${promise.filePath}`);
+        }
+      } else if (currentReadChunkPromise) {
+        const promise = currentReadChunkPromise; currentReadChunkPromise = null;
+        if (payloadLen >= 2 && payload.byteLength >= 2) {
+          const actualBytesRead = payload.getUint16(0, true);
+          log(`READ_CHUNK_RSP: Actual Bytes Read = ${actualBytesRead}`);
+          if (actualBytesRead > 0) {
+            if (payload.byteLength >= 2 + actualBytesRead) {
+              const fileData = new Uint8Array(payload.buffer, payload.byteOffset + 2, actualBytesRead);
+              promise.resolve({ actualBytesRead, data: fileData });
+            } else {
+              log("READ_CHUNK_RSP: actualBytesRead > 0 but payload too short for data.", true);
+              promise.reject("READ_CHUNK_RSP: inconsistent payload for data");
+            }
+          } else {
+            promise.resolve({ actualBytesRead: 0, data: new Uint8Array(0) });
+          }
+        } else {
+          log("READ_CHUNK_RSP: Payload too short for 'Actual Bytes Read'.", true);
+          promise.reject("READ_CHUNK_RSP: payload too short");
+        }
+      } else if (currentCloseFilePromise) {
+        const promise = currentCloseFilePromise; currentCloseFilePromise = null;
+        if (payloadLen === 0) {
+          log("CLOSE_FILE_RSP: File closed successfully.");
+          promise.resolve();
+        } else {
+          log(`CLOSE_FILE_RSP: Unexpected payload length ${payloadLen}. Assuming closed.`, true);
+          promise.resolve();
+        }
+      } else {
+        log("Received data, but no matching command promise was found. Ignoring.", true);
+      }
+    }
+
+    // --- File Download Logic ---
+    async function downloadFileCore(filePath, fileName, expectedSize) {
+      // This function will handle the BLE communication to get the raw ArrayBuffer
+      if (!isConnected) {
+        log("Cannot download: Not connected.", true);
+        throw new Error("Not connected");
+      }
+      log(`Starting raw download for: ${filePath} (Size: ${expectedSize} bytes)`);
+      listDirButton.disabled = true;
+
+      try {
+        const { fileSize: openedFileSize } = await openFile(filePath);
+        let effectiveFileSize = openedFileSize;
+        if (expectedSize !== null && openedFileSize !== expectedSize) {
+          log(`Warning: Opened file size (${openedFileSize}) differs from listed size (${expectedSize}). Using opened size.`);
+        } else if (expectedSize !== null) {
+          effectiveFileSize = expectedSize; // Prefer listed size if consistent or only one available
+        }
+        log(`File opened: ${filePath}, Effective Size: ${effectiveFileSize} bytes.`);
+
+        let receivedBytes = 0;
+        const fileChunks = [];
+        // Max data in READ_CHUNK_RSP payload = MTU - ATT_HDR(3) - UART_RX_HDR(0 for this level) - Proto_RSP_HDR(PayloadLen=2 + ActualBytesRead=2)
+        // So, max data = MTU - 3 - 4 = MTU - 7.
+        // Let's be slightly more conservative: mtuSize - 10 or a fixed like 128.
+        const CHUNK_SIZE_TO_REQUEST = Math.max(16, Math.min(128, mtuSize - 10));
+        log(`Requesting chunks of size: ${CHUNK_SIZE_TO_REQUEST}`);
+
+        while (receivedBytes < effectiveFileSize) {
+          const bytesToRead = Math.min(CHUNK_SIZE_TO_REQUEST, effectiveFileSize - receivedBytes);
+          if (bytesToRead <= 0) break;
+
+          statusDiv.textContent = `Downloading ${fileName}: ${Math.round((receivedBytes / effectiveFileSize) * 100)}%`;
+          const { actualBytesRead, data } = await readFileChunk(receivedBytes, bytesToRead);
+
+          if (actualBytesRead > 0 && data) {
+            fileChunks.push(data);
+            receivedBytes += actualBytesRead;
+            log(`Downloaded ${receivedBytes} / ${effectiveFileSize} bytes...`);
+          } else {
+            log("Reached EOF or read error (actualBytesRead is 0 or no data).");
+            if (receivedBytes < effectiveFileSize) {
+              log(`Warning: Download ended prematurely. Expected ${effectiveFileSize}, got ${receivedBytes}.`, true);
+            }
+            break;
+          }
+        }
+        statusDiv.textContent = `Downloaded ${fileName}: ${Math.round((receivedBytes / effectiveFileSize) * 100)}% Complete.`;
+
+        if (fileChunks.length > 0) {
+          const totalReceived = fileChunks.reduce((acc, chunk) => acc + chunk.byteLength, 0);
+          if (totalReceived !== receivedBytes) { // Sanity check
+            log(`Internal Mismatch: receivedBytes=${receivedBytes}, chunksTotal=${totalReceived}`, true);
+          }
+          // Combine chunks into a single ArrayBuffer
+          const finalBuffer = new Uint8Array(totalReceived);
+          let currentOffset = 0;
+          for (const chunk of fileChunks) {
+            finalBuffer.set(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength), currentOffset);
+            currentOffset += chunk.byteLength;
+          }
+          return finalBuffer.buffer; // Return the ArrayBuffer
+        } else if (effectiveFileSize === 0 && receivedBytes === 0) {
+          log("Downloaded an empty file successfully.");
+          return new ArrayBuffer(0);
+        }
+        else {
+          throw new Error(`Download failed or file empty. Received ${receivedBytes} of ${effectiveFileSize} bytes.`);
+        }
+
+      } catch (error) {
+        log(`Error during raw download of ${filePath}: ${error}`, true);
+        statusDiv.textContent = `Error downloading ${filePath}`;
+        throw error; // Re-throw to be caught by caller
+      } finally {
+        try {
+          await closeFile();
+          log("File closed after raw download attempt for " + filePath);
+        } catch (closeError) {
+          log(`Error closing file after raw download of ${filePath}: ${closeError}`, true);
+        }
+        listDirButton.disabled = false;
+        if (isConnected) statusDiv.textContent = `Connected to ${bleDevice.name || bleDevice.id}`;
+      }
+    }
+
+    async function downloadFile(filePath, fileName, expectedSize) {
+      try {
+        const rawFileBuffer = await downloadFileCore(filePath, fileName, expectedSize);
+        if (rawFileBuffer) {
+          const fileBlob = new Blob([rawFileBuffer]);
+          const downloadUrl = URL.createObjectURL(fileBlob);
+          const a = document.createElement('a');
+          a.href = downloadUrl;
+          a.download = fileName;
+          document.body.appendChild(a);
+          a.click();
+          URL.revokeObjectURL(downloadUrl);
+          a.remove();
+          log(`Raw file "${fileName}" saved.`);
+          statusDiv.textContent = `Saved ${fileName}`;
+        }
+      } catch (error) {
+        log(`Overall download process for ${fileName} failed: ${error}`, true);
+      }
+    }
+
+
+    async function downloadAndConvertToGpx(filePath, fileName, expectedSize, download) {
+      try {
+        statusDiv.textContent = `Downloading ${fileName} for GPX conversion...`;
+        const rawFileBuffer = await downloadFileCore(filePath, fileName, expectedSize);
+
+        if (!rawFileBuffer) {
+          log(`GPX Conversion: Failed to download raw data for ${fileName}.`, true);
+          statusDiv.textContent = `GPX conversion failed for ${fileName}.`;
+          return;
+        }
+        log(`GPX Conversion: Raw data downloaded for ${fileName} (${rawFileBuffer.byteLength} bytes). Decoding...`);
+        statusDiv.textContent = `Decoding ${fileName}...`;
+
+        const decodedPoints = gpsDecoder.decode(rawFileBuffer);
+        if (!decodedPoints || decodedPoints.length === 0) {
+          log(`GPX Conversion: No points decoded from ${fileName}, or decoder returned empty.`, true);
+          alert(`Could not decode any GPX points from ${fileName}. Check logs for details.`);
+          statusDiv.textContent = `GPX decoding failed for ${fileName}.`;
+          return;
+        }
+
+        log(`GPX Conversion: Decoded ${decodedPoints.length} points. Generating GPX string...`);
+        statusDiv.textContent = `Generating GPX for ${fileName}...`;
+
+        const gpxString = pointsToGpxString(decodedPoints, fileName);
+        if (!gpxString) {
+          log(`GPX Conversion: Failed to generate GPX string for ${fileName}.`, true);
+          alert(`Could not generate GPX string from decoded points for ${fileName}.`);
+          statusDiv.textContent = `GPX generation failed for ${fileName}.`;
+          return;
+        }
+
+        const gpxFileName = fileName.replace(/\.[^/.]+$/, "") + ".gpx";
+        const gpxBlob = new Blob([gpxString], { type: 'application/gpx+xml' });
+        const downloadUrl = URL.createObjectURL(gpxBlob);
+        const gpx = new L.GPX(downloadUrl, {
+          async: true,
+          polyline_options: { color: 'green' },
+        }).on('loaded', (e) => {
+          map.fitBounds(e.target.getBounds());
         }).addTo(map);
-        class GpsDataDecoder {
-            constructor() {
-                // No specific constructor initialization needed for one-shot decoding
-            }
-
-            /**
-             * Helper function to read a ZigZag-Varint encoded signed 32-bit integer.
-             * @param {DataView} view The DataView for the buffer.
-             * @param {{offset: number}} offsetObj An object holding the current offset, will be updated.
-             * @returns {number} The decoded signed 32-bit integer.
-             */
-            _readVarintS32(view, offsetObj) {
-                let unsigned_val = 0;
-                let shift = 0;
-                let byte;
-
-                for (let i = 0; i < 5; i++) { // Max 5 bytes for a 32-bit integer
-                    if (offsetObj.offset >= view.byteLength) {
-                        throw new Error("Buffer underflow while reading varint.");
-                    }
-                    byte = view.getUint8(offsetObj.offset++);
-                    unsigned_val |= (byte & 0x7F) << shift;
-                    shift += 7;
-                    if ((byte & 0x80) === 0) {
-                        // ZigZag decode: (unsigned_val >>> 1) ^ -(unsigned_val & 1)
-                        // For positive n, (n << 1). For negative n, ((-n) << 1) - 1.
-                        // (val_unsigned >>> 1) effectively divides by 2.
-                        // -(val_unsigned & 1) is 0 if LSB is 0 (positive original), or -1 if LSB is 1 (negative original).
-                        // So, for positive: (val_unsigned / 2) ^ 0 = val_unsigned / 2
-                        // For negative: (val_unsigned / 2) ^ -1 = ~(val_unsigned / 2)
-                        return (unsigned_val >>> 1) ^ -(unsigned_val & 1);
-                    }
-                }
-                throw new Error("Varint too long or malformed (exceeded 5 bytes for s32).");
-            }
-
-            /**
-             * Decodes an ArrayBuffer containing GPS data according to the protocol.
-             * @param {ArrayBuffer} arrayBuffer The raw byte data.
-             * @returns {Array<Object>} An array of GpxPoint objects.
-             * Each object will have: timestamp, latitude_scaled_1e5,
-             * longitude_scaled_1e5, altitude_m_scaled_1e1.
-             */
-            decode(arrayBuffer) {
-                const points = [];
-                if (!arrayBuffer || arrayBuffer.byteLength === 0) {
-                    return points;
-                }
-
-                const view = new DataView(arrayBuffer);
-                let offsetObj = { offset: 0 }; // Use object to pass offset by reference
-
-                let previousPoint = {
-                    timestamp: 0,
-                    latitude_scaled_1e5: 0,
-                    longitude_scaled_1e5: 0,
-                    altitude_m_scaled_1e1: 0
-                };
-                let isFirstPoint = true;
-
-                while (offsetObj.offset < view.byteLength) {
-                    if (offsetObj.offset + 1 > view.byteLength) {
-                        throw new Error("Buffer underflow: cannot read header byte.");
-                    }
-                    const header = view.getUint8(offsetObj.offset++);
-                    let currentPoint = {};
-
-                    if (header === 0xFF) { // Full Block
-                        if (offsetObj.offset + 16 > view.byteLength) {
-                            throw new Error("Buffer underflow: not enough data for Full Block payload.");
-                        }
-                        currentPoint.timestamp = view.getUint32(offsetObj.offset, true); // true for little-endian
-                        offsetObj.offset += 4;
-                        currentPoint.latitude_scaled_1e5 = view.getInt32(offsetObj.offset, true);
-                        offsetObj.offset += 4;
-                        currentPoint.longitude_scaled_1e5 = view.getInt32(offsetObj.offset, true);
-                        offsetObj.offset += 4;
-                        currentPoint.altitude_m_scaled_1e1 = view.getInt32(offsetObj.offset, true);
-                        offsetObj.offset += 4;
-
-                        isFirstPoint = false;
-                    } else if ((header & 0x80) === 0) { // Delta Block (MSB is 0)
-                        if (isFirstPoint) {
-                            throw new Error("Invalid data: Delta Block found as the first block.");
-                        }
-                        // Initialize currentPoint by copying previousPoint
-                        currentPoint = { ...previousPoint };
-
-                        const flags = header & 0x0F; // Lower 4 bits determine which deltas are present
-                        // H_TS (bit 3), H_LAT (bit 2), H_LON (bit 1), H_ALT (bit 0)
-
-                        if ((flags >> 3) & 1) { // Timestamp delta present
-                            const delta = this._readVarintS32(view, offsetObj);
-                            // Apply delta, ensuring uint32 behavior (wrap around)
-                            currentPoint.timestamp = (currentPoint.timestamp + delta) >>> 0;
-                        }
-                        if ((flags >> 2) & 1) { // Latitude delta present
-                            const delta = this._readVarintS32(view, offsetObj);
-                            currentPoint.latitude_scaled_1e5 += delta;
-                        }
-                        if ((flags >> 1) & 1) { // Longitude delta present
-                            const delta = this._readVarintS32(view, offsetObj);
-                            currentPoint.longitude_scaled_1e5 += delta;
-                        }
-                        if (flags & 1) { // Altitude delta present
-                            const delta = this._readVarintS32(view, offsetObj);
-                            currentPoint.altitude_m_scaled_1e1 += delta;
-                        }
-                    } else {
-                        // This case should not be reached if header interpretation is correct
-                        // (bit 7 is 1 -> 0xFF, bit 7 is 0 -> 0x00 to 0x0F are main delta types)
-                        // Any other value with bit 7 == 1 is an error, or if bits 4-6 of delta header are non-zero.
-                        // The protocol says bits 4-6 are reserved (0).
-                        if ((header & 0xF0) !== 0x00 && (header & 0x80) === 0) {
-                            throw new Error(`Invalid Delta Block header: 0x${header.toString(16)}. Reserved bits (4-6) must be 0.`);
-                        }
-                        throw new Error(`Invalid block header: 0x${header.toString(16)}`);
-                    }
-
-                    points.push(currentPoint);
-                    previousPoint = currentPoint;
-                }
-
-                if (offsetObj.offset !== view.byteLength) {
-                    // This might indicate trailing data or an incompletely read final block
-                    console.warn("Decoder finished but not all bytes consumed. Offset:", offsetObj.offset, "Length:", view.byteLength);
-                }
-
-                return points;
-            }
+        if (download) {
+          const a = document.createElement('a');
+          a.href = downloadUrl;
+          a.download = gpxFileName;
+          document.body.appendChild(a);
+          a.click();
+          URL.revokeObjectURL(downloadUrl);
+          a.remove();
+          log(`File "${gpxFileName}" saved.`);
+          statusDiv.textContent = `Saved ${gpxFileName}`;
         }
 
-        const NRF_UART_SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
-        const NRF_UART_RX_CHAR_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"; // Host to Device (Write)
-        const NRF_UART_TX_CHAR_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"; // Device to Host (Notify)
+      } catch (error) {
+        log(`Overall GPX conversion process for ${fileName} failed: ${error}`, true);
+        alert(`Error during GPX conversion for ${fileName}: ${error.message}`);
+        statusDiv.textContent = `GPX conversion error for ${fileName}`;
+      }
+    }
 
-        const CMD_ID = {
-            LIST_DIR: 0x01,
-            OPEN_FILE: 0x02,
-            READ_CHUNK: 0x03,
-            CLOSE_FILE: 0x04,
-            GET_FILE_INFO: 0x05,
-        };
 
-        let bleDevice;
-        let rxCharacteristic;
-        let txCharacteristic;
-
-        // State variables for multi-step operations
-        let lastCommandSent = null;
-        let isListingDirectory = false;
-        let currentListDirCmdPacket = null; // Store the exact command packet for LIST_DIR continuation
-
-        let currentOpenFile = {
-            path: null,
-            size: 0,
-            downloadedBytes: 0,
-            chunks: []
-        };
-
-        const connectButton = document.getElementById('connectButton');
-        const disconnectButton = document.getElementById('disconnectButton');
-        const statusDisplay = document.getElementById('status');
-        const chunkSizeInput = document.getElementById('chunkSize');
-
-        const listDirButton = document.getElementById('listDirButton');
-        const listPathInput = document.getElementById('listPath');
-        const dirListingDiv = document.getElementById('dirListing');
-
-        const getFileInfoButton = document.getElementById('getFileInfoButton');
-        const getInfoPathInput = document.getElementById('getInfoPath');
-        const fileInfoResult = document.getElementById('fileInfoResult');
-
-        const downloadFileButton = document.getElementById('downloadFileButton');
-        const openFilePathInput = document.getElementById('openFilePath');
-        const downloadProgress = document.getElementById('downloadProgress');
-        const downloadStatus = document.getElementById('downloadStatus');
-        const fileContentArea = document.getElementById('fileContentArea');
-        const fileContentTextarea = document.getElementById('fileContentTextarea');
-        const saveFileButton = document.getElementById('saveFileButton');
-
-        const logOutput = document.getElementById('logOutput');
-        const clearLogButton = document.getElementById('clearLogButton');
-
-        const textEncoder = new TextEncoder(); // Used for UTF-8 paths
-        const textDecoder = new TextDecoder('ascii'); // For names, paths from device (assuming ASCII as per LIST_DIR)
-        const utf8Decoder = new TextDecoder('utf-8'); // For file content
-
-        function log(message, type = 'info') {
-            console.log(message);
-            const entry = document.createElement('div');
-            entry.classList.add('log-entry');
-            if (type === 'error') entry.classList.add('error');
-            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
-            logOutput.insertBefore(entry, logOutput.firstChild);
+    // --- Navigation ---
+    function navigateToDirectory(currentFullPath, dirNameClicked) {
+      let newPath;
+      if (dirNameClicked === "..") {
+        if (currentFullPath === "/" || !currentFullPath.includes('/')) {
+          newPath = "/";
+        } else {
+          // currentFullPath is path of ".." entry, which is the parent dir.
+          // So if currentFullPath = /foo/bar (meaning .. is in /foo/bar, pointing to /foo)
+          // then newPath should be /foo.
+          // The `path` passed to addFileEntry for ".." is already the parent path.
+          newPath = currentFullPath; // The path for ".." is its destination
         }
-
-        clearLogButton.addEventListener('click', () => logOutput.innerHTML = '');
-
-        connectButton.addEventListener('click', async () => {
-            try {
-                log('Requesting Bluetooth Device...');
-                bleDevice = await navigator.bluetooth.requestDevice({
-                    filters: [{ services: [NRF_UART_SERVICE_UUID] }],
-                    // optionalServices: [NRF_UART_SERVICE_UUID] // Might be needed on some platforms
-                });
-
-                log(`Connecting to GATT Server on ${bleDevice.name}...`);
-                bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
-                const server = await bleDevice.gatt.connect();
-
-                log('Getting UART Service...');
-                const service = await server.getPrimaryService(NRF_UART_SERVICE_UUID);
-
-                log('Getting RX Characteristic (for sending commands)...');
-                rxCharacteristic = await service.getCharacteristic(NRF_UART_RX_CHAR_UUID);
-
-                log('Getting TX Characteristic (for receiving responses)...');
-                txCharacteristic = await service.getCharacteristic(NRF_UART_TX_CHAR_UUID);
-
-                log('Starting notifications on TX Characteristic...');
-                await txCharacteristic.startNotifications();
-                txCharacteristic.addEventListener('characteristicvaluechanged', handleNotifications);
-
-                statusDisplay.textContent = `Connected to ${bleDevice.name}`;
-                connectButton.disabled = true;
-                disconnectButton.disabled = false;
-                listDirButton.disabled = false;
-                getFileInfoButton.disabled = false;
-                downloadFileButton.disabled = false;
-                log('Device connected and ready.');
-
-            } catch (error) {
-                log(`Connection failed: ${error}`, 'error');
-                if (bleDevice && bleDevice.gatt.connected) {
-                    bleDevice.gatt.disconnect();
-                }
-                resetUI();
-            }
-        });
-
-        disconnectButton.addEventListener('click', () => {
-            if (bleDevice && bleDevice.gatt.connected) {
-                log('Disconnecting from device...');
-                bleDevice.gatt.disconnect();
-            } else {
-                log('Already disconnected.');
-                resetUI();
-            }
-        });
-
-        function onDisconnected() {
-            log('Device disconnected.');
-            resetUI();
-        }
-
-        function resetUI() {
-            statusDisplay.textContent = 'Disconnected';
-            connectButton.disabled = false;
-            disconnectButton.disabled = true;
-            listDirButton.disabled = true;
-            getFileInfoButton.disabled = true;
-            downloadFileButton.disabled = true;
-
-            isListingDirectory = false;
-            currentListDirCmdPacket = null;
-            currentOpenFile = { path: null, size: 0, downloadedBytes: 0, chunks: [] };
-            downloadProgress.style.display = 'none';
-            downloadStatus.textContent = '';
-            fileContentArea.style.display = 'none';
-            fileContentTextarea.value = '';
-            saveFileButton.style.display = 'none';
-        }
-
-        async function sendBleCommand(cmdId, payload = new Uint8Array(0)) {
-            if (!rxCharacteristic || !bleDevice || !bleDevice.gatt.connected) {
-                log('Not connected. Cannot send command.', 'error');
-                return;
-            }
-
-            // CMD ID (1B) | Payload Len (2B, Little Endian) | Payload (Variable)
-            const cmdPacket = new Uint8Array(1 + 2 + payload.byteLength);
-            const cmdView = new DataView(cmdPacket.buffer);
-
-            cmdView.setUint8(0, cmdId);
-            cmdView.setUint16(1, payload.byteLength, true); // true for Little Endian
-            cmdPacket.set(payload, 3);
-            console.log(cmdPacket)
-
-            lastCommandSent = cmdId; // Store for response handling
-            if (cmdId === CMD_ID.LIST_DIR && !currentListDirCmdPacket) { // Store first LIST_DIR packet
-                currentListDirCmdPacket = cmdPacket;
-            } else if (cmdId === CMD_ID.LIST_DIR && currentListDirCmdPacket && payload.byteLength === currentListDirCmdPacket.byteLength - 3) {
-                // This is a subsequent LIST_DIR call for the same path, use stored packet.
-                // Ensure payload content is the same before overwriting (or just trust the logic)
-            }
-
-
-            try {
-                log(`Sending CMD: 0x${cmdId.toString(16).padStart(2, '0')}, PayloadLen: ${payload.byteLength}, Data: ${Array.from(payload).map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
-                if (cmdId === CMD_ID.LIST_DIR && isListingDirectory && currentListDirCmdPacket) {
-                    // For subsequent LIST_DIR calls for the same directory
-                    await rxCharacteristic.writeValueWithResponse(currentListDirCmdPacket);
-                } else {
-                    await rxCharacteristic.writeValueWithResponse(cmdPacket);
-                }
-            } catch (error) {
-                log(`Error sending command 0x${cmdId.toString(16)}: ${error}`, 'error');
-            }
-        }
-
-        function handleNotifications(event) {
-            const value = event.target.value; // This is a DataView
-            if (!value || value.byteLength < 2) {
-                log('Received invalid/empty notification.', 'error');
-                return;
-            }
-            // convert dataView to Uint8Array for easier handling
-            const dataArray = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-            console.log(dataArray)
-
-            // Response: Payload Len (2B) | Payload (Variable)
-            const responsePayloadLen = value.getUint16(0, true); // Little Endian
-            const responsePayload = new DataView(value.buffer, value.byteOffset + 2, responsePayloadLen);
-
-            log(`Received RSP. Expected PayloadLen: ${responsePayloadLen}, Actual received data length after header: ${value.byteLength - 2}`);
-            if (responsePayloadLen !== value.byteLength - 2) {
-                log(`Warning: RSP PayloadLen field (${responsePayloadLen}) mismatch with actual data bytes received (${value.byteLength - 2}). Using field value.`, 'error');
-            }
-
-            // Use a slice if there's extra data, though ideally there shouldn't be.
-            // const actualPayloadDataView = new DataView(value.buffer, value.byteOffset + 2, Math.min(responsePayloadLen, value.byteLength - 2));
-
-
-            switch (lastCommandSent) {
-                case CMD_ID.LIST_DIR:
-                    parseListDirResponse(responsePayload);
-                    break;
-                case CMD_ID.OPEN_FILE:
-                    parseOpenFileResponse(responsePayload);
-                    break;
-                case CMD_ID.READ_CHUNK:
-                    parseReadChunkResponse(responsePayload);
-                    break;
-                case CMD_ID.CLOSE_FILE:
-                    parseCloseFileResponse(responsePayload);
-                    break;
-                case CMD_ID.GET_FILE_INFO:
-                    parseGetFileInfoResponse(responsePayload);
-                    break;
-                default:
-                    log(`Received response for unknown or unhandled command (last sent: 0x${lastCommandSent ? lastCommandSent.toString(16) : 'None'})`, 'error');
-            }
-        }
-
-        // --- Command Specific Functions ---
-
-        // 4.1. LIST_DIR
-        listDirButton.addEventListener('click', () => {
-            const path = listPathInput.value.trim();
-            dirListingDiv.innerHTML = ''; // Clear previous listing
-            isListingDirectory = true; // Set flag
-            currentListDirCmdPacket = null; // Reset for a new path
-
-            const pathBytes = textEncoder.encode(path); // ASCII specified, but UTF-8 is safer general practice & ASCII is subset
-
-            let payload;
-            if (path === "" || path === "/" && pathBytes.length === 1 && pathBytes[0] === 0x2F) { // Path length 0 for root, or explicit "/"
-                // Protocol: "Path Length: Path 字段的长度。如果为 0，则表示列出根目录。"
-                // However, example shows path "/" with length 1. Let's try to stick to "Path Length 0 for root".
-                // If user types "/", pathBytes will be [0x2F].
-                // If we want to send PathLength 0 for root, we need a special check.
-                // For now, let's follow the example: if "/", send Path="/", PathLength=1. If empty string, send PathLength=0.
-                if (path === "") { // User explicitly wants to send PathLength 0
-                    payload = new Uint8Array(1); // Only Path Length
-                    payload[0] = 0; // Path Length = 0
-                } else { // User typed "/" or other path
-                    payload = new Uint8Array(1 + pathBytes.length);
-                    payload[0] = pathBytes.length;
-                    payload.set(pathBytes, 1);
-                }
-            } else {
-                payload = new Uint8Array(1 + pathBytes.length);
-                payload[0] = pathBytes.length;
-                payload.set(pathBytes, 1);
-            }
-            sendBleCommand(CMD_ID.LIST_DIR, payload);
-        });
-
-        function parseListDirResponse(payloadView) {
-            if (!isListingDirectory) {
-                log("Received LIST_DIR_RSP but not expecting it.", "error");
-                return;
-            }
-            // More Flag (1B) | Entry Type (1B) | Name Length (1B) | Name (ASCII, Variable) | [File Size (4B)]
-            if (payloadView.byteLength < 1) { // Minimum: More Flag
-                log('LIST_DIR_RSP: Payload too short for More Flag.', 'error');
-                isListingDirectory = false; // Stop listing
-                currentListDirCmdPacket = null;
-                return;
-            }
-
-            const moreFlag = payloadView.getUint8(0);
-            log(`LIST_DIR_RSP: MoreFlag: ${moreFlag}`);
-
-            if (payloadView.byteLength === 1 && moreFlag === 0x00) { // Empty directory or end of non-empty that became empty
-                log('LIST_DIR_RSP: Empty directory or no more entries (payload len 1).');
-                isListingDirectory = false;
-                currentListDirCmdPacket = null;
-                // 目录全部列出后，绑定按钮事件
-                bindListFileButtons();
-                return;
-            }
-
-            if (payloadView.byteLength < 3) { // MoreFlag + EntryType + NameLength
-                log('LIST_DIR_RSP: Payload too short for basic entry info.', 'error');
-                isListingDirectory = false;
-                currentListDirCmdPacket = null;
-                return;
-            }
-
-            const entryType = payloadView.getUint8(1);
-            const nameLength = payloadView.getUint8(2);
-
-            if (payloadView.byteLength < 3 + nameLength) {
-                log('LIST_DIR_RSP: Payload too short for name.', 'error');
-                isListingDirectory = false;
-                currentListDirCmdPacket = null;
-                return;
-            }
-
-            const nameBytes = new Uint8Array(payloadView.buffer, payloadView.byteOffset + 3, nameLength);
-            const name = textDecoder.decode(nameBytes); // Protocol says ASCII
-
-            let entryHtml = `<div class="file-entry"><strong>${name}</strong>`;
-            if (entryType === 0x00) { // File
-                if (payloadView.byteLength < 3 + nameLength + 4) {
-                    log('LIST_DIR_RSP: File entry payload too short for size.', 'error');
-                    entryHtml += ` (File) - Size info missing`;
-                } else {
-                    const fileSize = payloadView.getUint32(3 + nameLength, true); // Little Endian
-                    entryHtml += ` (File, ${fileSize} bytes)`;
-                    entryHtml += `<br><button class='down-gpx-btn' data-filename='${name}'>down as gpx</button>`;
-                    entryHtml += `<button class='down-bin-btn' data-filename='${name}'>down as binary</button>`;
-                    entryHtml += `<br><button class='preview-btn' data-filename='${name}'>preview gpx</button>`;
-                }
-            } else if (entryType === 0x01) { // Directory
-                entryHtml += ` (Directory)`;
-            } else {
-                entryHtml += ` (Unknown Type: ${entryType})`;
-            }
-            entryHtml += `</div>`;
-            dirListingDiv.innerHTML += entryHtml;
-
-            if (moreFlag === 0x01) {
-                log('LIST_DIR_RSP: More entries available. Sending LIST_DIR again.');
-                // Send the *same* command again (as per protocol doc: "再次发送相同路径的 LIST_DIR_CMD")
-                if (currentListDirCmdPacket) {
-                    // We don't need to extract the payload from currentListDirCmdPacket, just send the whole thing.
-                    sendBleCommand(CMD_ID.LIST_DIR, new Uint8Array(currentListDirCmdPacket.buffer, 3));
-                } else {
-                    log("Error: currentListDirCmdPacket is null, cannot continue listing.", "error");
-                    isListingDirectory = false;
-                }
-            }
-        }
-
-        // 绑定按钮事件
-        function bindListFileButtons() {
-            document.querySelectorAll('.down-gpx-btn').forEach(btn => {
-                btn.onclick = async function () {
-                    const filename = btn.getAttribute('data-filename');
-                    await downloadAndSaveFile(filename, 'gpx');
-                };
-            });
-            document.querySelectorAll('.down-bin-btn').forEach(btn => {
-                btn.onclick = async function () {
-                    const filename = btn.getAttribute('data-filename');
-                    await downloadAndSaveFile(filename, 'bin');
-                };
-            });
-            document.querySelectorAll('.preview-btn').forEach(btn => {
-                btn.onclick = async function () {
-                    const filename = btn.getAttribute('data-filename');
-                    await downloadAndSaveFile(filename, 'gpx-preview');
-                };
-            });
-        }
-
-        // 下载并保存文件，支持gpx和bin
-        async function downloadAndSaveFile(filename, type) {
-            if (!bleDevice || !bleDevice.gatt.connected) {
-                alert('请先连接设备');
-                return;
-            }
-            // 复用现有下载流程，但不显示在textarea，直接保存
-            const filePath = (listPathInput.value.endsWith('/') ? listPathInput.value : listPathInput.value + '/') + filename;
-            // 1. 打开文件
-            const filePathBytes = textEncoder.encode(filePath);
-            const payload = new Uint8Array(1 + filePathBytes.length);
-            payload[0] = filePathBytes.length;
-            payload.set(filePathBytes, 1);
-            currentOpenFile = { path: filePath, size: 0, downloadedBytes: 0, chunks: [] };
-            await sendBleCommand(CMD_ID.OPEN_FILE, payload);
-            // 2. 轮询等待下载完成
-            let waitCount = 0;
-            while (currentOpenFile.size === 0 && waitCount < 100) {
-                await new Promise(r => setTimeout(r, 50));
-                waitCount++;
-            }
-            if (currentOpenFile.size === 0) {
-                alert('无法获取文件大小');
-                return;
-            }
-            // 3. 读取所有chunk
-            while (currentOpenFile.downloadedBytes < currentOpenFile.size) {
-                requestNextChunk();
-                await new Promise(r => setTimeout(r, 50));
-            }
-            // 4. 组装数据
-            const totalLength = currentOpenFile.chunks.reduce((acc, chunk) => acc + chunk.length, 0);
-            const fullFileBytes = new Uint8Array(totalLength);
-            let offset = 0;
-            for (const chunk of currentOpenFile.chunks) {
-                fullFileBytes.set(chunk, offset);
-                offset += chunk.length;
-            }
-            // 5. 下载
-            if (type === 'gpx') {
-                const gpxPoints = decodeBinaryGpx(fullFileBytes);
-                const gpxData = GpxPointsToGpxTrack(gpxPoints);
-                const blob = new Blob([gpxData], { type: 'application/gpx+xml' });
-                const link = document.createElement('a');
-                link.href = URL.createObjectURL(blob);
-                link.download = filename.replace(/\.[^.]+$/, '') + '.gpx';
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
-                URL.revokeObjectURL(link.href);
-            } else if (type === 'gpx-preview') {
-                const gpxPoints = decodeBinaryGpx(fullFileBytes);
-                const gpxData = GpxPointsToGpxTrack(gpxPoints);
-                const blob = new Blob([gpxData], { type: 'application/gpx+xml' });
-                const url = URL.createObjectURL(blob);
-                const gpx = new L.GPX(url, {
-                    async: true,
-                    polyline_options: { color: 'red' },
-                }).on('loaded', (e) => {
-                    map.fitBounds(e.target.getBounds());
-                }).addTo(map);
-            }
-            else {
-                const blob = new Blob([fullFileBytes], { type: 'application/octet-stream' });
-                const link = document.createElement('a');
-                link.href = URL.createObjectURL(blob);
-                link.download = filename;
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
-                URL.revokeObjectURL(link.href);
-            }
-            // 6. 关闭文件
-            sendBleCommand(CMD_ID.CLOSE_FILE, new Uint8Array(0));
-        }
-
-        // 4.5. GET_FILE_INFO (Assuming structure similar to OPEN_FILE)
-        getFileInfoButton.addEventListener('click', () => {
-            const filePath = getInfoPathInput.value.trim();
-            if (!filePath) {
-                alert("Please enter a file path.");
-                return;
-            }
-            fileInfoResult.textContent = 'Fetching...';
-            // File Path Length (1B) | File Path (UTF-8, Var)
-            const filePathBytes = textEncoder.encode(filePath); // UTF-8
-            const payload = new Uint8Array(1 + filePathBytes.length);
-            payload[0] = filePathBytes.length;
-            payload.set(filePathBytes, 1);
-            sendBleCommand(CMD_ID.GET_FILE_INFO, payload);
-        });
-
-        function parseGetFileInfoResponse(payloadView) {
-            // Assuming response similar to OPEN_FILE_RSP: Payload (if success): File Size (4B)
-            if (payloadView.byteLength === 4) {
-                const fileSize = payloadView.getUint32(0, true); // Little Endian
-                log(`GET_FILE_INFO_RSP: Success. File Size: ${fileSize} bytes.`);
-                fileInfoResult.textContent = `File Size: ${fileSize} bytes.`;
-            } else if (payloadView.byteLength === 0) {
-                log('GET_FILE_INFO_RSP: Failed (e.g., file not found). PayloadLen is 0.');
-                fileInfoResult.textContent = 'Failed to get file info (file not found or error).';
-            } else {
-                log(`GET_FILE_INFO_RSP: Unexpected payload length: ${payloadView.byteLength}`, 'error');
-                fileInfoResult.textContent = 'Error: Unexpected response format for Get File Info.';
-            }
-        }
-
-
-        // --- File Download Flow (OPEN, READ_CHUNK loop, CLOSE) ---
-        downloadFileButton.addEventListener('click', async () => {
-            const filePath = openFilePathInput.value.trim();
-            if (!filePath) {
-                alert("Please enter a file path to download.");
-                return;
-            }
-
-            log(`Starting download process for: ${filePath}`);
-            downloadStatus.textContent = `Opening ${filePath}...`;
-            downloadProgress.style.display = 'block';
-            downloadProgress.value = 0;
-            fileContentTextarea.value = '';
-            fileContentArea.style.display = 'none';
-            saveFileButton.style.display = 'none';
-
-
-            currentOpenFile = {
-                path: filePath,
-                size: 0,
-                downloadedBytes: 0,
-                chunks: []
-            };
-
-            // 4.2. OPEN_FILE
-            // File Path Length (1B) | File Path (UTF-8, Var)
-            const filePathBytes = textEncoder.encode(filePath); // Protocol says UTF-8 for OPEN_FILE
-            const payload = new Uint8Array(1 + filePathBytes.length);
-            payload[0] = filePathBytes.length;
-            payload.set(filePathBytes, 1);
-            await sendBleCommand(CMD_ID.OPEN_FILE, payload);
-        });
-
-        function parseOpenFileResponse(payloadView) {
-            // Payload (if success): File Size (4B)
-            if (payloadView.byteLength === 4) {
-                currentOpenFile.size = payloadView.getUint32(0, true); // Little Endian
-                log(`OPEN_FILE_RSP: Success. File: ${currentOpenFile.path}, Size: ${currentOpenFile.size} bytes.`);
-                downloadStatus.textContent = `File open. Size: ${currentOpenFile.size} bytes. Starting download...`;
-                if (currentOpenFile.size === 0) {
-                    log('File is empty. Closing file.');
-                    downloadStatus.textContent = 'File is empty.';
-                    sendBleCommand(CMD_ID.CLOSE_FILE, new Uint8Array(0)); // Payload Len 0
-                    currentOpenFile.path = null; // Reset
-                    return;
-                }
-                downloadProgress.max = currentOpenFile.size;
-                requestNextChunk();
-            } else if (payloadView.byteLength === 0) {
-                log('OPEN_FILE_RSP: Failed (file not found, already open, etc.). PayloadLen is 0.', 'error');
-                downloadStatus.textContent = 'Error opening file. Check logs.';
-                downloadProgress.style.display = 'none';
-                currentOpenFile.path = null; // Reset
-            } else {
-                log(`OPEN_FILE_RSP: Unexpected payload length: ${payloadView.byteLength}`, 'error');
-                downloadStatus.textContent = 'Error: Unexpected response for Open File.';
-                downloadProgress.style.display = 'none';
-                currentOpenFile.path = null; // Reset
-            }
-        }
-
-        function requestNextChunk() {
-            if (!currentOpenFile.path || currentOpenFile.downloadedBytes >= currentOpenFile.size) {
-                // Download complete or error occurred
-                if (currentOpenFile.path && currentOpenFile.downloadedBytes >= currentOpenFile.size) {
-                    log('File download complete. Assembling chunks...');
-                    assembleAndDisplayFile();
-                    log('Sending CLOSE_FILE command.');
-                    downloadStatus.textContent = 'Download complete. Closing file...';
-                } else {
-                    // Some other condition, possibly an error state, ensure we try to close if a file was thought to be open
-                    log('RequestNextChunk called but no file open or download not complete, attempting to close if path known.');
-                }
-                if (currentOpenFile.path) { // Only close if we think a file was opened
-                    sendBleCommand(CMD_ID.CLOSE_FILE, new Uint8Array(0)); // Payload Len 0
-                } else {
-                    downloadProgress.style.display = 'none'; // Hide progress if no file thought to be open
-                }
-                return;
-            }
-
-            // 4.3. READ_CHUNK
-            // Offset (4B) | Bytes to Read (2B)
-            const offset = currentOpenFile.downloadedBytes;
-            const configuredChunkSize = parseInt(chunkSizeInput.value, 10);
-            const bytesToRead = Math.min(configuredChunkSize, currentOpenFile.size - currentOpenFile.downloadedBytes);
-
-            const payload = new ArrayBuffer(6);
-            const view = new DataView(payload);
-            view.setUint32(0, offset, true);       // Little Endian
-            view.setUint16(4, bytesToRead, true); // Little Endian
-
-            const percentage = (offset / currentOpenFile.size) * 100;
-            downloadStatus.textContent = `Reading chunk: offset ${offset}, requesting ${bytesToRead} bytes... (${percentage.toFixed(1)}%)`;
-
-            sendBleCommand(CMD_ID.READ_CHUNK, new Uint8Array(payload));
-        }
-
-        function parseReadChunkResponse(payloadView) {
-            // Actual Bytes Read (2B) | Data (Variable)
-            if (payloadView.byteLength < 2) {
-                log('READ_CHUNK_RSP: Payload too short.', 'error');
-                downloadStatus.textContent = 'Error reading chunk (response too short). Aborting.';
-                if (currentOpenFile.path) sendBleCommand(CMD_ID.CLOSE_FILE); // Attempt to close
-                currentOpenFile.path = null;
-                downloadProgress.style.display = 'none';
-                return;
-            }
-
-            const actualBytesRead = payloadView.getUint16(0, true); // Little Endian
-            log(`READ_CHUNK_RSP: Actual Bytes Read: ${actualBytesRead}`);
-
-            if (actualBytesRead > 0) {
-                if (payloadView.byteLength < 2 + actualBytesRead) {
-                    log(`READ_CHUNK_RSP: Payload too short for data (${2 + actualBytesRead} bytes expected, ${payloadView.byteLength} received).`, 'error');
-                    downloadStatus.textContent = 'Error reading chunk (data mismatch). Aborting.';
-                    if (currentOpenFile.path) sendBleCommand(CMD_ID.CLOSE_FILE); // Attempt to close
-                    currentOpenFile.path = null;
-                    downloadProgress.style.display = 'none';
-                    return;
-                }
-                const dataChunk = new Uint8Array(payloadView.buffer, payloadView.byteOffset + 2, actualBytesRead);
-                currentOpenFile.chunks.push(dataChunk);
-                currentOpenFile.downloadedBytes += actualBytesRead;
-                downloadProgress.value = currentOpenFile.downloadedBytes;
-            } else {
-                // actualBytesRead is 0. This could be EOF if offset was at EOF, or an error.
-                // If we requested bytes but got 0, and haven't reached fileSize, it's likely an error or premature EOF.
-                if (currentOpenFile.downloadedBytes < currentOpenFile.size) {
-                    log('READ_CHUNK_RSP: Received 0 bytes before reaching expected file size. Assuming EOF or read error.', 'error');
-                    downloadStatus.textContent = 'Read 0 bytes unexpectedly. Assuming EOF/Error.';
-                } else {
-                    log('READ_CHUNK_RSP: Received 0 bytes, likely EOF reached as expected.');
-                }
-            }
-
-            // Regardless of bytes read, decide if we need more or if we should close.
-            if (currentOpenFile.downloadedBytes < currentOpenFile.size && actualBytesRead > 0) {
-                requestNextChunk();
-            } else { // Downloaded all expected, or actualBytesRead is 0 (EOF or error)
-                log('Finished reading chunks or encountered EOF/error. Proceeding to assemble/close.');
-                assembleAndDisplayFile();
-                if (currentOpenFile.path) { // Only close if we think a file was open.
-                    log('Sending CLOSE_FILE command.');
-                    downloadStatus.textContent = (currentOpenFile.downloadedBytes >= currentOpenFile.size) ? 'Download complete. Closing file...' : 'Download finished (possibly incomplete). Closing file.';
-                    sendBleCommand(CMD_ID.CLOSE_FILE, new Uint8Array(0));
-                } else {
-                    downloadProgress.style.display = 'none';
-                }
-            }
-        }
-
-        function decodeBinaryGpx(data) {
-            const gpxPoints = [];
-            const decoder = new GpsDataDecoder();
-            const points = decoder.decode(data.buffer);
-            for (const point of points) {
-                const timestamp = point.timestamp;
-                const latitude = point.latitude_scaled_1e5 / 1e5;
-                const longitude = point.longitude_scaled_1e5 / 1e5;
-                const altitude = point.altitude_m_scaled_1e1 / 10;
-                gpxPoints.push({ timestamp, latitude, longitude, altitude });
-            }
-            return gpxPoints;
-        }
-
-        function GpxPointsToGpxTrack(gpxPoints) {
-            let gpxData = '<?xml version="1.0" encoding="UTF-8"?>\n';
-            gpxData += '<gpx version="1.1" creator="MGT GPS Tracker">\n';
-            gpxData += '  <trk>\n';
-            gpxData += '    <name>Track</name>\n';
-            gpxData += '    <trkseg>\n';
-            for (const point of gpxPoints) {
-                const date = new Date(point.timestamp * 1000);
-                gpxData += `      <trkpt lat="${point.latitude}" lon="${point.longitude}">\n`;
-                gpxData += `        <ele>${point.altitude}</ele>\n`;
-                gpxData += `        <time>${date.toISOString()}</time>\n`;
-                gpxData += '      </trkpt>\n';
-            }
-            gpxData += '    </trkseg>\n';
-            gpxData += '  </trk>\n';
-            gpxData += '</gpx>\n';
-            return gpxData;
-        }
-
-        function assembleAndDisplayFile() {
-            if (currentOpenFile.chunks.length > 0) {
-                const totalLength = currentOpenFile.chunks.reduce((acc, chunk) => acc + chunk.length, 0);
-                const fullFileBytes = new Uint8Array(totalLength);
-                let offset = 0;
-                for (const chunk of currentOpenFile.chunks) {
-                    fullFileBytes.set(chunk, offset);
-                    offset += chunk.length;
-                }
-
-                const gpxPoints = decodeBinaryGpx(fullFileBytes);
-                console.log(gpxPoints);
-                const gpxData = GpxPointsToGpxTrack(gpxPoints);
-                console.log(gpxData);
-                fileContentTextarea.value = gpxData;
-
-                fileContentArea.style.display = 'block';
-                saveFileButton.style.display = 'inline-block';
-                saveFileButton.onclick = () => {
-                    const blob = new Blob([fullFileBytes], { type: 'application/octet-stream' });
-                    const link = document.createElement('a');
-                    link.href = URL.createObjectURL(blob);
-                    const fileNameGuess = currentOpenFile.path.split('/').pop() || 'downloaded_file';
-                    link.download = fileNameGuess;
-                    document.body.appendChild(link);
-                    link.click();
-                    document.body.removeChild(link);
-                    URL.revokeObjectURL(link.href);
-                };
-
-            } else {
-                if (currentOpenFile.size > 0) {
-                    log('No data chunks received for a non-empty file.', 'error');
-                    fileContentTextarea.value = `Error: No data received for file ${currentOpenFile.path}`;
-                } else {
-                    fileContentTextarea.value = `File ${currentOpenFile.path} is empty.`;
-                }
-                fileContentArea.style.display = 'block';
-                saveFileButton.style.display = 'none';
-            }
-        }
-
-
-        // 4.4. CLOSE_FILE
-        function parseCloseFileResponse(payloadView) {
-            // Payload: None (Payload Len should be 0)
-            if (payloadView.byteLength === 0) {
-                log('CLOSE_FILE_RSP: Success. File closed on device.');
-                downloadStatus.textContent += ' File closed.';
-            } else {
-                log(`CLOSE_FILE_RSP: Unexpected payload length: ${payloadView.byteLength}. Expected 0.`, 'error');
-                downloadStatus.textContent += ' Error closing file (unexpected response).';
-            }
-            // Reset file state
-            currentOpenFile = { path: null, size: 0, downloadedBytes: 0, chunks: [] };
-            // Keep progress bar if content was downloaded, otherwise hide
-            if (downloadProgress.value === 0 && downloadProgress.max === 100) { // Default state if no download happened
-                downloadProgress.style.display = 'none';
-            }
-        }
-
-        // Initial UI state
-        resetUI();
-
-    </script>
+      } else {
+        // dirNameClicked is a directory name, currentFullPath is its path.
+        newPath = currentFullPath;
+      }
+      newPath = newPath.replace(/\/\//g, '/'); // Sanitize
+      if (newPath !== "/" && newPath.endsWith("/")) newPath = newPath.slice(0, -1); // Remove trailing slash unless root
+      if (newPath === "") newPath = "/";
+
+
+      currentPathInput.value = newPath;
+      listDirectory(newPath);
+    }
+
+    // Initial setup
+    log("Page loaded. Ready to connect.");
+    if (!navigator.bluetooth) {
+      log("Web Bluetooth API is not available in this browser. Please use compatible browser (e.g., Chrome, Edge).", true);
+      connectButton.disabled = true;
+      statusDiv.textContent = "Web Bluetooth not supported.";
+    }
+    const map = L.map('map');
+    L.tileLayer('http://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: 'Map data &copy; <a href="http://www.osm.org">OpenStreetMap</a>'
+    }).addTo(map);
+
+  </script>
 </body>
 
 </html>
