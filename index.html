@@ -5,12 +5,39 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Web Bluetooth File Explorer with GPX Conversion</title>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js" defer></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet-gpx/2.1.2/gpx.min.js" defer></script>
+  <link href="https://unpkg.com/maplibre-gl@4.1.0/dist/maplibre-gl.css" rel="stylesheet" />
+  <script src="https://unpkg.com/maplibre-gl@4.1.0/dist/maplibre-gl.js" defer></script>
   <style>
     #map {
       height: 500px;
+      width: 100%;
+    }
+
+    .controls {
+      background: rgba(255, 255, 255, 0.8);
+      padding: 10px 20px;
+      border-radius: 5px;
+      z-index: 1;
+      display: flex;
+      align-items: center;
+      gap: 15px;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    }
+
+    .controls label {
+      font-family: sans-serif;
+      font-size: 14px;
+    }
+
+    #timeslider {
+      width: 300px;
+    }
+
+    #timestamp-display {
+      font-family: monospace;
+      font-size: 13px;
+      min-width: 180px;
+      /* 保证足够宽度显示时间 */
     }
   </style>
   <style>
@@ -150,6 +177,11 @@
 
     <div class="section">
       <div id="map"></div>
+      <div class="controls">
+        <label for="timeslider">轨迹进度:</label>
+        <input type="range" id="timeslider" min="0" value="0" step="1" />
+        <div id="timestamp-display">未加载数据</div>
+      </div>
     </div>
 
     <div class="section">
@@ -843,6 +875,195 @@
       }
     }
 
+    async function visualizeGpsData(rawTrackData) {
+      function processTrackData(rawData) {
+        if (!rawData || rawData.length === 0) {
+          return {
+            points: [],
+            fullTrackGeoJSON: { type: 'Feature', geometry: { type: 'LineString', coordinates: [] }, properties: {} }
+          };
+        }
+
+        const points = rawData.map(p => ({
+          longitude: p.longitude_scaled_1e5 / 1e5,
+          latitude: p.latitude_scaled_1e5 / 1e5,
+          altitude: p.altitude_m_scaled_1e1 / 1e1,
+          timestamp: p.timestamp // Unix timestamp in seconds
+        })).sort((a, b) => a.timestamp - b.timestamp); // 确保按时间排序
+
+        const coordinates = points.map(p => [p.longitude, p.latitude, p.altitude]);
+
+        return {
+          points: points, // 包含转换后经纬高和时间戳的数组
+          fullTrackGeoJSON: {
+            type: 'Feature',
+            geometry: {
+              type: 'LineString',
+              coordinates: coordinates
+            },
+            properties: {}
+          }
+        };
+      }
+
+      const { points, fullTrackGeoJSON } = processTrackData(rawTrackData);
+
+      const slider = document.getElementById('timeslider');
+      const timestampDisplay = document.getElementById('timestamp-display');
+
+      // 3. 初始化 MapLibre GL JS 地图
+      const map = new maplibregl.Map({
+        container: 'map',
+        style: 'https://tiles.openfreemap.org/styles/liberty', // 您指定的瓦片服务
+        center: points.length > 0 ? [points[0].longitude, points[0].latitude] : [139.767, 35.681], // 初始中心点 (东京站)
+        zoom: 14
+      });
+
+      map.on('load', () => {
+        if (points.length === 0) {
+          console.warn("没有轨迹数据可加载。");
+          timestampDisplay.textContent = "无轨迹数据";
+          slider.disabled = true;
+          return;
+        }
+
+        // 4. 添加轨迹线数据源和图层
+        map.addSource('full-track', {
+          type: 'geojson',
+          data: fullTrackGeoJSON
+        });
+
+        map.addLayer({
+          id: 'full-track-line',
+          type: 'line',
+          source: 'full-track',
+          layout: {
+            'line-join': 'round',
+            'line-cap': 'round'
+          },
+          paint: {
+            'line-color': '#007bff', // 轨迹线颜色 (蓝色)
+            'line-width': 5,
+            'line-opacity': 0.8
+          }
+        });
+
+        // 5. 添加已行进轨迹的数据源和图层
+        map.addSource('travelled-track', {
+          type: 'geojson',
+          data: { type: 'Feature', geometry: { type: 'LineString', coordinates: [] }, properties: {} }
+        });
+
+        map.addLayer({
+          id: 'travelled-track-line',
+          type: 'line',
+          source: 'travelled-track',
+          layout: {
+            'line-join': 'round',
+            'line-cap': 'round'
+          },
+          paint: {
+            'line-color': '#28a745', // 已行进轨迹颜色 (绿色)
+            'line-width': 6, // 比完整轨迹稍宽一点以覆盖
+            'line-opacity': 0.9
+          }
+        }, 'full-track-line'); // 确保在完整轨迹线上方，但可以调整
+
+        // 6. 添加当前位置标记的数据源和图层
+        map.addSource('current-point', {
+          type: 'geojson',
+          data: {
+            type: 'Feature',
+            geometry: {
+              type: 'Point',
+              coordinates: [points[0].longitude, points[0].latitude]
+            },
+            properties: {}
+          }
+        });
+
+        map.addLayer({
+          id: 'current-point-marker',
+          type: 'circle',
+          source: 'current-point',
+          paint: {
+            'circle-radius': 8,
+            'circle-color': '#dc3545', // 标记颜色 (红色)
+            'circle-stroke-width': 2,
+            'circle-stroke-color': '#ffffff'
+          }
+        });
+
+        // 7. 设置并监听进度条
+        slider.max = points.length - 1;
+        updateMapForIndex(0); // 初始化显示第一个点
+
+        slider.addEventListener('input', (e) => {
+          const index = parseInt(e.target.value);
+          updateMapForIndex(index);
+        });
+
+        // 8. 更新地图的函数
+        function updateMapForIndex(index) {
+          if (index < 0 || index >= points.length) return;
+
+          const currentPointData = points[index];
+
+          // 更新当前位置标记
+          map.getSource('current-point').setData({
+            type: 'Feature',
+            geometry: {
+              type: 'Point',
+              coordinates: [currentPointData.longitude, currentPointData.latitude]
+            },
+            properties: { // 可以添加一些属性用于调试或显示
+              timestamp: currentPointData.timestamp,
+              altitude: currentPointData.altitude
+            }
+          });
+
+          // 更新已行进的轨迹
+          const travelledCoordinates = points.slice(0, index + 1).map(p => [p.longitude, p.latitude, p.altitude]);
+          map.getSource('travelled-track').setData({
+            type: 'Feature',
+            geometry: {
+              type: 'LineString',
+              coordinates: travelledCoordinates
+            },
+            properties: {}
+          });
+
+          // 更新时间戳显示
+          const date = new Date(currentPointData.timestamp * 1000); // JS Date需要毫秒
+          timestampDisplay.textContent = date.toLocaleString() + ` (Alt: ${currentPointData.altitude.toFixed(1)}m)`;
+
+          // (可选) 将地图视图平移到当前点
+          map.panTo([currentPointData.longitude, currentPointData.latitude]);
+        }
+
+        // 调整地图边界以适应整个轨迹
+        if (fullTrackGeoJSON.geometry.coordinates.length > 1) {
+          const bounds = new maplibregl.LngLatBounds();
+          fullTrackGeoJSON.geometry.coordinates.forEach(coord => {
+            bounds.extend(coord.slice(0, 2)); // LngLatBounds只需要经纬度
+          });
+          map.fitBounds(bounds, {
+            padding: 50 // 在边界周围留一些空间
+          });
+        }
+      });
+
+      map.on('error', (e) => {
+        console.error('MapLibre GL JS Error:', e);
+        if (e.error && e.error.status === 403 && e.url && e.url.includes('openfreemap.org')) {
+          alert("无法加载 OpenFreeMap 瓦片。请检查网络连接或瓦片服务状态。有时瓦片服务可能会有速率限制或临时不可用。");
+        } else if (e.error) {
+          alert(`加载地图时出错: ${e.error.message || '未知错误'}`);
+        }
+      });
+
+    }
+
 
     async function downloadAndConvertToGpx(filePath, fileName, expectedSize, download) {
       try {
@@ -869,6 +1090,7 @@
         statusDiv.textContent = `Generating GPX for ${fileName}...`;
 
         const gpxString = pointsToGpxString(decodedPoints, fileName);
+        await visualizeGpsData(decodedPoints);
         if (!gpxString) {
           log(`GPX Conversion: Failed to generate GPX string for ${fileName}.`, true);
           alert(`Could not generate GPX string from decoded points for ${fileName}.`);
@@ -879,12 +1101,6 @@
         const gpxFileName = fileName.replace(/\.[^/.]+$/, "") + ".gpx";
         const gpxBlob = new Blob([gpxString], { type: 'application/gpx+xml' });
         const downloadUrl = URL.createObjectURL(gpxBlob);
-        const gpx = new L.GPX(downloadUrl, {
-          async: true,
-          polyline_options: { color: 'green' },
-        }).on('loaded', (e) => {
-          map.fitBounds(e.target.getBounds());
-        }).addTo(map);
         if (download) {
           const a = document.createElement('a');
           a.href = downloadUrl;
@@ -938,10 +1154,6 @@
       connectButton.disabled = true;
       statusDiv.textContent = "Web Bluetooth not supported.";
     }
-    const map = L.map('map');
-    L.tileLayer('http://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: 'Map data &copy; <a href="http://www.osm.org">OpenStreetMap</a>'
-    }).addTo(map);
 
   </script>
 </body>
