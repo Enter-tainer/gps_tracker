@@ -23,7 +23,8 @@ static bool isFileOpen =
 
 static GpsDataEncoder gpsDataEncoder(64);
 
-// Helper function to manage old log files
+// Helper function to manage old log files - keeps total file size below
+// MAX_FILE_SIZE
 void manageOldFiles() {
   std::vector<std::string> gpxFiles;
   File root = InternalFS.open("/");
@@ -56,21 +57,45 @@ void manageOldFiles() {
   }
   root.close(); // Close the root directory handle
 
-  if (gpxFiles.size() > MAX_GPX_FILES) {
-    // Sort files alphabetically (which is chronologically for YYYYMMDD format)
-    std::sort(gpxFiles.begin(), gpxFiles.end());
+  // Sort files alphabetically (which is chronologically for YYYYMMDD format)
+  std::sort(gpxFiles.begin(), gpxFiles.end());
 
-    // Calculate how many files to delete
-    int filesToDelete = gpxFiles.size() - MAX_GPX_FILES;
-    Log.printf("Found %d GPX files, need to delete %d oldest files.\n",
-               gpxFiles.size(), filesToDelete);
+  // Calculate total file size
+  uint32_t totalFileSize = 0;
+  std::vector<std::pair<std::string, uint32_t>> fileDetails;
 
-    // Delete the oldest files
-    for (int i = 0; i < filesToDelete; ++i) {
-      Log.printf("Deleting old log file: %s\n", gpxFiles[i].c_str());
-      if (!InternalFS.remove(gpxFiles[i].c_str())) {
-        Log.printf("Failed to delete %s\n", gpxFiles[i].c_str());
+  for (const auto &filename : gpxFiles) {
+    File file = InternalFS.open(filename.c_str(), FILE_O_READ);
+    if (file) {
+      uint32_t fileSize = file.size();
+      totalFileSize += fileSize;
+      fileDetails.push_back(std::make_pair(filename, fileSize));
+      file.close();
+    }
+  }
+
+  // Check if we need to delete files
+  Log.printf("Total GPX file size: %lu bytes, MAX_FILE_SIZE: %lu bytes\n",
+             totalFileSize, (uint32_t)MAX_FILE_SIZE);
+
+  if (totalFileSize > MAX_FILE_SIZE) {
+    // Delete oldest files until we get below the limit
+    for (size_t i = 0; i < fileDetails.size(); ++i) {
+      Log.printf("Deleting old log file: %s (%lu bytes)\n",
+                 fileDetails[i].first.c_str(), fileDetails[i].second);
+
+      if (!InternalFS.remove(fileDetails[i].first.c_str())) {
+        Log.printf("Failed to delete %s\n", fileDetails[i].first.c_str());
         // Continue trying to delete others even if one fails
+      } else {
+        totalFileSize -= fileDetails[i].second;
+        Log.printf("Remaining file size: %lu bytes\n", totalFileSize);
+
+        // Check if we're below the threshold now
+        if (totalFileSize <= MAX_FILE_SIZE) {
+          Log.println("Successfully cleaned up to target size");
+          break;
+        }
       }
     }
   }

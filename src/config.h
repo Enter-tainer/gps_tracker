@@ -35,12 +35,11 @@ const unsigned long GPS_FIX_ATTEMPT_TIMEOUT =
 const unsigned long GPS_MIN_POWER_ON_TIME =
     1500; // Minimum time GPS stays powered on after starting an attempt (1
           // second in ms)
-const float GPS_HDOP_THRESHOLD = 10; // only keep GPS point if HDOP is
+const float GPS_HDOP_THRESHOLD = 5; // only keep GPS point if HDOP is
 // below this threshold
 
 // LittleFS settings
-#define MAX_GPX_FILES 14 // Maximum number of daily GPX files to keep
-
+#define MAX_FILE_SIZE 520 * 1024 // Maximum total file size in bytes (520 KB)
 // Optional: GPS Power Enable Pin (if used) - Commented out as we define
 // PIN_GPS_EN above #define PIN_GPS_EN YOUR_GPS_ENABLE_PIN #define
 // GPS_POWER_TOGGLE // Uncomment if power needs toggling (LOW->HIGH) instead of
