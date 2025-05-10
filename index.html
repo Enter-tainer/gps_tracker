@@ -30,7 +30,7 @@
     }
 
     #timeslider {
-      width: 300px;
+      width: 80%;
     }
 
     #timestamp-display {
@@ -876,6 +876,90 @@
     }
 
     async function visualizeGpsData(rawTrackData) {
+      function calculateBearing(lat1, lon1, lat2, lon2) {
+        const toRadians = Math.PI / 180;
+        const toDegrees = 180 / Math.PI;
+
+        const y = Math.sin((lon2 - lon1) * toRadians) * Math.cos(lat2 * toRadians);
+        const x = Math.cos(lat1 * toRadians) * Math.sin(lat2 * toRadians) -
+          Math.sin(lat1 * toRadians) * Math.cos(lat2 * toRadians) * Math.cos((lon2 - lon1) * toRadians);
+        let brng = Math.atan2(y, x) * toDegrees;
+        brng = (brng + 360) % 360; // Normalize to 0-360
+        return brng;
+      }
+
+      // Helper function to calculate distance between two lat/lon points (Haversine formula)
+      function calculateDistance(lat1, lon1, lat2, lon2) {
+        const R = 6371e3; // Earth radius in meters
+        const phi1 = lat1 * Math.PI / 180;
+        const phi2 = lat2 * Math.PI / 180;
+        const deltaPhi = (lat2 - lat1) * Math.PI / 180;
+        const deltaLambda = (lon2 - lon1) * Math.PI / 180;
+
+        const a = Math.sin(deltaPhi / 2) * Math.sin(deltaPhi / 2) +
+          Math.cos(phi1) * Math.cos(phi2) *
+          Math.sin(deltaLambda / 2) * Math.sin(deltaLambda / 2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+        return R * c; // Distance in meters
+      }
+
+      // MODIFIED: Function to generate GeoJSON features for arrows, now based on distance
+      function generateArrowFeatures(trackPoints) {
+        const features = [];
+        if (!trackPoints || trackPoints.length < 2) {
+          return { type: 'FeatureCollection', features: features };
+        }
+
+        const arrowIntervalMeters = 250; // Desired distance between arrows in meters
+        let distanceSinceLastArrow = 0;
+
+        // Add first arrow at the start of the track.
+        // Bearing from the first point to the second point.
+        // calculateBearing will return 0 if p0 and p1 are identical.
+        let bearing = calculateBearing(trackPoints[0].latitude, trackPoints[0].longitude, trackPoints[1].latitude, trackPoints[1].longitude);
+        features.push({
+          type: 'Feature',
+          geometry: {
+            type: 'Point',
+            coordinates: [trackPoints[0].longitude, trackPoints[0].latitude]
+          },
+          properties: {
+            bearing: bearing
+          }
+        });
+
+        // Iterate through the track points starting from the second point
+        for (let i = 1; i < trackPoints.length; i++) {
+          const p1 = trackPoints[i - 1];
+          const p2 = trackPoints[i];
+          if (p1.longitude === p2.longitude && p1.latitude === p2.latitude) continue;
+          const segmentDistance = calculateDistance(p1.latitude, p1.longitude, p2.latitude, p2.longitude);
+          const totalDistance = distanceSinceLastArrow + segmentDistance;
+          if (totalDistance >= arrowIntervalMeters) {
+            const arrowCount = Math.floor(totalDistance / arrowIntervalMeters);
+            for (let j = 1; j <= arrowCount; j++) {
+              const d = arrowIntervalMeters * j - distanceSinceLastArrow;
+              const t = d / segmentDistance;
+              const lat = p1.latitude + (p2.latitude - p1.latitude) * t;
+              const lon = p1.longitude + (p2.longitude - p1.longitude) * t;
+              const bearing = calculateBearing(p1.latitude, p1.longitude, p2.latitude, p2.longitude);
+              features.push({
+                type: 'Feature',
+                geometry: { type: 'Point', coordinates: [lon, lat] },
+                properties: { bearing }
+              });
+            }
+            distanceSinceLastArrow = totalDistance % arrowIntervalMeters;
+          } else {
+            distanceSinceLastArrow = totalDistance;
+          }
+        }
+
+        return { type: 'FeatureCollection', features: features };
+      }
+
+
       function processTrackData(rawData) {
         if (!rawData || rawData.length === 0) {
           return {
@@ -948,6 +1032,46 @@
           }
         });
 
+        const arrowUpSvgString = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12"><polygon points="6,0 12,9 0,9" fill="currentColor"/></svg>`;
+
+
+        const img = new Image(16, 16); // Should match SVG width/height for consistency, or let browser decide.
+        img.onload = () => {
+          map.addImage('arrow-icon', img, { sdf: true }); // sdf: true allows recoloring
+
+          // NEW: Add source for arrow points (initially empty)
+          map.addSource('arrow-points', {
+            type: 'geojson',
+            data: generateArrowFeatures(points)
+          });
+
+          // NEW: Add layer for arrows, below the travelled track and current point for clarity
+          map.addLayer({
+            id: 'gpx-arrows',
+            type: 'symbol',
+            source: 'arrow-points',
+            layout: {
+              'icon-image': 'arrow-icon',
+              'icon-size': 0.7, // Adjust size as needed
+              'icon-rotate': ['get', 'bearing'],
+              'icon-rotation-alignment': 'map',
+              'icon-allow-overlap': true,
+              'icon-ignore-placement': true // Important to show all arrows
+            },
+            paint: {
+              'icon-color': '#003399', // Dark blue, or choose another color
+              'icon-opacity': 0.85
+            }
+          }, 'travelled-track-line'); // Place arrows below travelled track, adjust if needed
+        };
+        img.onerror = (e) => {
+          console.error("Failed to load arrow SVG for map icon.", e);
+          alert("无法加载箭头图标，轨迹方向将不显示。");
+        };
+        // Using a triangle pointing "up" (in its local SVG coordinate space, Y decreases upwards).
+        // For a map icon that should point "north" at 0 degrees rotation, this means pointing to top of SVG.
+        img.src = 'data:image/svg+xml;base64,' + btoa(arrowUpSvgString);
+
         // 5. 添加已行进轨迹的数据源和图层
         map.addSource('travelled-track', {
           type: 'geojson',
@@ -964,7 +1088,7 @@
           },
           paint: {
             'line-color': '#28a745', // 已行进轨迹颜色 (绿色)
-            'line-width': 6, // 比完整轨迹稍宽一点以覆盖
+            'line-width': 8, // 比完整轨迹稍宽一点以覆盖
             'line-opacity': 0.9
           }
         }); // 确保在完整轨迹线上方，但可以调整
