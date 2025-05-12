@@ -17,6 +17,18 @@ HardwareSerial &gpsSerial = GPS_SERIAL; // Use definition from config.h
 unsigned long lastFixAttemptTime = 0; // Initialize to 0
 unsigned long currentFixStartTime = 0;
 
+struct PositionResult {
+  uint32_t timestamp{0};
+  double latitude{0};
+  double longitude{0};
+  double altitude_m{0};
+  double hdop{1e9};
+};
+
+PositionResult last_successful_position = PositionResult{};
+// Track if a fix was acquired in the current session
+bool gpsFixAcquiredInSession = false;
+
 GpsScheduler gpsScheduler; // <--- Add GpsScheduler instance
 
 // Function to explicitly power on the GPS module
@@ -41,11 +53,18 @@ void powerOffGPS() {
 #endif
   // Reset GPS data when turning off to avoid showing stale data
   gps = TinyGPSPlus();
+  last_successful_position = {};   // Reset last successful
+                                   // position
+  gpsFixAcquiredInSession = false; // Reset session state
   // Also reset relevant fields in gSystemInfo
 }
 
 // Function to initialize GPS communication and power pin
 void initGPS() {
+  pinMode(LORA_RESET, OUTPUT);
+  digitalWrite(LORA_RESET, LOW);  // Reset GPS module
+  delay(100);                     // Wait for reset to complete
+  digitalWrite(LORA_RESET, HIGH); // Release reset
   gpsSerial.begin(GPS_BAUD_RATE);
   Log.println("GPS Serial Initialized");
 
@@ -161,20 +180,11 @@ uint32_t dateTimeToUnixTimestamp(uint16_t year, uint8_t month, uint8_t day,
 static void logFixAndPowerOff() {
   Log.println("Logging GPX point and turning GPS OFF...");
 
-  // Calculate timestamp
-  uint32_t timestamp = dateTimeToUnixTimestamp(
-      gps.date.year(), gps.date.month(), gps.date.day(), gps.time.hour(),
-      gps.time.minute(), gps.time.second());
-
-  // Get float values directly from gps object
-  double lat_float = gps.location.lat();
-  double lon_float = gps.location.lng();
-  double alt_m = gps.altitude.meters();
-
-  // Append the point
-
-  if (gps.hdop.hdop() <= GPS_HDOP_THRESHOLD) {
-    appendGpxPoint(timestamp, lat_float, lon_float, alt_m);
+  if (last_successful_position.hdop <= GPS_HDOP_THRESHOLD) {
+    appendGpxPoint(last_successful_position.timestamp,
+                   last_successful_position.latitude,
+                   last_successful_position.longitude,
+                   last_successful_position.altitude_m);
   }
   Log.println("GPX Point logged.");
 
@@ -188,125 +198,105 @@ static void logFixAndPowerOff() {
 // gSystemInfo
 void handleGPS() {
   unsigned long now = millis();
+  // Common data processing for states where GPS is ON (GPS_WAITING_FIX or
+  // GPS_FIX_ACQUIRED)
+  if (gSystemInfo.gpsState == GPS_WAITING_FIX ||
+      gSystemInfo.gpsState == GPS_FIX_ACQUIRED) {
+    while (gpsSerial.available() > 0) {
+      if (gps.encode(gpsSerial.read())) {
+        // Since 'gps' object is updated by gps.encode(), update gSystemInfo
+        // immediately
+        updateGpsSystemInfo(gps);
+        Log.printf(
+            "GPS Data Updated in gSystemInfo. Lat: %.6lf, "
+            "Lng: %.6lf, Alt: %.2f m, Sat: %u, HDOP: %.2f time: %d:%d:%d\n",
+            gSystemInfo.latitude, gSystemInfo.longitude, gSystemInfo.altitude,
+            gSystemInfo.satellites, gSystemInfo.hdop, (int)gSystemInfo.hour,
+            (int)gSystemInfo.minute, (int)gSystemInfo.second);
+        // And then update scheduler speed based on the new gSystemInfo
+        if (gSystemInfo.locationValid && gSystemInfo.speed >= 0.0f) {
+          gpsScheduler.updateSpeed(gSystemInfo.speed);
+        }
+      }
+    }
+  }
 
-  switch (gSystemInfo.gpsState) { // Use global state
+  switch (gSystemInfo.gpsState) {
   case GPS_OFF:
     // Check if it's time to start a new fix attempt
     if (now - lastFixAttemptTime >= gpsScheduler.getFixInterval() ||
-        lastFixAttemptTime == 0) {
+        lastFixAttemptTime ==
+            0) { // lastFixAttemptTime == 0 for the very first attempt
       Log.println("Starting GPS fix attempt...");
       powerOnGPS();
-      lastFixAttemptTime = now;  // Record the start time of this attempt cycle
       currentFixStartTime = now; // Record when the GPS was actually turned on
       gSystemInfo.gpsState = GPS_WAITING_FIX; // Update global state
+      // lastFixAttemptTime is NOT updated here; it marks the end of the
+      // previous cycle or 0 if first run.
     }
     break;
 
   case GPS_WAITING_FIX: {
-    // Process available GPS data while powered on
-    bool dataParsed = false;
-    while (gpsSerial.available() > 0) {
-      if (gps.encode(gpsSerial.read())) {
-        // A new sentence was parsed, update system info immediately
-        updateGpsSystemInfo(gps);
-        // Update speed in scheduler if location and speed are valid
-        if (gSystemInfo.locationValid && gSystemInfo.speed >= 0.0f) {
-          gpsScheduler.updateSpeed(gSystemInfo.speed);
-        }
-        dataParsed = true; // Mark that we processed data
-      }
-    }
-
-    // Check if we have a valid location, date, AND time fix AFTER processing
-    // all available data
+    // Decisions are based on the 'gps' object primarily.
     bool fullFix = gps.location.isValid() && gps.date.isValid() &&
                    gps.time.isValid() && gps.altitude.isValid();
+    bool attemptTimedOut =
+        (now - currentFixStartTime >= gpsScheduler.getFixAttemptTimeout());
+
+    if (fullFix) {
+      // gSystemInfo is already updated by the processing loop or the
+      // conditional update above.
+      Log.println("GPS Full Fix Acquired (Location, Date, Time, Altitude)!");
+      gSystemInfo.gpsState = GPS_FIX_ACQUIRED;
+      gpsFixAcquiredInSession = true; // Mark that a fix was acquired
+      last_successful_position.timestamp = dateTimeToUnixTimestamp(
+          gps.date.year(), gps.date.month(), gps.date.day(), gps.time.hour(),
+          gps.time.minute(), gps.time.second());
+      last_successful_position.latitude = gps.location.lat();
+      last_successful_position.longitude = gps.location.lng();
+      last_successful_position.altitude_m = gps.altitude.meters();
+      last_successful_position.hdop = gps.hdop.hdop();
+    } else if (attemptTimedOut) {
+      Log.println("GPS fix attempt timed out.");
+      // gSystemInfo is now up-to-date from the conditional block above,
+      // reflecting partial data if any. Speed scheduler also updated if
+      // applicable.
+      powerOffGPS();
+      gSystemInfo.gpsState = GPS_OFF; // Go back to idle state
+      lastFixAttemptTime = now;       // Mark end of timed-out attempt cycle
+      gpsScheduler.reportFixStatus(false);
+    }
+    break;
+  }
+
+  case GPS_FIX_ACQUIRED: {
+    bool fullFix = gps.location.isValid() && gps.date.isValid() &&
+                   gps.time.isValid() && gps.altitude.isValid();
+    if (fullFix) {
+      gpsFixAcquiredInSession = true; // Mark that a fix was acquired
+      last_successful_position.timestamp = dateTimeToUnixTimestamp(
+          gps.date.year(), gps.date.month(), gps.date.day(), gps.time.hour(),
+          gps.time.minute(), gps.time.second());
+      last_successful_position.latitude = gps.location.lat();
+      last_successful_position.longitude = gps.location.lng();
+      last_successful_position.altitude_m = gps.altitude.meters();
+      last_successful_position.hdop = gps.hdop.hdop();
+    }
+
     bool minTimeElapsed =
         (now - currentFixStartTime >= gpsScheduler.getMinPowerOnTime());
 
-    if (fullFix) {
-      // We have a full fix. Update state. Display handled in main loop.
-      gSystemInfo.gpsState = GPS_FIX_ACQUIRED; // Update state
-      Log.println("GPS Full Fix Acquired (Location, Date, Time, Altitude)!");
-
-      // Update system info one last time for this fix cycle (might be redundant
-      // if dataParsed was true, but safe)
-      if (!dataParsed) { // If no new data was parsed just before the check,
-                         // update info now
-        updateGpsSystemInfo(gps);
-      }
-
-      // Check if we can power off immediately (fix acquired AND min time
-      // elapsed)
-      if (minTimeElapsed) {
-        // *** Call the helper function ***
-        logFixAndPowerOff();
-        gpsScheduler.reportFixStatus(true);
-      }
-      // If minTimeElapsed is false, we stay in GPS_FIX_ACQUIRED until it is
-      // true
-
-    } else if (now - currentFixStartTime >=
-               gpsScheduler.getFixAttemptTimeout()) {
-      // Timeout waiting for a fix in this attempt
-      Log.println("GPS fix attempt timed out.");
-      // Update system info with whatever partial data we might have (already
-      // done in loop if dataParsed)
-      if (!dataParsed) {
-        updateGpsSystemInfo(gps);
-        // Update speed in scheduler if location and speed are valid, even on
-        // timeout with partial data
-        if (gSystemInfo.locationValid && gSystemInfo.speed >= 0.0f) {
-          gpsScheduler.updateSpeed(gSystemInfo.speed);
-        }
-      }
-
-      // *** Power off without logging on timeout ***
-      powerOffGPS();
-      gSystemInfo.gpsState = GPS_OFF;      // Go back to idle state
-      lastFixAttemptTime = millis();       // Reset last attempt time
-      gpsScheduler.reportFixStatus(false); // ADDED - Fix failed due to timeout
-
-    } else {
-      // Still waiting for fix or minimum power on time, no timeout yet.
-      // System info is updated continuously as data comes in (done in
-      // gps.encode loop) Display update handled in main loop
-      if (gSystemInfo.gpsState != GPS_WAITING_FIX) { // Ensure state is correct
-        gSystemInfo.gpsState = GPS_WAITING_FIX;
-      }
+    if (minTimeElapsed) {
+      // Min power on time now met. Log the fix data and power off.
+      Log.println(
+          "Minimum GPS power-on time elapsed. Logging final fix and powering "
+          "off.");
+      logFixAndPowerOff(); // Uses global 'gps', logs, powers off, and sets
+                           // state to GPS_OFF
+      gpsScheduler.reportFixStatus(true); // Report fix was successful
+      lastFixAttemptTime = now; // Mark end of successful attempt cycle
     }
     break;
   }
-  case GPS_FIX_ACQUIRED:
-    // GPS has a fix, but we might still be waiting for min power on time
-    // Process available GPS data to keep info fresh
-    while (gpsSerial.available() > 0) {
-      if (gps.encode(gpsSerial.read())) {
-        updateGpsSystemInfo(gps);
-        // Update speed in scheduler if location and speed are valid
-        if (gSystemInfo.locationValid && gSystemInfo.speed >= 0.0f) {
-          gpsScheduler.updateSpeed(gSystemInfo.speed);
-        }
-        // NOTE: We already logged the point when the fix was first acquired.
-        // We don't log again here unless the requirements change to log
-        // continuously while the fix is held and power is on.
-      }
-    }
-
-    // Check if minimum power on time has elapsed
-    bool minTimeElapsedAfterFix =
-        (now - currentFixStartTime >=
-         gpsScheduler.getMinPowerOnTime()); // MODIFIED
-    if (minTimeElapsedAfterFix) {
-      // *** Call the helper function ***
-      logFixAndPowerOff();
-      gpsScheduler.reportFixStatus(true); // ADDED - Fix was successful
-      // Speed would have been updated during gps.encode() loop
-    }
-    // Otherwise, just stay in this state, keep updating data, display handled
-    // in main loop
-    break;
   }
-  // Redundant check removed: The processing loops within WAITING_FIX and
-  // FIX_ACQUIRED handle serial data.
 }
