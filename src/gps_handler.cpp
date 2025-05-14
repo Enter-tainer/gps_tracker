@@ -66,6 +66,10 @@ void initGPS() {
   delay(100);                     // Wait for reset to complete
   digitalWrite(LORA_RESET, HIGH); // Release reset
   gpsSerial.begin(GPS_BAUD_RATE);
+  gpsSerial.println("$PCAS01,5*19");   // --> 115200 bps
+  delay(100);                          // Wait for the GPS module to initialize
+  gpsSerial.begin(115200);             // --> 115200 bps
+  gpsSerial.println("$PCAS02,200*1D"); // --> 200ms
   Log.println("GPS Serial Initialized");
 
 #ifdef PIN_GPS_EN
@@ -200,7 +204,7 @@ void handleGPS() {
   unsigned long now = millis();
   // Common data processing for states where GPS is ON (GPS_WAITING_FIX or
   // GPS_FIX_ACQUIRED)
-  if (gSystemInfo.gpsState == GPS_WAITING_FIX ||
+  if (true || gSystemInfo.gpsState == GPS_WAITING_FIX ||
       gSystemInfo.gpsState == GPS_FIX_ACQUIRED) {
     while (gpsSerial.available() > 0) {
       if (gps.encode(gpsSerial.read())) {
