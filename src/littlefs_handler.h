@@ -15,4 +15,5 @@ void RotateLogFileIfNeeded();
 
 void listInternalFlashContents();
 
+void manageOldFiles();
 #endif // LITTLEFS_HANDLER_H

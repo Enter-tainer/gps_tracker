@@ -26,7 +26,7 @@ static GpsDataEncoder gpsDataEncoder(64);
 // Helper function to manage old log files - keeps total file size below
 // MAX_FILE_SIZE
 void manageOldFiles() {
-  std::vector<std::string> gpxFiles;
+  std::vector<String> gpxFiles;
   File root = InternalFS.open("/");
   if (!root) {
     Log.println("Failed to open root directory for cleanup");
@@ -40,15 +40,11 @@ void manageOldFiles() {
 
   File file = root.openNextFile();
   while (file) {
+    Log.printf("Found file: %s\n", file.name());
     if (!file.isDirectory()) {
       // Check if the filename matches the pattern YYYYMMDD.gpx
-      const char *name = file.name();
-      if (strlen(name) == 12 && // Length of "/YYYYMMDD.gpx"
-          isdigit(name[1]) && isdigit(name[2]) && isdigit(name[3]) &&
-          isdigit(name[4]) &&                     // Year
-          isdigit(name[5]) && isdigit(name[6]) && // Month
-          isdigit(name[7]) && isdigit(name[8]) && // Day
-          strcmp(name + 9, ".gpx") == 0) {
+      String name = file.name();
+      if (name.endsWith(".gpx")) {
         gpxFiles.push_back(name);
       }
     }
@@ -62,7 +58,7 @@ void manageOldFiles() {
 
   // Calculate total file size
   uint32_t totalFileSize = 0;
-  std::vector<std::pair<std::string, uint32_t>> fileDetails;
+  std::vector<std::pair<String, uint32_t>> fileDetails;
 
   for (const auto &filename : gpxFiles) {
     File file = InternalFS.open(filename.c_str(), FILE_O_READ);
