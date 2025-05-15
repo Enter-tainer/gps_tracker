@@ -69,7 +69,7 @@ void initGPS() {
   gpsSerial.println("$PCAS01,5*19");   // --> 115200 bps
   delay(100);                          // Wait for the GPS module to initialize
   gpsSerial.begin(115200);             // --> 115200 bps
-  gpsSerial.println("$PCAS02,200*1D"); // --> 200ms
+  gpsSerial.println("$PCAS02,500*1A"); // --> 500ms
   Log.println("GPS Serial Initialized");
 
 #ifdef PIN_GPS_EN
