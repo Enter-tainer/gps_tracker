@@ -10,6 +10,7 @@ public:
   unsigned long getFixInterval() const;
   unsigned long getMinPowerOnTime() const;
   unsigned long getFixAttemptTimeout() const;
+  int getConsecutiveFailedAttempts() const { return consecutiveFailedAttempts; }
 
   // Report the status of the last fix attempt
   void reportFixStatus(bool successful);

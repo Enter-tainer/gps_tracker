@@ -36,6 +36,9 @@ void powerOnGPS() {
 #ifdef PIN_GPS_EN
   pinMode(PIN_GPS_EN, OUTPUT);
   digitalWrite(PIN_GPS_EN, HIGH); // Assuming HIGH turns GPS ON
+  if (gpsScheduler.getConsecutiveFailedAttempts() > 5) {
+    gpsSerial.println("$PCAS10,1*1D"); // warm restart
+  }
   Log.println("GPS Power ON");
   // Optional: Add a small delay if the module needs time to stabilize after
   // power on delay(100);
@@ -66,10 +69,7 @@ void initGPS() {
   delay(100);                     // Wait for reset to complete
   digitalWrite(LORA_RESET, HIGH); // Release reset
   gpsSerial.begin(GPS_BAUD_RATE);
-  gpsSerial.println("$PCAS01,5*19");   // --> 115200 bps
-  delay(100);                          // Wait for the GPS module to initialize
-  gpsSerial.begin(115200);             // --> 115200 bps
-  gpsSerial.println("$PCAS02,500*1A"); // --> 500ms
+  // gpsSerial.println("PCAS10,3*1F"); // factory reset
   Log.println("GPS Serial Initialized");
 
 #ifdef PIN_GPS_EN
@@ -204,19 +204,23 @@ void handleGPS() {
   unsigned long now = millis();
   // Common data processing for states where GPS is ON (GPS_WAITING_FIX or
   // GPS_FIX_ACQUIRED)
-  if (true || gSystemInfo.gpsState == GPS_WAITING_FIX ||
+  if (gSystemInfo.gpsState == GPS_WAITING_FIX ||
       gSystemInfo.gpsState == GPS_FIX_ACQUIRED) {
+    String gpsData = "";
     while (gpsSerial.available() > 0) {
-      if (gps.encode(gpsSerial.read())) {
+      gpsData += (char)gpsSerial.read();
+      if (gps.encode(gpsData[gpsData.length() - 1])) {
         // Since 'gps' object is updated by gps.encode(), update gSystemInfo
         // immediately
         updateGpsSystemInfo(gps);
-        Log.printf(
-            "GPS Data Updated in gSystemInfo. Lat: %.6lf, "
-            "Lng: %.6lf, Alt: %.2f m, Sat: %u, HDOP: %.2f time: %d:%d:%d\n",
-            gSystemInfo.latitude, gSystemInfo.longitude, gSystemInfo.altitude,
-            gSystemInfo.satellites, gSystemInfo.hdop, (int)gSystemInfo.hour,
-            (int)gSystemInfo.minute, (int)gSystemInfo.second);
+        // Log.printf(
+        //     "GPS Data Updated in gSystemInfo. Lat: %.6lf, "
+        //     "Lng: %.6lf, Alt: %.2f m, Sat: %u, HDOP: %.2f time: %d:%d:%d\n",
+        //     gSystemInfo.latitude, gSystemInfo.longitude,
+        //     gSystemInfo.altitude, gSystemInfo.satellites, gSystemInfo.hdop,
+        //     (int)gSystemInfo.hour, (int)gSystemInfo.minute,
+        //     (int)gSystemInfo.second);
+        // Log.printf("Gps data: %s\n", gpsData.c_str());
         // And then update scheduler speed based on the new gSystemInfo
         if (gSystemInfo.locationValid && gSystemInfo.speed >= 0.0f) {
           gpsScheduler.updateSpeed(gSystemInfo.speed);
