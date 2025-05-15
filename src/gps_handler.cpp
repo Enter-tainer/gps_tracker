@@ -222,8 +222,8 @@ void handleGPS() {
         //     (int)gSystemInfo.second);
         // Log.printf("Gps data: %s\n", gpsData.c_str());
         // And then update scheduler speed based on the new gSystemInfo
-        if (gSystemInfo.locationValid && gSystemInfo.speed >= 0.0f) {
-          gpsScheduler.updateSpeed(gSystemInfo.speed);
+        if (gps.speed.isValid()) {
+          gpsScheduler.updateSpeed(gps.speed.kmph());
         }
       }
     }
