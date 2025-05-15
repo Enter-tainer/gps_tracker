@@ -75,9 +75,10 @@ float estimateBatteryLevel(float voltageMv) {
 
   // Define the voltage points (mV) and corresponding rescaled SoC (%)
   const int num_points = 9;
-  const float voltage_points[num_points] = {3200.0f, 3400.0f, 3500.0f,
-                                            3600.0f, 3700.0f, 3800.0f,
-                                            3900.0f, 4000.0f, 4200.0f};
+  const float voltage_points[num_points] = {2500.0f, 3050.0f, 3600.0f,
+                                            3700.0f, 3780.0f, 3900.0f,
+                                            3980.0f, 4080.0f, 4200.0f};
+
   // Rescaled SoC points: 0, 13, 25, 38, 50, 63, 75, 88, 100
   const float soc_points[num_points] = {0.0f,  13.0f, 25.0f, 38.0f, 50.0f,
                                         63.0f, 75.0f, 88.0f, 100.0f};
