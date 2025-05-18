@@ -6,6 +6,7 @@
 #include "logger.h"
 #include "utility/AdaCallback.h" // For ada_callback_fromISR
 #include <Arduino.h>
+#include <bluefruit.h>
 
 // Button state variables
 static unsigned long lastValidInterruptTime = 0; // ADDED
@@ -25,6 +26,8 @@ void initButton() {
 
 void onButtonPushed() {
   Log.println("Button Held Action Triggered!");
+  Bluefruit.Advertising.setFastTimeout(5);
+  Bluefruit.Advertising.start(5);
   listInternalFlashContents(); // List files on button press
   resetDisplayTimeout();       // Reset display timeout
   toggleDisplay();             // Toggle display on press
