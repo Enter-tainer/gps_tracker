@@ -1,5 +1,6 @@
 #include "file_transfer_protocol.h"
 #include "logger.h"
+#include "system_info.h"
 
 FileTransferProtocol::FileTransferProtocol(Stream *stream)
     : _stream(stream), _fileOpened(false), _dirOpen(false),
@@ -135,6 +136,9 @@ void FileTransferProtocol::process() {
       break;
     case CMD_DELETE_FILE:
       processDeleteFile();
+      break;
+    case 0x06: // CMD_GET_SYS_INFO
+      processGetSysInfo();
       break;
 
     default:
@@ -377,4 +381,55 @@ void FileTransferProtocol::processDeleteFile() {
     Log.println("文件删除失败");
   }
   sendResponse(nullptr, 0);
+}
+
+void FileTransferProtocol::processGetSysInfo() {
+  uint8_t responseBuffer[64]; // 足够容纳所有字段
+  uint16_t offset = 0;
+  // 按协议顺序打包 SystemInfo
+  // double latitude
+  memcpy(&responseBuffer[offset], &gSystemInfo.latitude, 8);
+  offset += 8;
+  // double longitude
+  memcpy(&responseBuffer[offset], &gSystemInfo.longitude, 8);
+  offset += 8;
+  // float altitude
+  memcpy(&responseBuffer[offset], &gSystemInfo.altitude, 4);
+  offset += 4;
+  // uint32_t satellites
+  memcpy(&responseBuffer[offset], &gSystemInfo.satellites, 4);
+  offset += 4;
+  // float hdop
+  memcpy(&responseBuffer[offset], &gSystemInfo.hdop, 4);
+  offset += 4;
+  // float speed
+  memcpy(&responseBuffer[offset], &gSystemInfo.speed, 4);
+  offset += 4;
+  // float course
+  memcpy(&responseBuffer[offset], &gSystemInfo.course, 4);
+  offset += 4;
+  // uint16_t year
+  memcpy(&responseBuffer[offset], &gSystemInfo.year, 2);
+  offset += 2;
+  // uint8_t month
+  responseBuffer[offset++] = gSystemInfo.month;
+  // uint8_t day
+  responseBuffer[offset++] = gSystemInfo.day;
+  // uint8_t hour
+  responseBuffer[offset++] = gSystemInfo.hour;
+  // uint8_t minute
+  responseBuffer[offset++] = gSystemInfo.minute;
+  // uint8_t second
+  responseBuffer[offset++] = gSystemInfo.second;
+  // uint8_t locationValid
+  responseBuffer[offset++] = gSystemInfo.locationValid ? 1 : 0;
+  // uint8_t dateTimeValid
+  responseBuffer[offset++] = gSystemInfo.dateTimeValid ? 1 : 0;
+  // float batteryVoltage
+  memcpy(&responseBuffer[offset], &gSystemInfo.batteryVoltage, 4);
+  offset += 4;
+  // uint8_t gpsState
+  responseBuffer[offset++] = (uint8_t)gSystemInfo.gpsState;
+
+  sendResponse(responseBuffer, offset);
 }

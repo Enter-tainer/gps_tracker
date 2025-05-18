@@ -55,6 +55,7 @@ private:
   void processReadChunk();
   void processCloseFile();
   void processDeleteFile();
+  void processGetSysInfo(); // 处理GET_SYS_INFO (0x06)命令
 
   // 辅助方法
   void sendResponse(uint8_t *payload, uint16_t length);
