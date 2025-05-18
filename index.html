@@ -5,41 +5,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Web Bluetooth File Explorer with GPX Conversion</title>
-  <link href="https://unpkg.com/maplibre-gl@4.1.0/dist/maplibre-gl.css" rel="stylesheet" />
-  <script src="https://unpkg.com/maplibre-gl@4.1.0/dist/maplibre-gl.js" defer></script>
-  <style>
-    #map {
-      height: 500px;
-      width: 100%;
-    }
-
-    .controls {
-      background: rgba(255, 255, 255, 0.8);
-      padding: 10px 20px;
-      border-radius: 5px;
-      z-index: 1;
-      display: flex;
-      align-items: center;
-      gap: 15px;
-      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-    }
-
-    .controls label {
-      font-family: sans-serif;
-      font-size: 14px;
-    }
-
-    #timeslider {
-      width: 80%;
-    }
-
-    #timestamp-display {
-      font-family: monospace;
-      font-size: 13px;
-      min-width: 180px;
-      /* 保证足够宽度显示时间 */
-    }
-  </style>
   <style>
     body {
       font-family: sans-serif;
@@ -154,6 +119,9 @@
       border: 1px solid #ccc;
       border-radius: 4px;
     }
+    #gpxViewer {
+      height: 75vh;
+    }
   </style>
 </head>
 
@@ -176,12 +144,8 @@
     </div>
 
     <div class="section">
-      <div id="map"></div>
-      <div class="controls">
-        <label for="timeslider">轨迹进度:</label>
-        <input type="range" id="timeslider" min="0" value="0" step="1" />
-        <div id="timestamp-display">未加载数据</div>
-      </div>
+      <!-- 只保留 gpx-viewer 组件，移除原有地图/轨迹/进度条等控件 -->
+      <gpx-viewer id="gpxViewer"></gpx-viewer>
     </div>
 
     <div class="section">
@@ -930,370 +894,55 @@
       }
     }
 
-    async function visualizeGpsData(rawTrackData) {
-      function calculateBearing(lat1, lon1, lat2, lon2) {
-        const toRadians = Math.PI / 180;
-        const toDegrees = 180 / Math.PI;
-
-        const y = Math.sin((lon2 - lon1) * toRadians) * Math.cos(lat2 * toRadians);
-        const x = Math.cos(lat1 * toRadians) * Math.sin(lat2 * toRadians) -
-          Math.sin(lat1 * toRadians) * Math.cos(lat2 * toRadians) * Math.cos((lon2 - lon1) * toRadians);
-        let brng = Math.atan2(y, x) * toDegrees;
-        brng = (brng + 360) % 360; // Normalize to 0-360
-        return brng;
-      }
-
-      // Helper function to calculate distance between two lat/lon points (Haversine formula)
-      function calculateDistance(lat1, lon1, lat2, lon2) {
-        const R = 6371e3; // Earth radius in meters
-        const phi1 = lat1 * Math.PI / 180;
-        const phi2 = lat2 * Math.PI / 180;
-        const deltaPhi = (lat2 - lat1) * Math.PI / 180;
-        const deltaLambda = (lon2 - lon1) * Math.PI / 180;
-
-        const a = Math.sin(deltaPhi / 2) * Math.sin(deltaPhi / 2) +
-          Math.cos(phi1) * Math.cos(phi2) *
-          Math.sin(deltaLambda / 2) * Math.sin(deltaLambda / 2);
-        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-
-        return R * c; // Distance in meters
-      }
-
-      // MODIFIED: Function to generate GeoJSON features for arrows, now based on distance
-      function generateArrowFeatures(trackPoints) {
-        const features = [];
-        if (!trackPoints || trackPoints.length < 2) {
-          return { type: 'FeatureCollection', features: features };
-        }
-
-        const arrowIntervalMeters = 250; // Desired distance between arrows in meters
-        let distanceSinceLastArrow = 0;
-
-        // Add first arrow at the start of the track.
-        // Bearing from the first point to the second point.
-        // calculateBearing will return 0 if p0 and p1 are identical.
-        features.push({
-          type: 'Feature',
-          geometry: {
-            type: 'Point',
-            coordinates: [trackPoints[0].longitude, trackPoints[0].latitude]
-          },
-          properties: {
-            bearing: calculateBearing(trackPoints[0].latitude, trackPoints[0].longitude, trackPoints[1].latitude, trackPoints[1].longitude)
-          }
-        });
-
-        // Iterate through the track points starting from the second point
-        for (let i = 1; i < trackPoints.length; i++) {
-          const p1 = trackPoints[i - 1];
-          const p2 = trackPoints[i];
-          if (p1.longitude === p2.longitude && p1.latitude === p2.latitude) continue;
-          const segmentDistance = calculateDistance(p1.latitude, p1.longitude, p2.latitude, p2.longitude);
-          const totalDistance = distanceSinceLastArrow + segmentDistance;
-          if (totalDistance >= arrowIntervalMeters) {
-            const arrowCount = Math.floor(totalDistance / arrowIntervalMeters);
-            for (let j = 1; j <= arrowCount; j++) {
-              const d = arrowIntervalMeters * j - distanceSinceLastArrow;
-              const t = d / segmentDistance;
-              const lat = p1.latitude + (p2.latitude - p1.latitude) * t;
-              const lon = p1.longitude + (p2.longitude - p1.longitude) * t;
-              features.push({
-                type: 'Feature',
-                geometry: { type: 'Point', coordinates: [lon, lat] },
-                properties: { bearing: calculateBearing(p1.latitude, p1.longitude, p2.latitude, p2.longitude) }
-              });
-            }
-            distanceSinceLastArrow = totalDistance % arrowIntervalMeters;
-          } else {
-            distanceSinceLastArrow = totalDistance;
-          }
-        }
-
-        return { type: 'FeatureCollection', features: features };
-      }
-
-
-      function processTrackData(rawData) {
-        if (!rawData || rawData.length === 0) {
-          return {
-            points: [],
-            fullTrackGeoJSON: { type: 'Feature', geometry: { type: 'LineString', coordinates: [] }, properties: {} }
-          };
-        }
-
-        const points = rawData.map(p => ({
-          longitude: p.longitude_scaled_1e5 / 1e5,
-          latitude: p.latitude_scaled_1e5 / 1e5,
-          altitude: p.altitude_m_scaled_1e1 / 1e1,
-          timestamp: p.timestamp // Unix timestamp in seconds
-        })).sort((a, b) => a.timestamp - b.timestamp); // 确保按时间排序
-
-        const coordinates = points.map(p => [p.longitude, p.latitude, p.altitude]);
-
-        return {
-          points: points, // 包含转换后经纬高和时间戳的数组
-          fullTrackGeoJSON: {
-            type: 'Feature',
-            geometry: {
-              type: 'LineString',
-              coordinates: coordinates
-            },
-            properties: {}
-          }
-        };
-      }
-
-      const { points, fullTrackGeoJSON } = processTrackData(rawTrackData);
-
-      const slider = document.getElementById('timeslider');
-      const timestampDisplay = document.getElementById('timestamp-display');
-
-      // 3. 初始化 MapLibre GL JS 地图
-      const map = new maplibregl.Map({
-        container: 'map',
-        style: 'https://tiles.openfreemap.org/styles/liberty', // 您指定的瓦片服务
-        center: points.length > 0 ? [points[0].longitude, points[0].latitude] : [139.767, 35.681], // 初始中心点 (东京站)
-        zoom: 14
-      });
-
-      map.on('load', () => {
-        if (points.length === 0) {
-          console.warn("没有轨迹数据可加载。");
-          timestampDisplay.textContent = "无轨迹数据";
-          slider.disabled = true;
-          return;
-        }
-
-        // 4. 添加轨迹线数据源和图层
-        map.addSource('full-track', {
-          type: 'geojson',
-          data: fullTrackGeoJSON
-        });
-
-        map.addLayer({
-          id: 'full-track-line',
-          type: 'line',
-          source: 'full-track',
-          layout: {
-            'line-join': 'round',
-            'line-cap': 'round'
-          },
-          paint: {
-            'line-color': '#007bff', // 轨迹线颜色 (蓝色)
-            'line-width': 5,
-            'line-opacity': 0.8
-          }
-        });
-
-        const arrowUpSvgString = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12"><polygon points="6,0 12,9 0,9" fill="currentColor"/></svg>`;
-
-
-        const img = new Image(16, 16); // Should match SVG width/height for consistency, or let browser decide.
-        img.onload = () => {
-          map.addImage('arrow-icon', img, { sdf: true }); // sdf: true allows recoloring
-
-          // NEW: Add source for arrow points (initially empty)
-          map.addSource('arrow-points', {
-            type: 'geojson',
-            data: generateArrowFeatures(points)
-          });
-
-          // NEW: Add layer for arrows, below the travelled track and current point for clarity
-          map.addLayer({
-            id: 'gpx-arrows',
-            type: 'symbol',
-            source: 'arrow-points',
-            layout: {
-              'icon-image': 'arrow-icon',
-              'icon-size': 0.7, // Adjust size as needed
-              'icon-rotate': ['get', 'bearing'],
-              'icon-rotation-alignment': 'map',
-              'icon-allow-overlap': true,
-              'icon-ignore-placement': true // Important to show all arrows
-            },
-            paint: {
-              'icon-color': '#003399', // Dark blue, or choose another color
-              'icon-opacity': 0.85
-            }
-          }, 'travelled-track-line'); // Place arrows below travelled track, adjust if needed
-        };
-        img.onerror = (e) => {
-          console.error("Failed to load arrow SVG for map icon.", e);
-          alert("无法加载箭头图标，轨迹方向将不显示。");
-        };
-        // Using a triangle pointing "up" (in its local SVG coordinate space, Y decreases upwards).
-        // For a map icon that should point "north" at 0 degrees rotation, this means pointing to top of SVG.
-        img.src = 'data:image/svg+xml;base64,' + btoa(arrowUpSvgString);
-
-        // 5. 添加已行进轨迹的数据源和图层
-        map.addSource('travelled-track', {
-          type: 'geojson',
-          data: { type: 'Feature', geometry: { type: 'LineString', coordinates: [] }, properties: {} }
-        });
-
-        map.addLayer({
-          id: 'travelled-track-line',
-          type: 'line',
-          source: 'travelled-track',
-          layout: {
-            'line-join': 'round',
-            'line-cap': 'round'
-          },
-          paint: {
-            'line-color': '#28a745', // 已行进轨迹颜色 (绿色)
-            'line-width': 8, // 比完整轨迹稍宽一点以覆盖
-            'line-opacity': 0.9
-          }
-        }); // 确保在完整轨迹线上方，但可以调整
-
-        // 6. 添加当前位置标记的数据源和图层
-        map.addSource('current-point', {
-          type: 'geojson',
-          data: {
-            type: 'Feature',
-            geometry: {
-              type: 'Point',
-              coordinates: [points[0].longitude, points[0].latitude]
-            },
-            properties: {}
-          }
-        });
-
-        map.addLayer({
-          id: 'current-point-marker',
-          type: 'circle',
-          source: 'current-point',
-          paint: {
-            'circle-radius': 8,
-            'circle-color': '#dc3545', // 标记颜色 (红色)
-            'circle-stroke-width': 2,
-            'circle-stroke-color': '#ffffff'
-          }
-        });
-
-        // 7. 设置并监听进度条
-        slider.max = points.length - 1;
-        updateMapForIndex(0); // 初始化显示第一个点
-
-        slider.addEventListener('input', (e) => {
-          const index = parseInt(e.target.value);
-          updateMapForIndex(index);
-        });
-
-        // 8. 更新地图的函数
-        function updateMapForIndex(index) {
-          if (index < 0 || index >= points.length) return;
-
-          const currentPointData = points[index];
-
-          // 更新当前位置标记
-          map.getSource('current-point').setData({
-            type: 'Feature',
-            geometry: {
-              type: 'Point',
-              coordinates: [currentPointData.longitude, currentPointData.latitude]
-            },
-            properties: { // 可以添加一些属性用于调试或显示
-              timestamp: currentPointData.timestamp,
-              altitude: currentPointData.altitude
-            }
-          });
-
-          // 更新已行进的轨迹
-          const travelledCoordinates = points.slice(0, index + 1).map(p => [p.longitude, p.latitude, p.altitude]);
-          map.getSource('travelled-track').setData({
-            type: 'Feature',
-            geometry: {
-              type: 'LineString',
-              coordinates: travelledCoordinates
-            },
-            properties: {}
-          });
-
-          // 更新时间戳显示
-          const date = new Date(currentPointData.timestamp * 1000); // JS Date需要毫秒
-          timestampDisplay.textContent = date.toLocaleString() + ` (Alt: ${currentPointData.altitude.toFixed(1)}m)`;
-
-          // (可选) 将地图视图平移到当前点
-          map.panTo([currentPointData.longitude, currentPointData.latitude]);
-        }
-
-        // 调整地图边界以适应整个轨迹
-        if (fullTrackGeoJSON.geometry.coordinates.length > 1) {
-          const bounds = new maplibregl.LngLatBounds();
-          fullTrackGeoJSON.geometry.coordinates.forEach(coord => {
-            bounds.extend(coord.slice(0, 2)); // LngLatBounds只需要经纬度
-          });
-          map.fitBounds(bounds, {
-            padding: 50 // 在边界周围留一些空间
-          });
-        }
-      });
-
-      map.on('error', (e) => {
-        console.error('MapLibre GL JS Error:', e);
-        if (e.error && e.error.status === 403 && e.url && e.url.includes('openfreemap.org')) {
-          alert("无法加载 OpenFreeMap 瓦片。请检查网络连接或瓦片服务状态。有时瓦片服务可能会有速率限制或临时不可用。");
-        } else if (e.error) {
-          alert(`加载地图时出错: ${e.error.message || '未知错误'}`);
-        }
-      });
-
-    }
-
+      // --- GPX 预览集成 gpx-viewer ---
+      const gpxViewer = document.getElementById('gpxViewer');
 
     async function downloadAndConvertToGpx(filePath, fileName, expectedSize, download) {
       try {
         statusDiv.textContent = `Downloading ${fileName} for GPX conversion...`;
         const rawFileBuffer = await downloadFileCore(filePath, fileName, expectedSize);
-
         if (!rawFileBuffer) {
           log(`GPX Conversion: Failed to download raw data for ${fileName}.`, true);
           statusDiv.textContent = `GPX conversion failed for ${fileName}.`;
           return;
         }
-        log(`GPX Conversion: Raw data downloaded for ${fileName} (${rawFileBuffer.byteLength} bytes). Decoding...`);
-        statusDiv.textContent = `Decoding ${fileName}...`;
-
-        const decodedPoints = gpsDecoder.decode(rawFileBuffer);
-        if (!decodedPoints || decodedPoints.length === 0) {
-          log(`GPX Conversion: No points decoded from ${fileName}, or decoder returned empty.`, true);
-          alert(`Could not decode any GPX points from ${fileName}. Check logs for details.`);
-          statusDiv.textContent = `GPX decoding failed for ${fileName}.`;
+        // 解码为轨迹点
+        const points = gpsDecoder.decode(rawFileBuffer);
+        if (!points || points.length === 0) {
+          log(`GPX Conversion: No valid points decoded for ${fileName}.`, true);
+          statusDiv.textContent = `No valid points for GPX conversion in ${fileName}.`;
           return;
         }
-
-        log(`GPX Conversion: Decoded ${decodedPoints.length} points. Generating GPX string...`);
-        statusDiv.textContent = `Generating GPX for ${fileName}...`;
-
-        const gpxString = pointsToGpxString(decodedPoints, fileName);
-        await visualizeGpsData(decodedPoints);
+        // 转为GPX字符串
+        const gpxString = pointsToGpxString(points, fileName);
         if (!gpxString) {
-          log(`GPX Conversion: Failed to generate GPX string for ${fileName}.`, true);
-          alert(`Could not generate GPX string from decoded points for ${fileName}.`);
-          statusDiv.textContent = `GPX generation failed for ${fileName}.`;
+          log(`GPX Conversion: Failed to convert points to GPX for ${fileName}.`, true);
+          statusDiv.textContent = `GPX conversion failed for ${fileName}.`;
           return;
         }
-
-        const gpxFileName = fileName.replace(/\.[^/.]+$/, "") + ".gpx";
-        const gpxBlob = new Blob([gpxString], { type: 'application/gpx+xml' });
-        const downloadUrl = URL.createObjectURL(gpxBlob);
         if (download) {
+          // 下载 GPX
+          const blob = new Blob([gpxString], { type: 'application/gpx+xml' });
+          const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
-          a.href = downloadUrl;
-          a.download = gpxFileName;
+          a.href = url;
+          a.download = fileName.replace(/\.[^/.]+$/, '') + '.gpx';
           document.body.appendChild(a);
           a.click();
-          URL.revokeObjectURL(downloadUrl);
-          a.remove();
-          log(`File "${gpxFileName}" saved.`);
-          statusDiv.textContent = `Saved ${gpxFileName}`;
+          setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+          log(`GPX file downloaded: ${fileName}`);
+        } else {
+          // 预览 GPX：调用 gpx-viewer
+          if (gpxViewer && typeof gpxViewer.setGpx === 'function') {
+            gpxViewer.setGpx(gpxString);
+            log(`GPX loaded in viewer: ${fileName}`);
+          } else {
+            log('gpx-viewer element not found or setGpx not available.', true);
+          }
         }
-
-      } catch (error) {
-        log(`Overall GPX conversion process for ${fileName} failed: ${error}`, true);
-        alert(`Error during GPX conversion for ${fileName}: ${error.message}`);
-        statusDiv.textContent = `GPX conversion error for ${fileName}`;
+      } catch (e) {
+        log(`GPX conversion/preview failed: ${e}`, true);
+        statusDiv.textContent = `GPX conversion/preview failed: ${e}`;
       }
     }
 
@@ -1333,6 +982,7 @@
     }
 
   </script>
+  <script src="gpx-viewer.js"></script>
 </body>
 
 </html>
