@@ -119,6 +119,11 @@
       border: 1px solid #ccc;
       border-radius: 4px;
     }
+
+    #sysInfoDisplay {
+      height: 420px;
+    }
+
     #gpxViewer {
       height: 75vh;
     }
@@ -132,7 +137,71 @@
     <div class="section">
       <h2>1. Connection</h2>
       <button id="connectButton">Connect to Device</button>
+      <button id="sysInfoButton" style="margin-left:10px;">Query Status</button>
       <div id="status" class="status">Disconnected</div>
+      <div id="sysInfoDisplay">
+        <div
+          style="margin-top:10px;max-width:420px;background:#f8f9fa;border-radius:8px;padding:18px 20px;box-shadow:0 2px 8px #0001;">
+          <h3 style='margin-top:0;color:#0056b3;'>设备系统信息</h3>
+          <table style='width:100%;border-collapse:collapse;'>
+            <tbody>
+              <tr>
+                <td><b>纬度</b></td>
+                <td id="sysinfo-latitude">-</td>
+              </tr>
+              <tr>
+                <td><b>经度</b></td>
+                <td id="sysinfo-longitude">-</td>
+              </tr>
+              <tr>
+                <td><b>海拔</b></td>
+                <td id="sysinfo-altitude">-</td>
+              </tr>
+              <tr>
+                <td><b>卫星数</b></td>
+                <td id="sysinfo-satellites">-</td>
+              </tr>
+              <tr>
+                <td><b>HDOP</b></td>
+                <td id="sysinfo-hdop">-</td>
+              </tr>
+              <tr>
+                <td><b>速度</b></td>
+                <td id="sysinfo-speed">-</td>
+              </tr>
+              <tr>
+                <td><b>航向</b></td>
+                <td id="sysinfo-course">-</td>
+              </tr>
+              <tr>
+                <td><b>日期</b></td>
+                <td id="sysinfo-date">-</td>
+              </tr>
+              <tr>
+                <td><b>时间</b></td>
+                <td id="sysinfo-time">-</td>
+              </tr>
+              <tr>
+                <td><b>定位有效</b></td>
+                <td id="sysinfo-locationValid">-</td>
+              </tr>
+              <tr>
+                <td><b>时间有效</b></td>
+                <td id="sysinfo-dateTimeValid">-</td>
+              </tr>
+              <tr>
+                <td><b>电池电压</b></td>
+                <td id="sysinfo-batteryVoltage">-</td>
+              </tr>
+              <tr>
+                <td><b>GPS状态</b></td>
+                <td id="sysinfo-gpsState">-</td>
+              </tr>
+            </tbody>
+          </table>
+          <div id="sysinfo-error" style="color:#dc3545;margin-top:8px;"></div>
+        </div>
+      </div>
     </div>
 
     <div class="section">
@@ -177,7 +246,7 @@
     const currentPathInput = document.getElementById('currentPath');
 
     // --- Protocol Constants ---
-        const CMD_ID = { LIST_DIR: 0x01, OPEN_FILE: 0x02, READ_CHUNK: 0x03, CLOSE_FILE: 0x04, DELETE_FILE: 0x05 };
+    const CMD_ID = { LIST_DIR: 0x01, OPEN_FILE: 0x02, READ_CHUNK: 0x03, CLOSE_FILE: 0x04, DELETE_FILE: 0x05 };
     const ENTRY_TYPE = { FILE: 0x00, DIRECTORY: 0x01 };
 
     // --- Logging ---
@@ -493,7 +562,7 @@
     let currentOpenFilePromise = null;
     let currentReadChunkPromise = null;
     let currentCloseFilePromise = null;
-        let currentDeleteFilePromise = null;
+    let currentDeleteFilePromise = null;
 
     async function listDirectory(path) {
       if (!isConnected) { log("Not connected.", true); return; }
@@ -629,8 +698,16 @@
       const payload = new DataView(value.buffer, 2, payloadLen);
       log(`Parsed RX Payload Len: ${payloadLen}`);
 
-      if (payload.byteLength !== payloadLen) {
-        log(`Error: Actual RX payload length (${payload.byteLength}) does not match header (${payloadLen}).`, true);
+      // --- 新增：GET_SYS_INFO 响应处理 ---
+      if (currentSysInfoPromise && payloadLen === SYSINFO_PAYLOAD_LEN) {
+        try {
+          const info = parseSysInfoPayload(payload);
+          currentSysInfoPromise.resolve(info);
+        } catch (e) {
+          currentSysInfoPromise.reject(e);
+        }
+        currentSysInfoPromise = null;
+        return;
       }
 
       if (currentListDirPromise) {
@@ -761,31 +838,31 @@
       }
     }
 
-        // --- 文件删除协议实现 ---
-        async function deleteFileViaBle(filePath, fileName) {
-          if (!isConnected) throw new Error('Not connected');
-          log(`Sending DELETE_FILE for: ${filePath}`);
-          return new Promise(async (resolve, reject) => {
-            currentDeleteFilePromise = { resolve, reject, filePath, fileName };
-            const pathBytes = new TextEncoder().encode(filePath);
-            const payloadLength = 1 + pathBytes.byteLength;
-            const buffer = new ArrayBuffer(1 + 2 + payloadLength);
-            const view = new DataView(buffer);
-            let offset = 0;
-            view.setUint8(offset, CMD_ID.DELETE_FILE); offset++;
-            view.setUint16(offset, payloadLength, true); offset += 2;
-            view.setUint8(offset, pathBytes.byteLength); offset++;
-            new Uint8Array(buffer, offset).set(pathBytes);
-            await sendBleData(buffer);
-            // 超时保护
-            setTimeout(() => {
-              if (currentDeleteFilePromise) {
-                currentDeleteFilePromise = null;
-                reject('Timeout waiting for delete response');
-              }
-            }, 3000);
-          });
-        }
+    // --- 文件删除协议实现 ---
+    async function deleteFileViaBle(filePath, fileName) {
+      if (!isConnected) throw new Error('Not connected');
+      log(`Sending DELETE_FILE for: ${filePath}`);
+      return new Promise(async (resolve, reject) => {
+        currentDeleteFilePromise = { resolve, reject, filePath, fileName };
+        const pathBytes = new TextEncoder().encode(filePath);
+        const payloadLength = 1 + pathBytes.byteLength;
+        const buffer = new ArrayBuffer(1 + 2 + payloadLength);
+        const view = new DataView(buffer);
+        let offset = 0;
+        view.setUint8(offset, CMD_ID.DELETE_FILE); offset++;
+        view.setUint16(offset, payloadLength, true); offset += 2;
+        view.setUint8(offset, pathBytes.byteLength); offset++;
+        new Uint8Array(buffer, offset).set(pathBytes);
+        await sendBleData(buffer);
+        // 超时保护
+        setTimeout(() => {
+          if (currentDeleteFilePromise) {
+            currentDeleteFilePromise = null;
+            reject('Timeout waiting for delete response');
+          }
+        }, 3000);
+      });
+    }
 
     // --- File Download Logic ---
     async function downloadFileCore(filePath, fileName, expectedSize) {
@@ -894,8 +971,8 @@
       }
     }
 
-      // --- GPX 预览集成 gpx-viewer ---
-      const gpxViewer = document.getElementById('gpxViewer');
+    // --- GPX 预览集成 gpx-viewer ---
+    const gpxViewer = document.getElementById('gpxViewer');
 
     async function downloadAndConvertToGpx(filePath, fileName, expectedSize, download) {
       try {
@@ -981,6 +1058,110 @@
       statusDiv.textContent = "Web Bluetooth not supported.";
     }
 
+    // --- 新增：GET_SYS_INFO 相关 ---
+    // CMD_ID 0x06
+    let currentSysInfoPromise = null;
+
+    async function getSysInfoViaBle() {
+      if (!isConnected) {
+        log('未连接设备，无法查询系统信息。', true);
+        return;
+      }
+      try {
+        const CMD_ID_SYSINFO = 0x06;
+        const payloadLength = 0;
+        const buffer = new ArrayBuffer(1 + 2);
+        const view = new DataView(buffer);
+        view.setUint8(0, CMD_ID_SYSINFO);
+        view.setUint16(1, payloadLength, true);
+        return await new Promise(async (resolve, reject) => {
+          currentSysInfoPromise = { resolve, reject };
+          await sendBleData(buffer);
+        });
+      } catch (e) {
+        log('查询系统信息失败: ' + e, true);
+      }
+    }
+
+    const SYSINFO_PAYLOAD_LEN = 50;
+    function parseSysInfoPayload(payload) {
+      let offset = 0;
+      function getFloat32() { const v = payload.getFloat32(offset, true); offset += 4; return v; }
+      function getFloat64() { const v = payload.getFloat64(offset, true); offset += 8; return v; }
+      function getUint32() { const v = payload.getUint32(offset, true); offset += 4; return v; }
+      function getUint16() { const v = payload.getUint16(offset, true); offset += 2; return v; }
+      function getUint8() { const v = payload.getUint8(offset); offset += 1; return v; }
+      return {
+        latitude: getFloat64(),
+        longitude: getFloat64(),
+        altitude: getFloat32(),
+        satellites: getUint32(),
+        hdop: getFloat32(),
+        speed: getFloat32(),
+        course: getFloat32(),
+        year: getUint16(),
+        month: getUint8(),
+        day: getUint8(),
+        hour: getUint8(),
+        minute: getUint8(),
+        second: getUint8(),
+        locationValid: getUint8(),
+        dateTimeValid: getUint8(),
+        batteryVoltage: getFloat32(),
+        gpsState: getUint8(),
+      };
+    }
+
+    // --- 优化 sysinfo 卡片刷新逻辑 ---
+    function updateSysInfoCard(info) {
+      const gpsStateMap = ['关闭', '等待定位', '已定位'];
+      const yesNo = v => v ? '是' : '否';
+      const set = (id, val) => { const el = document.getElementById(id); if (el) el.innerText = val; };
+      if (!info) {
+        [
+          'latitude', 'longitude', 'altitude', 'satellites', 'hdop', 'speed', 'course',
+          'date', 'time', 'locationValid', 'dateTimeValid', 'batteryVoltage', 'gpsState'
+        ].forEach(id => set('sysinfo-' + id, '-'));
+        return;
+      }
+      set('sysinfo-latitude', info.latitude.toFixed(7) + '°');
+      set('sysinfo-longitude', info.longitude.toFixed(7) + '°');
+      set('sysinfo-altitude', info.altitude.toFixed(1) + 'm');
+      set('sysinfo-satellites', info.satellites);
+      set('sysinfo-hdop', info.hdop.toFixed(2));
+      set('sysinfo-speed', info.speed.toFixed(2) + 'm/s');
+      set('sysinfo-course', info.course.toFixed(2) + '°');
+      set('sysinfo-date', `${info.year}-${String(info.month).padStart(2, '0')}-${String(info.day).padStart(2, '0')}`);
+      set('sysinfo-time', `${String(info.hour).padStart(2, '0')}:${String(info.minute).padStart(2, '0')}:${String(info.second).padStart(2, '0')}`);
+      set('sysinfo-locationValid', yesNo(info.locationValid));
+      set('sysinfo-dateTimeValid', yesNo(info.dateTimeValid));
+      set('sysinfo-batteryVoltage', info.batteryVoltage.toFixed(2) + 'V');
+      set('sysinfo-gpsState', gpsStateMap[info.gpsState] || info.gpsState);
+    }
+
+    // --- 事件绑定 ---
+    document.getElementById('sysInfoButton').onclick = async function () {
+      const btn = this;
+      const errorDiv = document.getElementById('sysinfo-error');
+      btn.disabled = true;
+      btn.textContent = '查询中...';
+      errorDiv.innerText = '';
+      try {
+        const info = await getSysInfoViaBle();
+        if (info) {
+          updateSysInfoCard(info);
+        } else {
+          updateSysInfoCard(null);
+          errorDiv.innerText = '未获取到设备信息。';
+        }
+      } catch (e) {
+        updateSysInfoCard(null);
+        errorDiv.innerText = '查询失败: ' + e;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Query Status';
+      }
+    };
   </script>
   <script src="gpx-viewer.js"></script>
 </body>
