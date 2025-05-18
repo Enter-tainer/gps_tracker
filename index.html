@@ -213,7 +213,7 @@
     const currentPathInput = document.getElementById('currentPath');
 
     // --- Protocol Constants ---
-    const CMD_ID = { LIST_DIR: 0x01, OPEN_FILE: 0x02, READ_CHUNK: 0x03, CLOSE_FILE: 0x04 };
+        const CMD_ID = { LIST_DIR: 0x01, OPEN_FILE: 0x02, READ_CHUNK: 0x03, CLOSE_FILE: 0x04, DELETE_FILE: 0x05 };
     const ENTRY_TYPE = { FILE: 0x00, DIRECTORY: 0x01 };
 
     // --- Logging ---
@@ -420,12 +420,30 @@
         const previewGpxButton = document.createElement('button');
         previewGpxButton.textContent = 'Preview GPX';
         previewGpxButton.className = 'action-button';
-        // Assuming any file could be GPX data, enable for all.
-        // Could check extension like: name.toLowerCase().endsWith('.dat')
         downloadGpxButton.onclick = () => downloadAndConvertToGpx(path, name, size, true);
         previewGpxButton.onclick = () => downloadAndConvertToGpx(path, name, size, false);
         actionsDiv.appendChild(downloadGpxButton);
         actionsDiv.appendChild(previewGpxButton);
+
+        // 新增 Delete 按钮
+        const deleteButton = document.createElement('button');
+        deleteButton.textContent = 'Delete';
+        deleteButton.className = 'action-button';
+        deleteButton.style.backgroundColor = '#dc3545';
+        deleteButton.style.color = 'white';
+        deleteButton.onclick = async () => {
+          if (!confirm(`Are you sure you want to delete file: ${name}?`)) return;
+          if (!confirm(`Double check: Delete file "${name}"? This cannot be undone!`)) return;
+          try {
+            await deleteFileViaBle(path, name);
+            log(`File deleted: ${name}`);
+            await listDirectory(currentPathInput.value);
+          } catch (e) {
+            log(`Delete failed: ${e}`, true);
+          }
+        };
+        actionsDiv.appendChild(deleteButton);
+
         entryDiv.appendChild(actionsDiv);
       }
       fileListDiv.appendChild(entryDiv);
@@ -511,6 +529,7 @@
     let currentOpenFilePromise = null;
     let currentReadChunkPromise = null;
     let currentCloseFilePromise = null;
+        let currentDeleteFilePromise = null;
 
     async function listDirectory(path) {
       if (!isConnected) { log("Not connected.", true); return; }
@@ -542,7 +561,7 @@
           // However, the example LIST_DIR CMD for root has PayloadLen=1, PathLength=1, Path="/".
           // This is contradictory. "Path Length: ... If 0, then list root."
           // vs "Example: CMD ID:01, PayloadLen:1, Payload: PathLength:01, Path:/"
-          // Let's try to follow the "Path Length = 0 for root" if the device expects that.
+          // Let's try to follow the spec more closely: if path is "/", send pathLength=0.
           // For now, I will keep the previous logic which sent "/" with length 1, as it was working.
           // If issues arise, this is a point to check.
           // The example in proto spec shows: Payload: Path Length (1B) = 0x01, Path (ASCII, Var) = `/` (0x2F)
@@ -763,10 +782,46 @@
           log(`CLOSE_FILE_RSP: Unexpected payload length ${payloadLen}. Assuming closed.`, true);
           promise.resolve();
         }
-      } else {
+      } else if (currentDeleteFilePromise) {
+        const promise = currentDeleteFilePromise; currentDeleteFilePromise = null;
+        if (payloadLen === 0) {
+          log(`DELETE_FILE_RSP for ${promise.filePath}: File deleted successfully.`);
+          promise.resolve();
+        } else {
+          log(`DELETE_FILE_RSP for ${promise.filePath}: Unexpected payload length ${payloadLen}.`, true);
+          promise.reject('Delete failed or not permitted');
+        }
+      }
+      else {
         log("Received data, but no matching command promise was found. Ignoring.", true);
       }
     }
+
+        // --- 文件删除协议实现 ---
+        async function deleteFileViaBle(filePath, fileName) {
+          if (!isConnected) throw new Error('Not connected');
+          log(`Sending DELETE_FILE for: ${filePath}`);
+          return new Promise(async (resolve, reject) => {
+            currentDeleteFilePromise = { resolve, reject, filePath, fileName };
+            const pathBytes = new TextEncoder().encode(filePath);
+            const payloadLength = 1 + pathBytes.byteLength;
+            const buffer = new ArrayBuffer(1 + 2 + payloadLength);
+            const view = new DataView(buffer);
+            let offset = 0;
+            view.setUint8(offset, CMD_ID.DELETE_FILE); offset++;
+            view.setUint16(offset, payloadLength, true); offset += 2;
+            view.setUint8(offset, pathBytes.byteLength); offset++;
+            new Uint8Array(buffer, offset).set(pathBytes);
+            await sendBleData(buffer);
+            // 超时保护
+            setTimeout(() => {
+              if (currentDeleteFilePromise) {
+                currentDeleteFilePromise = null;
+                reject('Timeout waiting for delete response');
+              }
+            }, 3000);
+          });
+        }
 
     // --- File Download Logic ---
     async function downloadFileCore(filePath, fileName, expectedSize) {
@@ -917,7 +972,6 @@
         // Add first arrow at the start of the track.
         // Bearing from the first point to the second point.
         // calculateBearing will return 0 if p0 and p1 are identical.
-        let bearing = calculateBearing(trackPoints[0].latitude, trackPoints[0].longitude, trackPoints[1].latitude, trackPoints[1].longitude);
         features.push({
           type: 'Feature',
           geometry: {
@@ -925,7 +979,7 @@
             coordinates: [trackPoints[0].longitude, trackPoints[0].latitude]
           },
           properties: {
-            bearing: bearing
+            bearing: calculateBearing(trackPoints[0].latitude, trackPoints[0].longitude, trackPoints[1].latitude, trackPoints[1].longitude)
           }
         });
 
@@ -943,11 +997,10 @@
               const t = d / segmentDistance;
               const lat = p1.latitude + (p2.latitude - p1.latitude) * t;
               const lon = p1.longitude + (p2.longitude - p1.longitude) * t;
-              const bearing = calculateBearing(p1.latitude, p1.longitude, p2.latitude, p2.longitude);
               features.push({
                 type: 'Feature',
                 geometry: { type: 'Point', coordinates: [lon, lat] },
-                properties: { bearing }
+                properties: { bearing: calculateBearing(p1.latitude, p1.longitude, p2.latitude, p2.longitude) }
               });
             }
             distanceSinceLastArrow = totalDistance % arrowIntervalMeters;

@@ -133,6 +133,9 @@ void FileTransferProtocol::process() {
     case CMD_CLOSE_FILE:
       processCloseFile();
       break;
+    case CMD_DELETE_FILE:
+      processDeleteFile();
+      break;
 
     default:
       Log.printf("未知命令ID: 0x%02X\n", _cmdId);
@@ -325,5 +328,53 @@ void FileTransferProtocol::processCloseFile() {
   }
 
   // 无论如何都发送成功响应
+  sendResponse(nullptr, 0);
+}
+
+void FileTransferProtocol::processDeleteFile() {
+  // 检查是否有打开的文件，不能删除正在打开的文件
+  if (_fileOpened) {
+    Log.println("有文件正在打开，无法删除");
+    sendResponse(nullptr, 0);
+    return;
+  }
+  // 解析路径
+  if (_payloadLength < 1) {
+    Log.println("删除文件命令载荷长度无效");
+    sendResponse(nullptr, 0);
+    return;
+  }
+  uint8_t pathLength = _buffer[0];
+  if (pathLength == 0 || pathLength >= MAX_PATH_LENGTH) {
+    Log.println("删除文件路径长度无效");
+    sendResponse(nullptr, 0);
+    return;
+  }
+  char filePath[MAX_PATH_LENGTH];
+  memset(filePath, 0, MAX_PATH_LENGTH);
+  memcpy(filePath, &_buffer[1], pathLength);
+  filePath[pathLength] = '\0';
+  Log.printf("删除文件请求: %s\n", filePath);
+  // 检查文件是否存在且不是目录
+  File f = InternalFS.open(filePath);
+  if (!f) {
+    Log.println("文件不存在");
+    sendResponse(nullptr, 0);
+    return;
+  }
+  if (f.isDirectory()) {
+    Log.println("不能删除目录");
+    f.close();
+    sendResponse(nullptr, 0);
+    return;
+  }
+  f.close();
+  // 删除文件
+  bool ok = InternalFS.remove(filePath);
+  if (ok) {
+    Log.println("文件删除成功");
+  } else {
+    Log.println("文件删除失败");
+  }
   sendResponse(nullptr, 0);
 }

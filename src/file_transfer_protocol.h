@@ -11,7 +11,7 @@ using namespace Adafruit_LittleFS_Namespace;
 #define CMD_OPEN_FILE 0x02
 #define CMD_READ_CHUNK 0x03
 #define CMD_CLOSE_FILE 0x04
-#define CMD_GET_FILE_INFO 0x05
+#define CMD_DELETE_FILE 0x05
 
 // 目录项类型
 #define ENTRY_TYPE_FILE 0x00
@@ -54,6 +54,7 @@ private:
   void processOpenFile();
   void processReadChunk();
   void processCloseFile();
+  void processDeleteFile();
 
   // 辅助方法
   void sendResponse(uint8_t *payload, uint16_t length);
