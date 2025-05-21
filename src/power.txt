@@ -1,0 +1,12 @@
+3v3 disable, no init: 3.8ma, 18mW
+3v3 disable, ble setup: 5ma, 24mW
+3v3 disable, battery: 3.8ma, 18mW
+3v3 disable, i2c: 4.4ma, 20.6mW
+3v3 disable, i2c + display init: 6.9ma, 32.9mW
+3v3 disable, internal flash: 3.8ma, 18.0mW
+3v3 disable, logger: 3.8ma, 18.0mW
+3v3 disable, no suspend loop: 3.8ma, 18.1mW
+full: 40ma, 192mW
+full + no screen: 33ma, 159mW
+
+full 40ma = screen(7ma) + gps(26ma) + idle(6.9ma)
