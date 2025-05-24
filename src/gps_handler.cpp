@@ -247,7 +247,8 @@ void handleGPS() {
   case GPS_WAITING_FIX: {
     // Decisions are based on the 'gps' object primarily.
     bool fullFix = gps.location.isValid() && gps.date.isValid() &&
-                   gps.time.isValid() && gps.altitude.isValid();
+                   gps.time.isValid() && gps.altitude.isValid() &&
+                   gps.hdop.isValid() && gps.hdop.hdop() <= GPS_HDOP_THRESHOLD;
     bool attemptTimedOut =
         (now - currentFixStartTime >= gpsScheduler.getFixAttemptTimeout());
 
@@ -279,7 +280,8 @@ void handleGPS() {
 
   case GPS_FIX_ACQUIRED: {
     bool fullFix = gps.location.isValid() && gps.date.isValid() &&
-                   gps.time.isValid() && gps.altitude.isValid();
+                   gps.time.isValid() && gps.altitude.isValid() &&
+                   gps.hdop.isValid() && gps.hdop.hdop() <= GPS_HDOP_THRESHOLD;
     if (fullFix) {
       gpsFixAcquiredInSession = true; // Mark that a fix was acquired
       last_successful_position.timestamp = dateTimeToUnixTimestamp(

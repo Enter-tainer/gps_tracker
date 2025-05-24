@@ -35,7 +35,7 @@ const unsigned long GPS_FIX_ATTEMPT_TIMEOUT =
 const unsigned long GPS_MIN_POWER_ON_TIME =
     1500; // Minimum time GPS stays powered on after starting an attempt (1
           // second in ms)
-const float GPS_HDOP_THRESHOLD = 5; // only keep GPS point if HDOP is
+const float GPS_HDOP_THRESHOLD = 2; // only keep GPS point if HDOP is
 // below this threshold
 
 // LittleFS settings
