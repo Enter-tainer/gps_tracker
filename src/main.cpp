@@ -89,17 +89,18 @@ void loop() {
   handleGPS(); // Call GPS handler (updates gSystemInfo)
   bmp280Handler.update();
   accelHandler.update();
-  // 加速度分析逻辑
-  float total = accelHandler.getTotal();
-  accelAnalyzer.addSample(total);
-  if (accelAnalyzer.isStill()) {
-    gSystemInfo.isStationary = true;
-  } else {
-    gSystemInfo.isStationary = false;
-  }
-  if (accelAnalyzer.hasJump()) {
-    Bluefruit.Advertising.setFastTimeout(5);
-    Bluefruit.Advertising.start(5);
+  if (accelHandler.isOk()) {
+    float total = accelHandler.getTotal();
+    accelAnalyzer.addSample(total);
+    if (accelAnalyzer.isStill()) {
+      gSystemInfo.isStationary = true;
+    } else {
+      gSystemInfo.isStationary = false;
+    }
+    if (accelAnalyzer.hasJump()) {
+      Bluefruit.Advertising.setFastTimeout(5);
+      Bluefruit.Advertising.start(5);
+    }
   }
   delay(50); // 100ms delay for loop stability
 }
