@@ -4,8 +4,14 @@
 #include <Arduino.h> // For String type if needed elsewhere, or standard types like uint8_t
 #include <stdint.h> // For fixed-width integer types
 
-// GPS State Enum
-enum GpsState { GPS_OFF, GPS_WAITING_FIX, GPS_FIX_ACQUIRED };
+// GPS State definitions based on state_spec.md
+typedef enum {
+  S0_INITIALIZING,
+  S1_GPS_SEARCHING_FIX,
+  S2_IDLE_GPS_OFF,
+  S3_TRACKING_FIXED,
+  S4_ANALYZING_STILLNESS
+} GpsState_t;
 
 // Structure to hold all system information
 struct SystemInfo {
@@ -28,16 +34,16 @@ struct SystemInfo {
 
   // System Status
   float batteryVoltage = -1.0f; // voltage, -1.0 indicates N/A
-  GpsState gpsState = GPS_OFF; // Current state of the GPS module
+  GpsState_t gpsState;          // Current GPS state machine state
 
   // Stationary (静止) Info
-  bool isStationary = false; // 是否静止
+  bool isStationary = false; // 是否静止 (由加速度计模块更新，表示已确认静止)
 };
 
 // Declare the global instance (defined in main.cpp)
 extern SystemInfo gSystemInfo;
 
 // Function declarations
-// void updateGpsStatusText(); // Removed - no longer needed globally
+void initializeSystemInfo();
 
 #endif // SYSTEM_INFO_H

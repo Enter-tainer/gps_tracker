@@ -211,14 +211,20 @@ void updateDisplay() {
   // Line 7: GPS Status (Left)
   display.print("GPS: ");
   switch (gSystemInfo.gpsState) {
-  case GPS_OFF:
-    display.print("OFF");
+  case S0_INITIALIZING:
+    display.print("Initializing");
     break;
-  case GPS_WAITING_FIX:
+  case S1_GPS_SEARCHING_FIX:
     display.print("Searching");
     break;
-  case GPS_FIX_ACQUIRED:
-    display.print("FIX");
+  case S2_IDLE_GPS_OFF:
+    display.print("Idle (GPS Off)");
+    break;
+  case S3_TRACKING_FIXED:
+    display.print("Fixed");
+    break;
+  case S4_ANALYZING_STILLNESS:
+    display.print("Analyze-Still");
     break;
   default:
     display.print("Unknown");

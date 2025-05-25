@@ -1,22 +1,36 @@
 #include "gps_handler.h"
 #include "config.h"
-// #include "display_handler.h" // No longer needed here
-#include "gps_scheduler.h" // <--- Add GpsScheduler header
-#include "gpx_logger.h"    // <--- Add GPX Logger header
-#include "logger.h"        // <--- Add Logger header
-#include "system_info.h"   // Include the new header
+#include "gpx_logger.h"  // For appendGpxPoint
+#include "logger.h"      // For Log
+#include "system_info.h" // For gSystemInfo and GpsState_t
 #include <Arduino.h>
 #include <stdint.h> // For uint32_t, int32_t
 
-// Define GPS objects and state variables
+// --- State Machine Constants (as per state_spec.md, kept internal to
+// gps_handler.cpp) ---
+static const unsigned long T_ACTIVE_SAMPLING_INTERVAL =
+    10 * 1000UL; // 10 seconds
+// ACCEL_STILL_THRESHOLD is used by accel_handler, gSystemInfo.isStationary
+// reflects its outcome
+static const unsigned long T_STILLNESS_CONFIRM_DURATION =
+    60 * 1000UL;                                       // 60 seconds
+static const float GPS_SPEED_VEHICLE_THRESHOLD = 5.0f; // 5 km/h
+static const unsigned long T_GPS_QUERY_TIMEOUT_FOR_STILLNESS =
+    5 * 1000UL; // 5 seconds
+static const unsigned long T_GPS_COLD_START_FIX_TIMEOUT =
+    90 * 1000UL; // 90 seconds
+static const unsigned long T_GPS_REACQUIRE_FIX_TIMEOUT =
+    30 * 1000UL; // 30 seconds
+static const unsigned long T_GPS_SLEEP_PERIODIC_WAKE_INTERVAL =
+    15 * 60 * 1000UL; // 15 minutes
+// MIN_HDOP_FOR_VALID_FIX is in config.h
+
+// --- GPS objects and internal state variables ---
 TinyGPSPlus gps;
 HardwareSerial &gpsSerial = GPS_SERIAL; // Use definition from config.h
-// unsigned long lastGpsDisplayUpdate = 0; // Removed - display updated
-// centrally GpsState currentGpsState = GPS_OFF; // State now managed in
-// gSystemInfo
-unsigned long lastFixAttemptTime = 0; // Initialize to 0
-unsigned long currentFixStartTime = 0;
-unsigned long currentFixFinishTime = 0;
+
+// Structure to hold position data, similar to the old one but might not be
+// strictly needed if gSystemInfo is always up-to-date before logging.
 struct PositionResult {
   uint32_t timestamp{0};
   double latitude{0};
@@ -24,76 +38,122 @@ struct PositionResult {
   double altitude_m{0};
   double hdop{1e9};
 };
+static PositionResult last_successful_position =
+    PositionResult{}; // Still useful for logging the *last good* fix
 
-PositionResult last_successful_position = PositionResult{};
-// Track if a fix was acquired in the current session
-bool gpsFixAcquiredInSession = false;
+// Internal Timers for State Machine (timestamps of when the timer period
+// started)
+static unsigned long Stillness_Confirm_Timer_Start = 0;
+static unsigned long Active_Sampling_Timer_Start = 0;
+static unsigned long Fix_Attempt_Timer_Start = 0;
+static unsigned long Periodic_Wake_Timer_Start = 0;
+static unsigned long GPS_Query_Timeout_Timer_S4_Start = 0;
+static bool isGpsPoweredOn = false;
 
-GpsScheduler gpsScheduler; // <--- Add GpsScheduler instance
+static uint8_t Consecutive_Fix_Failures_Counter = 0;
+// Tracks if the *very first* fix attempt (cold start) has been tried since init
+// or a long sleep. This helps decide T_GPS_COLD_START_FIX_TIMEOUT vs
+// T_GPS_REACQUIRE_FIX_TIMEOUT.
+static bool isFirstFixAttemptCycle = true;
 
-// Function to explicitly power on the GPS module
+// --- Helper Function to reset all timers (used when changing states often) ---
+static void resetAllStateTimers() {
+  Stillness_Confirm_Timer_Start = 0;
+  Active_Sampling_Timer_Start = 0;
+  Fix_Attempt_Timer_Start = 0;
+  Periodic_Wake_Timer_Start = 0;
+  GPS_Query_Timeout_Timer_S4_Start = 0;
+}
+
+// --- Function to explicitly power on the GPS module ---
 void powerOnGPS() {
 #ifdef PIN_GPS_EN
   pinMode(PIN_GPS_EN, OUTPUT);
   digitalWrite(PIN_GPS_EN, HIGH); // Assuming HIGH turns GPS ON
-  if (gpsScheduler.getConsecutiveFailedAttempts() > 5) {
-    gpsSerial.println("$PCAS10,1*1D"); // warm restart
-  }
   Log.println("GPS Power ON");
-  // Optional: Add a small delay if the module needs time to stabilize after
-  // power on delay(100);
+  isGpsPoweredOn = true; // Track that GPS is powered on
+  delay(100);            // Small delay for module to stabilize
 #else
   Log.println("Warning: PIN_GPS_EN not defined. Cannot control GPS power.");
 #endif
 }
 
-// Function to explicitly power off the GPS module
+// --- Function to explicitly power off the GPS module ---
 void powerOffGPS() {
 #ifdef PIN_GPS_EN
   pinMode(PIN_GPS_EN, OUTPUT);
-  // TODO: revisit power control logic
-  // digitalWrite(PIN_GPS_EN, LOW); // Assuming LOW turns GPS OFF
-  // Log.println("GPS Power OFF");
+  digitalWrite(PIN_GPS_EN, LOW); // Assuming LOW turns GPS OFF
+  Log.println("GPS Power OFF");
+  isGpsPoweredOn = false; // Track that GPS is powered off
+#else
+  Log.println("Warning: PIN_GPS_EN not defined. Cannot control GPS power.");
 #endif
   // Reset GPS data when turning off to avoid showing stale data
-  gps = TinyGPSPlus();
-  last_successful_position = {};   // Reset last successful
-                                   // position
-  gpsFixAcquiredInSession = false; // Reset session state
-  // Also reset relevant fields in gSystemInfo
+  gps = TinyGPSPlus(); // Clears internal TinyGPS++ state
+  // Explicitly clear relevant gSystemInfo fields related to current fix
+  gSystemInfo.locationValid = false;
+  gSystemInfo.dateTimeValid = false;
+  gSystemInfo.latitude = 0.0;
+  gSystemInfo.longitude = 0.0;
+  gSystemInfo.altitude = 0.0f;
+  gSystemInfo.satellites = 0;
+  gSystemInfo.hdop = 99.9f;
+  gSystemInfo.speed = -1.0f;
+  gSystemInfo.course = -1.0f;
+  gSystemInfo.year = 0;
+  gSystemInfo.month = 0;
+  gSystemInfo.day = 0;
+  gSystemInfo.hour = 0;
+  gSystemInfo.minute = 0;
+  gSystemInfo.second = 0;
 }
 
-// Function to initialize GPS communication and power pin
+// --- Function to initialize GPS communication and power pin ---
 void initGPS() {
+  gSystemInfo.gpsState = S0_INITIALIZING;
+  Log.println("GPS State: S0_INITIALIZING");
+
+  // Hardware reset for GPS module (if LORA_RESET is also for GPS)
+#ifdef LORA_RESET // Assuming LORA_RESET might be used for GPS too, or a
+                  // dedicated GPS_RESET_PIN
   pinMode(LORA_RESET, OUTPUT);
-  digitalWrite(LORA_RESET, LOW);  // Reset GPS module
-  delay(100);                     // Wait for reset to complete
-  digitalWrite(LORA_RESET, HIGH); // Release reset
+  digitalWrite(LORA_RESET, LOW);
+  delay(100);
+  digitalWrite(LORA_RESET, HIGH);
+  Log.println("GPS Module Reset via LORA_RESET pin.");
+#else
+  Log.println("Warning: LORA_RESET (for GPS) not defined.");
+#endif
+
   gpsSerial.begin(GPS_BAUD_RATE);
-  gpsSerial.println("$PCAS04,7*1E"); // Beidou + GPS + GLONASS
-  // gpsSerial.println("PCAS10,3*1F"); // factory reset
-  Log.println("GPS Serial Initialized");
+  gpsSerial.println("$PCAS04,7*1E"); // Configure for Beidou + GPS + GLONASS
+  Log.println("GPS Serial Initialized, NMEA configured.");
 
 #ifdef PIN_GPS_EN
   pinMode(PIN_GPS_EN, OUTPUT);
-  powerOffGPS(); // Ensure GPS is off initially
-#else
-  Log.println("Warning: PIN_GPS_EN not defined. GPS power control disabled.");
 #endif
-  gSystemInfo.gpsState = GPS_OFF; // Set initial state in global struct
-  Log.println("GPS Handler Initialized. Waiting for first fix interval.");
+
+  // E0.1_Initialization_Complete: Default to power-saving start ->
+  // S2_IDLE_GPS_OFF
+  powerOffGPS();
+  resetAllStateTimers();
+  Periodic_Wake_Timer_Start = millis(); // Start periodic wake timer
+  isFirstFixAttemptCycle = true;        // Next fix attempt will be a cold start
+  gSystemInfo.gpsState = S2_IDLE_GPS_OFF;
+  Log.println("GPS State: S0 -> S2_IDLE_GPS_OFF. Init complete.");
 }
 
-// Function to update the global gSystemInfo struct from TinyGPSPlus data
+// --- Function to update the global gSystemInfo struct from TinyGPSPlus data
+// ---
 void updateGpsSystemInfo(TinyGPSPlus &gpsData) {
   gSystemInfo.locationValid = gpsData.location.isValid();
   if (gSystemInfo.locationValid) {
-    gSystemInfo.latitude = gpsData.location.lat();       // Store as double
-    gSystemInfo.longitude = gpsData.location.lng();      // Store as double
-    gSystemInfo.satellites = gpsData.satellites.value(); // Store as uint32_t
-    gSystemInfo.altitude = gpsData.altitude.meters();    // Store as float
+    gSystemInfo.latitude = gpsData.location.lat();
+    gSystemInfo.longitude = gpsData.location.lng();
+    gSystemInfo.satellites = gpsData.satellites.value();
+    gSystemInfo.altitude = gpsData.altitude.meters();
   } else {
-    // Reset numerical values if location is invalid
+    // Keep old values or reset? Spec implies reset if invalid.
     gSystemInfo.latitude = 0.0;
     gSystemInfo.longitude = 0.0;
     gSystemInfo.satellites =
@@ -102,21 +162,21 @@ void updateGpsSystemInfo(TinyGPSPlus &gpsData) {
   }
 
   if (gpsData.hdop.isValid()) {
-    gSystemInfo.hdop = gpsData.hdop.value() / 100.0f; // Store as float
+    gSystemInfo.hdop = gpsData.hdop.value() / 100.0f;
   } else {
-    gSystemInfo.hdop = 99.9f; // Use a default invalid value
+    gSystemInfo.hdop = 99.9f;
   }
 
   if (gpsData.speed.isValid()) {
-    gSystemInfo.speed = gpsData.speed.kmph(); // Store as float
+    gSystemInfo.speed = gpsData.speed.kmph();
   } else {
-    gSystemInfo.speed = -1.0f; // Use -1.0 to indicate invalid speed
+    gSystemInfo.speed = -1.0f; // Invalid speed
   }
 
   if (gpsData.course.isValid()) {
-    gSystemInfo.course = gpsData.course.deg(); // Store as float
+    gSystemInfo.course = gpsData.course.deg();
   } else {
-    gSystemInfo.course = -1.0f; // Use -1.0 to indicate invalid course
+    gSystemInfo.course = -1.0f; // Invalid course
   }
 
   gSystemInfo.dateTimeValid = gpsData.date.isValid() && gpsData.time.isValid();
@@ -128,7 +188,6 @@ void updateGpsSystemInfo(TinyGPSPlus &gpsData) {
     gSystemInfo.minute = gpsData.time.minute();
     gSystemInfo.second = gpsData.time.second();
   } else {
-    // Reset date/time values if invalid
     gSystemInfo.year = 0;
     gSystemInfo.month = 0;
     gSystemInfo.day = 0;
@@ -138,177 +197,276 @@ void updateGpsSystemInfo(TinyGPSPlus &gpsData) {
   }
 }
 
-// Helper function to convert GPS date/time to an approximate Unix timestamp
-// NOTE: This is a simplified calculation and doesn't account for leap seconds
-// or time zones. For accurate timestamps, consider using TimeLib.h or an RTC.
+// --- Helper function to convert GPS date/time to an approximate Unix timestamp
+// ---
 uint32_t dateTimeToUnixTimestamp(uint16_t year, uint8_t month, uint8_t day,
                                  uint8_t hour, uint8_t minute, uint8_t second) {
   if (year < 1970 || year > 2038)
-    return 0; // Basic validity check
-
-  // Number of days from 1970 to the beginning of the given year (ignoring leap
-  // years for simplicity in calculation start)
+    return 0;
   uint32_t days = (year - 1970) * 365;
-
-  // Add leap year days
-  for (uint16_t y = 1972; y < year;
-       y += 4) { // Start from 1972, the first leap year after 1970
-    days++;
-  }
-  // Check if the current year is a leap year and if the date is after Feb 28
+  for (uint16_t y = 1972; y < year; y += 4)
+    days++;                      // Add leap year days
   bool isLeap = (year % 4 == 0); // Simplified leap year check
-  if (isLeap && month > 2) {
+  if (isLeap && month > 2)
     days++;
-  }
-
-  // Days in months (non-leap year)
   const uint8_t daysInMonth[] = {0,  31, 28, 31, 30, 31, 30,
                                  31, 31, 30, 31, 30, 31};
-
-  // Add days for the months passed in the current year
-  for (uint8_t m = 1; m < month; m++) {
+  for (uint8_t m = 1; m < month; m++)
     days += daysInMonth[m];
-  }
-
-  // Add days in the current month
   days += (day - 1);
-
-  // Calculate total seconds
-  uint32_t seconds = days * 86400UL; // 86400 seconds in a day
-  seconds += hour * 3600UL;
-  seconds += minute * 60UL;
-  seconds += second;
-
-  return seconds;
+  uint32_t seconds_val = days * 86400UL;
+  seconds_val += hour * 3600UL;
+  seconds_val += minute * 60UL;
+  seconds_val += second;
+  return seconds_val;
 }
 
-// --- Helper Function to Log Point and Power Off ---
-static void logFixAndPowerOff() {
-  Log.println("Logging GPX point and turning GPS OFF...");
-
-  if (last_successful_position.hdop <= GPS_HDOP_THRESHOLD) {
-    appendGpxPoint(last_successful_position.timestamp,
-                   last_successful_position.latitude,
-                   last_successful_position.longitude,
-                   last_successful_position.altitude_m);
-  }
-  Log.println("GPX Point logged.");
-
-  // Power off and reset state
-  powerOffGPS();
-  gSystemInfo.gpsState = GPS_OFF;
-}
-// --------------------------------------------------
-
-// Function to handle GPS state, data reading, parsing, power, and updating
-// gSystemInfo
+// --- Function to handle GPS state, data reading, parsing, power, and updating
+// gSystemInfo ---
 void handleGPS() {
   unsigned long now = millis();
-  // Common data processing for states where GPS is ON (GPS_WAITING_FIX or
-  // GPS_FIX_ACQUIRED)
-  if (gSystemInfo.gpsState == GPS_WAITING_FIX ||
-      gSystemInfo.gpsState == GPS_FIX_ACQUIRED) {
-    String gpsData = "";
+  if (isGpsPoweredOn) {
     while (gpsSerial.available() > 0) {
-      gpsData += (char)gpsSerial.read();
-      if (gps.encode(gpsData[gpsData.length() - 1])) {
-        // Since 'gps' object is updated by gps.encode(), update gSystemInfo
-        // immediately
+      if (gps.encode(gpsSerial.read())) {
         updateGpsSystemInfo(gps);
-        // Log.printf(
-        //     "GPS Data Updated in gSystemInfo. Lat: %.6lf, "
-        //     "Lng: %.6lf, Alt: %.2f m, Sat: %u, HDOP: %.2f time: %d:%d:%d\n",
-        //     gSystemInfo.latitude, gSystemInfo.longitude,
-        //     gSystemInfo.altitude, gSystemInfo.satellites, gSystemInfo.hdop,
-        //     (int)gSystemInfo.hour, (int)gSystemInfo.minute,
-        //     (int)gSystemInfo.second);
-        // Log.printf("Gps data: %s\n", gpsData.c_str());
-        // And then update scheduler speed based on the new gSystemInfo
-        if (gps.speed.isValid()) {
-          gpsScheduler.updateSpeed(gps.speed.kmph());
-        }
       }
     }
   }
 
   switch (gSystemInfo.gpsState) {
-  case GPS_OFF:
-    // Check if it's time to start a new fix attempt
-    if (now - lastFixAttemptTime >= gpsScheduler.getFixInterval() ||
-        lastFixAttemptTime ==
-            0) { // lastFixAttemptTime == 0 for the very first attempt
-      Log.println("Starting GPS fix attempt...");
-      powerOnGPS();
-      currentFixStartTime = now; // Record when the GPS was actually turned on
-      gSystemInfo.gpsState = GPS_WAITING_FIX; // Update global state
-      // lastFixAttemptTime is NOT updated here; it marks the end of the
-      // previous cycle or 0 if first run.
-    }
+  case S0_INITIALIZING: { // Should have transitioned out during initGPS(). If
+                          // stuck, force to S2.
+    Log.println("Warning: Still in S0_INITIALIZING in handleGPS. Forcing S2.");
+    powerOffGPS();
+    resetAllStateTimers();
+    Periodic_Wake_Timer_Start = now;
+    isFirstFixAttemptCycle = true;
+    gSystemInfo.gpsState = S2_IDLE_GPS_OFF;
     break;
+  }
+  case S1_GPS_SEARCHING_FIX: { // Entry Actions (should be done when
+                               // transitioning TO this state, but
+    // double check if timer started)
+    if (Fix_Attempt_Timer_Start == 0) {
+      Log.println("S1: Fix_Attempt_Timer was 0, starting now.");
+      Fix_Attempt_Timer_Start = now;
+    }
+    if (!isGpsPoweredOn)
+      powerOnGPS(); // Ensure GPS is ON
 
-  case GPS_WAITING_FIX: {
-    // Decisions are based on the 'gps' object primarily.
-    bool fullFix = gps.location.isValid() && gps.date.isValid() &&
-                   gps.time.isValid() && gps.altitude.isValid() &&
-                   gps.hdop.isValid() && gps.hdop.hdop() <= GPS_HDOP_THRESHOLD;
-    bool attemptTimedOut =
-        (now - currentFixStartTime >= gpsScheduler.getFixAttemptTimeout());
+    // E1.1_GPS_Fix_Acquired
+    if (gSystemInfo.locationValid && gSystemInfo.dateTimeValid &&
+        gSystemInfo.hdop <= MIN_HDOP_FOR_VALID_FIX) {
+      Log.println("GPS State: S1 -> S3_TRACKING_FIXED (Fix Acquired)");
+      resetAllStateTimers();
+      Active_Sampling_Timer_Start = now;
+      Consecutive_Fix_Failures_Counter = 0;
+      isFirstFixAttemptCycle =
+          false; // A fix was successful, subsequent ones are reacquires until
+                 // next long sleep/init
 
-    if (fullFix) {
-      // gSystemInfo is already updated by the processing loop or the
-      // conditional update above.
-      Log.println("GPS Full Fix Acquired (Location, Date, Time, Altitude)!");
-      gSystemInfo.gpsState = GPS_FIX_ACQUIRED;
-      gpsFixAcquiredInSession = true; // Mark that a fix was acquired
       last_successful_position.timestamp = dateTimeToUnixTimestamp(
-          gps.date.year(), gps.date.month(), gps.date.day(), gps.time.hour(),
-          gps.time.minute(), gps.time.second());
-      last_successful_position.latitude = gps.location.lat();
-      last_successful_position.longitude = gps.location.lng();
-      last_successful_position.altitude_m = gps.altitude.meters();
-      last_successful_position.hdop = gps.hdop.hdop();
-      currentFixFinishTime = now; // Record when the fix was acquired
-    } else if (attemptTimedOut) {
-      Log.println("GPS fix attempt timed out.");
-      // gSystemInfo is now up-to-date from the conditional block above,
-      // reflecting partial data if any. Speed scheduler also updated if
-      // applicable.
+          gSystemInfo.year, gSystemInfo.month, gSystemInfo.day,
+          gSystemInfo.hour, gSystemInfo.minute, gSystemInfo.second);
+      last_successful_position.latitude = gSystemInfo.latitude;
+      last_successful_position.longitude = gSystemInfo.longitude;
+      last_successful_position.altitude_m = gSystemInfo.altitude;
+      last_successful_position.hdop = gSystemInfo.hdop;
+
+      gSystemInfo.gpsState = S3_TRACKING_FIXED;
+      break; // Exit switch case for this iteration
+    }
+
+    // E1.2_Fix_Attempt_Timer_Expired
+    unsigned long current_fix_timeout = isFirstFixAttemptCycle
+                                            ? T_GPS_COLD_START_FIX_TIMEOUT
+                                            : T_GPS_REACQUIRE_FIX_TIMEOUT;
+    if (now - Fix_Attempt_Timer_Start >= current_fix_timeout) {
+      Log.printf("S1: Fix Attempt Timer Expired (%lu ms). Failures: %d\n",
+                 current_fix_timeout, Consecutive_Fix_Failures_Counter + 1);
+      Consecutive_Fix_Failures_Counter++;
+      if (Consecutive_Fix_Failures_Counter >= MAX_CONSECUTIVE_FIX_FAILURES) {
+        Log.println(
+            "Max consecutive fix failures reached. Sending GPS warm restart.");
+        gpsSerial.println("$PCAS10,1*1D"); // Warm restart command
+        Consecutive_Fix_Failures_Counter = 0;
+      }
       powerOffGPS();
-      gSystemInfo.gpsState = GPS_OFF; // Go back to idle state
-      lastFixAttemptTime = now;       // Mark end of timed-out attempt cycle
-      gpsScheduler.reportFixStatus(false);
+      resetAllStateTimers();
+      Periodic_Wake_Timer_Start = now;
+      isFirstFixAttemptCycle = true; // Next attempt after sleep will be cold.
+      gSystemInfo.gpsState = S2_IDLE_GPS_OFF;
+      Log.println("GPS State: S1 -> S2_IDLE_GPS_OFF (Fix Timeout)");
+      break;
+    }
+    // E1.3 & E1.4 (Motion/Stillness during search) - Not explicitly handled to
+    // change S1 behavior in this version.
+    break;
+  }
+  case S2_IDLE_GPS_OFF: {
+    if (Periodic_Wake_Timer_Start == 0) {
+      Periodic_Wake_Timer_Start = now;
+    } // Safety for timer start
+    if (isGpsPoweredOn)
+      powerOffGPS(); // Ensure GPS is OFF
+
+    // E2.1_Motion_Detected (gSystemInfo.isStationary is managed by accel
+    // handler) If isStationary is false, it means motion is detected.
+    if (!gSystemInfo.isStationary) {
+      Log.println("GPS State: S2 -> S1_GPS_SEARCHING_FIX (Motion Detected)");
+      powerOnGPS();
+      resetAllStateTimers();
+      Fix_Attempt_Timer_Start = now;
+      // isFirstFixAttemptCycle remains true if it was, or false if a fix was
+      // ever found before this sleep
+      gSystemInfo.gpsState = S1_GPS_SEARCHING_FIX;
+      break;
+    }
+
+    // E2.2_Periodic_Wake_Timer_Expired
+    if (now - Periodic_Wake_Timer_Start >= T_GPS_SLEEP_PERIODIC_WAKE_INTERVAL) {
+      Log.println("GPS State: S2 -> S1_GPS_SEARCHING_FIX (Periodic Wake)");
+      powerOnGPS();
+      resetAllStateTimers();
+      Fix_Attempt_Timer_Start = now;
+      isFirstFixAttemptCycle =
+          true; // Waking from long sleep, assume cold start needed
+      gSystemInfo.gpsState = S1_GPS_SEARCHING_FIX;
+      break;
     }
     break;
   }
+  case S3_TRACKING_FIXED: {
+    if (Active_Sampling_Timer_Start == 0) {
+      Active_Sampling_Timer_Start = now;
+    } // Safety
+    if (!isGpsPoweredOn)
+      powerOnGPS(); // Ensure GPS is ON
 
-  case GPS_FIX_ACQUIRED: {
-    bool fullFix = gps.location.isValid() && gps.date.isValid() &&
-                   gps.time.isValid() && gps.altitude.isValid() &&
-                   gps.hdop.isValid() && gps.hdop.hdop() <= GPS_HDOP_THRESHOLD;
-    if (fullFix) {
-      gpsFixAcquiredInSession = true; // Mark that a fix was acquired
-      last_successful_position.timestamp = dateTimeToUnixTimestamp(
-          gps.date.year(), gps.date.month(), gps.date.day(), gps.time.hour(),
-          gps.time.minute(), gps.time.second());
-      last_successful_position.latitude = gps.location.lat();
-      last_successful_position.longitude = gps.location.lng();
-      last_successful_position.altitude_m = gps.altitude.meters();
-      last_successful_position.hdop = gps.hdop.hdop();
-    }
-
-    bool minTimeElapsed =
-        (now - currentFixFinishTime >= gpsScheduler.getMinPowerOnTime());
-
-    if (minTimeElapsed) {
-      // Min power on time now met. Log the fix data and power off.
+    // E3.5_GPS_Signal_Lost_Or_Degraded (Primary check)
+    if (!(gSystemInfo.locationValid && gSystemInfo.dateTimeValid &&
+          gSystemInfo.hdop <= MIN_HDOP_FOR_VALID_FIX)) {
       Log.println(
-          "Minimum GPS power-on time elapsed. Logging final fix and powering "
-          "off.");
-      logFixAndPowerOff(); // Uses global 'gps', logs, powers off, and sets
-                           // state to GPS_OFF
-      gpsScheduler.reportFixStatus(true); // Report fix was successful
-      lastFixAttemptTime = now; // Mark end of successful attempt cycle
+          "GPS State: S3 -> S1_GPS_SEARCHING_FIX (Signal Lost/Degraded)");
+      resetAllStateTimers();
+      Fix_Attempt_Timer_Start = now;
+      // isFirstFixAttemptCycle should be false here, as we were just in S3
+      gSystemInfo.gpsState = S1_GPS_SEARCHING_FIX;
+      break;
     }
+
+    // E3.1_Active_Sampling_Timer_Expired
+    if (now - Active_Sampling_Timer_Start >= T_ACTIVE_SAMPLING_INTERVAL) {
+      Log.println("S3: Active Sampling Timer. Logging GPX.");
+      // Ensure data is still good before logging (already checked by E3.5, but
+      // good practice)
+      if (gSystemInfo.locationValid && gSystemInfo.dateTimeValid &&
+          gSystemInfo.hdop <= MIN_HDOP_FOR_VALID_FIX) {
+        last_successful_position.timestamp = dateTimeToUnixTimestamp(
+            gSystemInfo.year, gSystemInfo.month, gSystemInfo.day,
+            gSystemInfo.hour, gSystemInfo.minute, gSystemInfo.second);
+        last_successful_position.latitude = gSystemInfo.latitude;
+        last_successful_position.longitude = gSystemInfo.longitude;
+        last_successful_position.altitude_m = gSystemInfo.altitude;
+        last_successful_position.hdop = gSystemInfo.hdop;
+
+        appendGpxPoint(last_successful_position.timestamp,
+                       last_successful_position.latitude,
+                       last_successful_position.longitude,
+                       last_successful_position.altitude_m);
+        Log.println("GPX Point logged in S3.");
+      }
+      Active_Sampling_Timer_Start = now; // Restart timer
+    }
+
+    // E3.2_Motion_Sensed / E3.3_Potential_Stillness_Sensed
+    if (!gSystemInfo.isStationary) { // Motion
+      if (Stillness_Confirm_Timer_Start != 0) {
+        Log.println("S3: Motion, Stillness_Confirm_Timer reset.");
+        Stillness_Confirm_Timer_Start = 0;
+      }
+    } else { // Potential Stillness (gSystemInfo.isStationary is true)
+      if (Stillness_Confirm_Timer_Start == 0) {
+        Log.println(
+            "S3: Potential Stillness, Stillness_Confirm_Timer started.");
+        Stillness_Confirm_Timer_Start = now;
+      }
+    }
+
+    // E3.4_Stillness_Confirmed
+    if (gSystemInfo.isStationary && Stillness_Confirm_Timer_Start != 0 &&
+        (now - Stillness_Confirm_Timer_Start >= T_STILLNESS_CONFIRM_DURATION)) {
+      Log.println(
+          "GPS State: S3 -> S4_ANALYZING_STILLNESS (Stillness Confirmed)");
+      resetAllStateTimers();
+      GPS_Query_Timeout_Timer_S4_Start = now;
+      gSystemInfo.gpsState = S4_ANALYZING_STILLNESS;
+      // GPS remains ON for S4 analysis
+      break;
+    }
+    break;
+  }
+  case S4_ANALYZING_STILLNESS: {
+    if (GPS_Query_Timeout_Timer_S4_Start == 0) {
+      GPS_Query_Timeout_Timer_S4_Start = now;
+    } // Safety
+    if (!isGpsPoweredOn)
+      powerOnGPS(); // Ensure GPS is ON for query
+
+    // E4.1_Motion_Detected_During_Analysis
+    if (!gSystemInfo.isStationary) {
+      Log.println(
+          "GPS State: S4 -> S3_TRACKING_FIXED (Motion during Analysis)");
+      resetAllStateTimers();
+      Active_Sampling_Timer_Start = now;
+      gSystemInfo.gpsState = S3_TRACKING_FIXED;
+      break;
+    }
+
+    // E4.2_GPS_Query_Results_Received (Implicitly, by checking gSystemInfo now)
+    // AND E4.3_GPS_Query_Timeout_Timer_S4_Expired (Handled together)
+    bool S4_timeout = (now - GPS_Query_Timeout_Timer_S4_Start >=
+                       T_GPS_QUERY_TIMEOUT_FOR_STILLNESS);
+
+    if (S4_timeout || gSystemInfo.locationValid) { // Process if timeout OR if
+                                                   // data is valid for decision
+      if (!S4_timeout && gSystemInfo.locationValid &&
+          gSystemInfo.speed > GPS_SPEED_VEHICLE_THRESHOLD) {
+        // Case 1: Traffic stop (vehicle still has GPS speed)
+        Log.println("GPS State: S4 -> S3_TRACKING_FIXED (Vehicle Stop Analysis "
+                    "- high GPS speed)");
+        resetAllStateTimers();
+        Active_Sampling_Timer_Start = now;
+        gSystemInfo.gpsState = S3_TRACKING_FIXED;
+      } else {
+        // Case 2: Indoor/Signal Poor OR Outdoor Low Speed Stillness OR S4
+        // Timeout
+        if (S4_timeout)
+          Log.println("S4: Query Timeout.");
+        else
+          Log.println("S4: Low GPS speed or poor signal.");
+
+        Log.println("GPS State: S4 -> S2_IDLE_GPS_OFF");
+        powerOffGPS();
+        resetAllStateTimers();
+        Periodic_Wake_Timer_Start = now;
+        isFirstFixAttemptCycle = true; // Next attempt after sleep will be cold
+        gSystemInfo.gpsState = S2_IDLE_GPS_OFF;
+      }
+      break;
+    }
+    // If not timed out and location is not yet valid, stay in S4 and wait for
+    // GPS data or timeout.
+    break;
+  }
+  default: {
+    Log.printf("Error: Unknown GPS State (%d)! Resetting to S2_IDLE_GPS_OFF\n",
+               gSystemInfo.gpsState);
+    powerOffGPS();
+    resetAllStateTimers();
+    Periodic_Wake_Timer_Start = now;
+    isFirstFixAttemptCycle = true;
+    gSystemInfo.gpsState = S2_IDLE_GPS_OFF;
     break;
   }
   }

@@ -32,11 +32,27 @@ const unsigned long GPS_FIX_INTERVAL =
     10000; // Interval between GPS fix attempts (10 seconds in ms)
 const unsigned long GPS_FIX_ATTEMPT_TIMEOUT =
     60000; // Max time to wait for a fix within an attempt (30 seconds in ms)
-const unsigned long GPS_MIN_POWER_ON_TIME =
-    2000; // Minimum time GPS stays powered on after starting an attempt (1
-          // second in ms)
-const float GPS_HDOP_THRESHOLD = 2; // only keep GPS point if HDOP is
-// below this threshold
+
+// --- GPS Handler Configuration ---
+// Constants from state_spec.md
+#define T_ACTIVE_SAMPLING_INTERVAL_MS (10 * 1000)              // 10 seconds
+#define T_STILLNESS_CONFIRM_DURATION_MS (60 * 1000)            // 60 seconds
+#define GPS_SPEED_VEHICLE_THRESHOLD_KMPH (5.0)                 // km/h
+#define T_GPS_QUERY_TIMEOUT_FOR_STILLNESS_MS (5 * 1000)        // 5 seconds
+#define T_GPS_COLD_START_FIX_TIMEOUT_MS (90 * 1000)            // 90 seconds
+#define T_GPS_REACQUIRE_FIX_TIMEOUT_MS (30 * 1000)             // 30 seconds
+#define T_GPS_SLEEP_PERIODIC_WAKE_INTERVAL_MS (15 * 60 * 1000) // 15 minutes
+#define GPS_HDOP_THRESHOLD                                                     \
+  2.5 // Example: HDOP threshold for a good fix, used by old logic, might be
+      // replaced or reused.
+#define MIN_HDOP_FOR_VALID_FIX                                                 \
+  2.0 // HDOP value less than this is considered a valid fix, from state_spec
+#define MAX_CONSECUTIVE_FIX_FAILURES (16) // Increased from 5 to 16 as per spec
+
+// Initial state after S0_INITIALIZING
+// Set to S1_GPS_SEARCHING_FIX to start GPS immediately,
+// or S2_IDLE_GPS_OFF to wait for motion or periodic wake.
+#define GPS_INITIAL_STATE_AFTER_INIT S2_IDLE_GPS_OFF
 
 // LittleFS settings
 #define MAX_FILE_SIZE 520 * 1024 // Maximum total file size in bytes (520 KB)
