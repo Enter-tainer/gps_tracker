@@ -16,7 +16,7 @@ HardwareSerial &gpsSerial = GPS_SERIAL; // Use definition from config.h
 // gSystemInfo
 unsigned long lastFixAttemptTime = 0; // Initialize to 0
 unsigned long currentFixStartTime = 0;
-
+unsigned long currentFixFinishTime = 0;
 struct PositionResult {
   uint32_t timestamp{0};
   double latitude{0};
@@ -266,6 +266,7 @@ void handleGPS() {
       last_successful_position.longitude = gps.location.lng();
       last_successful_position.altitude_m = gps.altitude.meters();
       last_successful_position.hdop = gps.hdop.hdop();
+      currentFixFinishTime = now; // Record when the fix was acquired
     } else if (attemptTimedOut) {
       Log.println("GPS fix attempt timed out.");
       // gSystemInfo is now up-to-date from the conditional block above,
@@ -295,7 +296,7 @@ void handleGPS() {
     }
 
     bool minTimeElapsed =
-        (now - currentFixStartTime >= gpsScheduler.getMinPowerOnTime());
+        (now - currentFixFinishTime >= gpsScheduler.getMinPowerOnTime());
 
     if (minTimeElapsed) {
       // Min power on time now met. Log the fix data and power off.
