@@ -10,6 +10,7 @@
  *        此函数将进行数据缩放，打包并调用文件系统处理程序进行写入。
  */
 uint32_t last_timestamp = 0;
+uint32_t last_nrf_timestamp = 0;
 bool appendGpxPoint(uint32_t timestamp, double latitude, double longitude,
                     float altitude_m) {
   if (timestamp == 0) {
@@ -18,12 +19,24 @@ bool appendGpxPoint(uint32_t timestamp, double latitude, double longitude,
     return false;
   }
 
-  if (timestamp < last_timestamp) {
-    Log.println("Warning: Timestamp is earlier than the last logged point. "
-                "Skipping this point.");
+  // 如果timestamp - last_timestamp 与 millis() - last_nrf_timestamp
+  // 的差值过大，则认为是 gps 数据异常，直接返回 false
+  const auto gps_timestamp_diff =
+      static_cast<int32_t>(timestamp) - static_cast<int32_t>(last_timestamp);
+  const auto nrf_timestamp_diff = static_cast<int32_t>(millis() / 1000) -
+                                  static_cast<int32_t>(last_nrf_timestamp);
+  // check nrf timestamp diff >= 0 to avoid timestamp overflow
+  if (last_timestamp != 0 && last_nrf_timestamp != 0 &&
+      nrf_timestamp_diff >= 0 &&
+      abs(gps_timestamp_diff - nrf_timestamp_diff) > 3600) {
+    Log.printf(
+        "Warning: GPS timestamp (%u) and NRF timestamp (%u) differ too much "
+        "(GPS diff: %d, NRF diff: %d). Skipping point.\n",
+        timestamp, millis() / 1000, gps_timestamp_diff, nrf_timestamp_diff);
     return false;
   }
   last_timestamp = timestamp;
+  last_nrf_timestamp = millis() / 1000; // 记录上次写入的时间戳
 
   // 创建 GpxPointInternal 实例并进行缩放
   GpxPointInternal entry;
