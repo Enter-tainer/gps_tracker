@@ -29,8 +29,9 @@ struct SystemInfo {
   // System Status
   float batteryVoltage = -1.0f; // voltage, -1.0 indicates N/A
   GpsState gpsState = GPS_OFF; // Current state of the GPS module
-  // String gpsStatusText = "OFF"; // Removed - will be generated in display
-  // handler
+
+  // Stationary (静止) Info
+  bool isStationary = false; // 是否静止
 };
 
 // Declare the global instance (defined in main.cpp)

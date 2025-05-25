@@ -1,6 +1,7 @@
 #include "Adafruit_LittleFS.h"
 #include "Adafruit_TinyUSB.h" // Keep for Serial
 #include "InternalFileSystem.h" // Make sure this is the correct header for InternalFS
+#include "accel_analyzer.h"     // Include the AccelAnalyzer header
 #include "accel_handler.h"
 #include "battery.h" // Include battery functions
 #include "ble_handler.h"
@@ -18,6 +19,10 @@
 
 // Define the global SystemInfo instance
 SystemInfo gSystemInfo;
+
+// 在全局作用域添加分析器实例
+AccelAnalyzer accelAnalyzer(256, 0.15f,
+                            3.0f); // 256 samples, thresholds 0.03g and 0.5g
 
 const unsigned long BATTERY_UPDATE_INTERVAL_MS = 1000;
 
@@ -84,5 +89,17 @@ void loop() {
   handleGPS(); // Call GPS handler (updates gSystemInfo)
   bmp280Handler.update();
   accelHandler.update();
+  // 加速度分析逻辑
+  float total = accelHandler.getTotal();
+  accelAnalyzer.addSample(total);
+  if (accelAnalyzer.isStill()) {
+    gSystemInfo.isStationary = true;
+  } else {
+    gSystemInfo.isStationary = false;
+  }
+  if (accelAnalyzer.hasJump()) {
+    Bluefruit.Advertising.setFastTimeout(5);
+    Bluefruit.Advertising.start(5);
+  }
   delay(50); // 100ms delay for loop stability
 }

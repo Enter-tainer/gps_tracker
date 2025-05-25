@@ -10,6 +10,7 @@ public:
   bool begin(uint8_t addr = 0x19);
   void update();
   void get(float *x, float *y, float *z) const;
+  float getTotal() const;
   bool isOk() const;
 
 private:

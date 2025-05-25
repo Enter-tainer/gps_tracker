@@ -53,3 +53,7 @@ void AccelHandler::get(float *x, float *y, float *z) const {
 }
 
 bool AccelHandler::isOk() const { return ok; }
+
+float AccelHandler::getTotal() const {
+  return sqrt(last_x * last_x + last_y * last_y + last_z * last_z);
+}

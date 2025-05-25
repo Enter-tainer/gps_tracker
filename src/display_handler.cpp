@@ -117,7 +117,10 @@ void updateDisplay() {
   } else {
     display.print("N/A");
   }
-
+  // 如果静止，显示 S 标记
+  if (gSystemInfo.isStationary) {
+    display.print(" S");
+  }
   // Calculate position for Course
   String courseLabel = " Crs:";
   String courseValueStr;
