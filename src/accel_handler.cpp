@@ -16,7 +16,7 @@ bool AccelHandler::begin(uint8_t addr) {
     Log.println("LIS3DHTR 初始化成功");
     lis.setOutputDataRate(LIS3DHTR_DATARATE_50HZ);
     lis.setHighSolution(true);
-    lis.setFullScaleRange(LIS3DHTR_RANGE_4G);
+    lis.setFullScaleRange(LIS3DHTR_RANGE_2G);
   } else {
     ok = false;
     Log.println("LIS3DHTR 初始化失败");

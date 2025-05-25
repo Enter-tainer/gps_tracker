@@ -25,7 +25,9 @@ bool AccelAnalyzer::isStill() const {
   // Log.print(", Max: ");
   // Log.print(maxVal);
   // Log.print(", Still Threshold: ");
-  // Log.println(stillThreshold);
+  // Log.print(stillThreshold);
+  // Log.print(" difference: ");
+  // Log.println(maxVal - minVal);
   return (maxVal - minVal) < stillThreshold;
 }
 

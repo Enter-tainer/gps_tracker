@@ -51,8 +51,9 @@ void powerOnGPS() {
 void powerOffGPS() {
 #ifdef PIN_GPS_EN
   pinMode(PIN_GPS_EN, OUTPUT);
-  digitalWrite(PIN_GPS_EN, LOW); // Assuming LOW turns GPS OFF
-  Log.println("GPS Power OFF");
+  // TODO: revisit power control logic
+  // digitalWrite(PIN_GPS_EN, LOW); // Assuming LOW turns GPS OFF
+  // Log.println("GPS Power OFF");
 #endif
   // Reset GPS data when turning off to avoid showing stale data
   gps = TinyGPSPlus();

@@ -21,8 +21,8 @@
 SystemInfo gSystemInfo;
 
 // 在全局作用域添加分析器实例
-AccelAnalyzer accelAnalyzer(256, 0.15f,
-                            3.0f); // 256 samples, thresholds 0.03g and 0.5g
+AccelAnalyzer accelAnalyzer(256, 0.1f, 2.0f);
+// 256 samples, thresholds 0.1g and 2.0g
 
 const unsigned long BATTERY_UPDATE_INTERVAL_MS = 1000;
 
