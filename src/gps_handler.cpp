@@ -69,6 +69,7 @@ void initGPS() {
   delay(100);                     // Wait for reset to complete
   digitalWrite(LORA_RESET, HIGH); // Release reset
   gpsSerial.begin(GPS_BAUD_RATE);
+  gpsSerial.println("$PCAS04,7*1E"); // Beidou + GPS + GLONASS
   // gpsSerial.println("PCAS10,3*1F"); // factory reset
   Log.println("GPS Serial Initialized");
 
