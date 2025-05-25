@@ -1,6 +1,7 @@
 #include "display_handler.h"
 #include "battery.h" // Include battery functions
 #include "config.h"
+#include "i2c_lock.h"
 #include "logger.h"
 #include "system_info.h" // Include global system info
 #include <Arduino.h>     // For Log
@@ -23,7 +24,10 @@ void resetDisplayTimeout() {
 // Function to turn the display ON
 void turnDisplayOn() {
   if (!isDisplayOn) {
-    display.ssd1306_command(SSD1306_DISPLAYON);
+    {
+      I2C_LockGuard lock; // Ensure I2C access is thread-safe
+      display.ssd1306_command(SSD1306_DISPLAYON);
+    }
     isDisplayOn = true;
     resetDisplayTimeout(); // Reset timer when display turns on
     Log.println("Display ON");
@@ -40,9 +44,13 @@ void turnDisplayOn() {
 // Function to turn the display OFF
 void turnDisplayOff() {
   if (isDisplayOn) {
-    display.clearDisplay();
-    display.display(); // Show cleared screen before turning off
-    display.ssd1306_command(SSD1306_DISPLAYOFF);
+    {
+      I2C_LockGuard lock; // Ensure I2C access is thread-safe
+
+      display.clearDisplay();
+      display.display(); // Show cleared screen before turning off
+      display.ssd1306_command(SSD1306_DISPLAYOFF);
+    }
     isDisplayOn = false;
     Log.println("Display OFF");
     displayRefreshTimer.stop();
@@ -61,6 +69,7 @@ void toggleDisplay() {
 
 // Function to initialize the display
 bool initDisplay() {
+  I2C_LockGuard lock; // Ensure I2C access is thread-safe
   if (!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
     Log.println(F("SSD1306 allocation failed"));
     return false;
@@ -86,6 +95,7 @@ bool initDisplay() {
 
 // Function to update the display based on the global gSystemInfo
 void updateDisplay() {
+  I2C_LockGuard lock; // Ensure I2C access is thread-safe
   if (!isDisplayOn)
     return; // Do nothing if display is off
 

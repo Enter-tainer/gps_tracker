@@ -1,8 +1,10 @@
 #include "Adafruit_LittleFS.h"
 #include "Adafruit_TinyUSB.h" // Keep for Serial
 #include "InternalFileSystem.h" // Make sure this is the correct header for InternalFS
-#include "battery.h"            // Include battery functions
+#include "accel_handler.h"
+#include "battery.h" // Include battery functions
 #include "ble_handler.h"
+#include "bmp280_handler.h"
 #include "button_handler.h"
 #include "config.h"
 #include "display_handler.h"
@@ -11,6 +13,7 @@
 #include "logger.h"           // Include Logger
 #include "system_info.h"      // Include system info
 #include <Arduino.h>
+#include <LIS3DHTR.h>
 #include <Wire.h> // Keep for Wire.begin()
 
 // Define the global SystemInfo instance
@@ -19,6 +22,7 @@ SystemInfo gSystemInfo;
 const unsigned long BATTERY_UPDATE_INTERVAL_MS = 1000;
 
 SoftwareTimer batteryCheckTimer; // Timer for battery check
+
 void setup() {
   // Initialize Serial communication (for debugging)
   // Serial.begin(115200); // Keep this for initial boot messages if necessary,
@@ -57,6 +61,14 @@ void setup() {
   // Initialize Battery (if needed)
   initBattery();
 
+  // Initialize BMP280
+  bmp280Handler.begin(0x76); // Common I2C addresses 0x76 or 0x77
+  // bmp280Handler.start(1000); // 已移除定时器
+
+  // 初始化 LIS3DHTR
+  accelHandler.begin(0x19);
+  // accelHandler.start(50); // 已移除定时器
+
   initInternalFlash();
   BleHandler::setup();
 
@@ -70,5 +82,7 @@ void setup() {
 
 void loop() {
   handleGPS(); // Call GPS handler (updates gSystemInfo)
-  delay(50);
+  bmp280Handler.update();
+  accelHandler.update();
+  delay(50); // 100ms delay for loop stability
 }
