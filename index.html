@@ -1129,7 +1129,7 @@
       set('sysinfo-altitude', info.altitude.toFixed(1) + 'm');
       set('sysinfo-satellites', info.satellites);
       set('sysinfo-hdop', info.hdop.toFixed(2));
-      set('sysinfo-speed', info.speed.toFixed(2) + 'm/s');
+      set('sysinfo-speed', info.speed.toFixed(2) + 'km/h');
       set('sysinfo-course', info.course.toFixed(2) + '°');
       set('sysinfo-date', `${info.year}-${String(info.month).padStart(2, '0')}-${String(info.day).padStart(2, '0')}`);
       set('sysinfo-time', `${String(info.hour).padStart(2, '0')}:${String(info.minute).padStart(2, '0')}:${String(info.second).padStart(2, '0')}`);
