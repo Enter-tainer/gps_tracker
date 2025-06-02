@@ -126,8 +126,10 @@ void initGPS() {
   Log.println("Warning: LORA_RESET (for GPS) not defined.");
 #endif
 
-  gpsSerial.begin(GPS_BAUD_RATE);
+  gpsSerial.begin(GPS_DEFAULT_BAUD_RATE);
   gpsSerial.println("$PCAS04,7*1E"); // Configure for Beidou + GPS + GLONASS
+  gpsSerial.println("$PCAS01,5*19"); // 115200 baud rate
+  gpsSerial.begin(GPS_BAUD_RATE);    // Reinitialize with new baud rate
   Log.println("GPS Serial Initialized, NMEA configured.");
 
 #ifdef PIN_GPS_EN

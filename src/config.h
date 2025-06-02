@@ -13,7 +13,8 @@
 
 // GPS settings
 #define GPS_SERIAL Serial1 // HardwareSerial port for GPS (e.g., Serial1)
-#define GPS_BAUD_RATE 9600 // GPS module baud rate
+#define GPS_DEFAULT_BAUD_RATE 9600 // GPS module baud rate
+#define GPS_BAUD_RATE 115200       // GPS module baud rate
 const unsigned long GPS_DISPLAY_INTERVAL =
     1000; // Update display every second if data is available
 const unsigned long GPS_NO_FIX_TIMEOUT =
