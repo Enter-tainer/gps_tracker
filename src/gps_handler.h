@@ -1,8 +1,8 @@
 #ifndef GPS_HANDLER_H
 #define GPS_HANDLER_H
 
-#include "system_info.h" // For GpsState_t and gSystemInfo
-#include <TinyGPS++.h>   // For TinyGPSPlus object
+#include "casic_gps_wrapper.h" // For CASIC GPS wrapper
+#include "system_info.h"       // For GpsState_t and gSystemInfo
 
 // Function to initialize GPS communication and power pin
 void initGPS();
@@ -17,8 +17,8 @@ void powerOnGPS();
 // Function to explicitly power off the GPS module
 void powerOffGPS();
 
-// Helper function to update the global gSystemInfo struct from TinyGPSPlus data
-void updateGpsSystemInfo(TinyGPSPlus &gpsData);
+// Helper function to update the global gSystemInfo struct from GPS wrapper
+void updateGpsSystemInfo();
 
 // Helper function to convert GPS date/time to an approximate Unix timestamp
 uint32_t dateTimeToUnixTimestamp(uint16_t year, uint8_t month, uint8_t day,

@@ -1,4 +1,5 @@
 #include "gps_handler.h"
+#include "casic_gps_wrapper.h" // For CASIC protocol support
 #include "config.h"
 #include "gpx_logger.h"  // For appendGpxPoint
 #include "logger.h"      // For Log
@@ -26,7 +27,7 @@ static const unsigned long T_GPS_SLEEP_PERIODIC_WAKE_INTERVAL =
 // MIN_HDOP_FOR_VALID_FIX is in config.h
 
 // --- GPS objects and internal state variables ---
-TinyGPSPlus gps;
+CasicGpsWrapper gpsWrapper; // CASIC GPS wrapper that includes TinyGPS++
 HardwareSerial &gpsSerial = GPS_SERIAL; // Use definition from config.h
 
 // Structure to hold position data, similar to the old one but might not be
@@ -89,7 +90,7 @@ void powerOffGPS() {
   Log.println("Warning: PIN_GPS_EN not defined. Cannot control GPS power.");
 #endif
   // Reset GPS data when turning off to avoid showing stale data
-  gps = TinyGPSPlus(); // Clears internal TinyGPS++ state
+  gpsWrapper.reset(); // Clears internal TinyGPS++ state and CASIC parser
   // Explicitly clear relevant gSystemInfo fields related to current fix
   gSystemInfo.locationValid = false;
   gSystemInfo.dateTimeValid = false;
@@ -145,48 +146,50 @@ void initGPS() {
 
 // --- Function to update the global gSystemInfo struct from TinyGPSPlus data
 // ---
-void updateGpsSystemInfo(TinyGPSPlus &gpsData) {
-  gSystemInfo.locationValid = gpsData.location.isValid();
+void updateGpsSystemInfo() {
+  TinyGPSPlus &gps =
+      gpsWrapper.getTinyGPS(); // Get TinyGPS++ instance from wrapper
+  gSystemInfo.locationValid = gps.location.isValid();
   if (gSystemInfo.locationValid) {
-    gSystemInfo.latitude = gpsData.location.lat();
-    gSystemInfo.longitude = gpsData.location.lng();
-    gSystemInfo.satellites = gpsData.satellites.value();
-    gSystemInfo.altitude = gpsData.altitude.meters();
+    gSystemInfo.latitude = gps.location.lat();
+    gSystemInfo.longitude = gps.location.lng();
+    gSystemInfo.satellites = gps.satellites.value();
+    gSystemInfo.altitude = gps.altitude.meters();
   } else {
     // Keep old values or reset? Spec implies reset if invalid.
     gSystemInfo.latitude = 0.0;
     gSystemInfo.longitude = 0.0;
     gSystemInfo.satellites =
-        gpsData.satellites.isValid() ? gpsData.satellites.value() : 0;
+        gps.satellites.isValid() ? gps.satellites.value() : 0;
     gSystemInfo.altitude = 0.0f;
   }
 
-  if (gpsData.hdop.isValid()) {
-    gSystemInfo.hdop = gpsData.hdop.value() / 100.0f;
+  if (gps.hdop.isValid()) {
+    gSystemInfo.hdop = gps.hdop.value() / 100.0f;
   } else {
     gSystemInfo.hdop = 99.9f;
   }
 
-  if (gpsData.speed.isValid()) {
-    gSystemInfo.speed = gpsData.speed.kmph();
+  if (gps.speed.isValid()) {
+    gSystemInfo.speed = gps.speed.kmph();
   } else {
     gSystemInfo.speed = -1.0f; // Invalid speed
   }
 
-  if (gpsData.course.isValid()) {
-    gSystemInfo.course = gpsData.course.deg();
+  if (gps.course.isValid()) {
+    gSystemInfo.course = gps.course.deg();
   } else {
     gSystemInfo.course = -1.0f; // Invalid course
   }
 
-  gSystemInfo.dateTimeValid = gpsData.date.isValid() && gpsData.time.isValid();
+  gSystemInfo.dateTimeValid = gps.date.isValid() && gps.time.isValid();
   if (gSystemInfo.dateTimeValid) {
-    gSystemInfo.year = gpsData.date.year();
-    gSystemInfo.month = gpsData.date.month();
-    gSystemInfo.day = gpsData.date.day();
-    gSystemInfo.hour = gpsData.time.hour();
-    gSystemInfo.minute = gpsData.time.minute();
-    gSystemInfo.second = gpsData.time.second();
+    gSystemInfo.year = gps.date.year();
+    gSystemInfo.month = gps.date.month();
+    gSystemInfo.day = gps.date.day();
+    gSystemInfo.hour = gps.time.hour();
+    gSystemInfo.minute = gps.time.minute();
+    gSystemInfo.second = gps.time.second();
   } else {
     gSystemInfo.year = 0;
     gSystemInfo.month = 0;
@@ -227,8 +230,26 @@ void handleGPS() {
   unsigned long now = millis();
   if (isGpsPoweredOn) {
     while (gpsSerial.available() > 0) {
-      if (gps.encode(gpsSerial.read())) {
-        updateGpsSystemInfo(gps);
+      if (gpsWrapper.encode(gpsSerial.read())) {
+        updateGpsSystemInfo();
+
+        // 检查是否有新的CASIC数据
+        if (gpsWrapper.isNewCasicData()) {
+          CasicPacket packet = gpsWrapper.getLastCasicPacket();
+          Log.printf("Received CASIC packet: Class=0x%02X, ID=0x%02X, Len=%d\n",
+                     packet.class_id, packet.msg_id, packet.payload_length);
+
+          // 处理特定的CASIC消息类型
+          if (gpsWrapper.hasNewAck()) {
+            Log.println("GPS ACK received");
+          } else if (gpsWrapper.hasNewNack()) {
+            Log.println("GPS NACK received");
+          } else if (gpsWrapper.hasNewEphemeris()) {
+            Log.println("GPS Ephemeris data received");
+          }
+
+          gpsWrapper.clearCasicData();
+        }
       }
     }
   }

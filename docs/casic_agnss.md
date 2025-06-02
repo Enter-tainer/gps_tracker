@@ -85,7 +85,53 @@ BA CE 04 00 05 01 08 07 00 00 OC 07 05 01
 ## 3. AGNSS Related Commands
 For relevant data formats, please refer to the CASIC format in document [2][cite: 26].
 
-### 3.1. Data Format
+### 3.1. CASIC Protocol Packet Format
+
+CASIC（中科微电子）协议采用二进制格式传输数据，每个数据包包含固定的包头结构和可变长度的载荷数据。
+
+#### 3.1.1. Packet Structure
+
+| Field      | Size (bytes) | Description                                                |
+|:-----------|:-------------|:-----------------------------------------------------------|
+| Header     | 2            | 固定起始字符 `0xBA 0xCE`                                   |
+| Length     | 2            | Payload 长度（小端序）                                     |
+| Class      | 1            | 消息类别标识符                                             |
+| ID         | 1            | 消息类型标识符                                             |
+| Payload    | Variable     | 消息数据载荷，长度由 Length 字段指定                       |
+| Checksum   | 4            | 32位校验和（小端序）                                       |
+
+#### 3.1.2. Checksum Calculation
+
+校验和计算方法（官方算法）：
+
+```
+Checksum = (ID << 24) + (Class << 16) + Length
+for (i = 0; i < (Length / 4); i++) {
+    Checksum = Checksum + Payload[i]  // 按4字节为单位累加
+}
+Checksum = Checksum & 0xFFFFFFFF     // 取低32位
+```
+
+注意：
+- 所有多字节字段均采用小端序（Little Endian）格式
+- Payload按4字节对齐处理，不足4字节的末尾部分不参与校验和计算
+- 包头固定为 `0xBA 0xCE`，用于数据包同步识别
+
+#### 3.1.3. Message Types
+
+| Class | ID   | Message Type  | Description              | Payload Size |
+|:------|:-----|:--------------|:-------------------------|:-------------|
+| 0x0B  | 0x01 | AID-INI       | 辅助初始化数据           | 56 bytes     |
+| 0x05  | 0x01 | ACK           | 确认消息                 | 4 bytes      |
+| 0x05  | 0x00 | NACK          | 否定消息                 | 4 bytes      |
+| 0x08  | 0x07 | MSG_GPSEPH    | GPS 星历                 | 72 bytes     |
+| 0x08  | 0x02 | MSG_BDSEPH    | BDS 星历                 | 92 bytes     |
+| 0x08  | 0x05 | MSG_GPSUTC    | GPS UTC 数据             | 20 bytes     |
+| 0x08  | 0x06 | MSG_GPSION    | GPS 电离层参数           | 16 bytes     |
+| 0x08  | 0x00 | MSG_BDSUTC    | BDS UTC 数据             | 20 bytes     |
+| 0x08  | 0x01 | MSG_BDSION    | BDS 电离层数据           | 16 bytes     |
+
+### 3.2. Data Format
 The data types used are[cite: 27]:
 
 | Abbreviation | Type          | Length (bytes) | Notes     |
@@ -99,7 +145,7 @@ The data types used are[cite: 27]:
 | R4           | IEEE754 Single precision | 4              |           |
 | R8           | IEEE754 Double precision | 8              |           |
 
-### 3.2. AID-INI
+### 3.3. AID-INI
 This command is used to send auxiliary position, clock, and other information[cite: 27]. It is sent by the terminal device's main controller, and the module will return an ACK upon receiving it[cite: 27].
 
 **Format:**
@@ -142,7 +188,7 @@ This command is used to send auxiliary position, clock, and other information[ci
 * **Send:** `BA CE 38 00 0B 01 00 00 00 80 EB D1 3F 40 00 00 00 40 0A 47 5D 40 00 00 00 00 00 00 00 00 00 00 00 00 A0 A1 15 41 00 00 00 00 00 00 00 00 00 00 00 3F 00 00 00 00 E5 07 00 00 62 08 00 23 14 CB BD` [cite: 30]
 * **ACK:** `BA CE 04 00 05 01 0B 01 00 00 0F 01 05 01` [cite: 30]
 
-### 3.3. MSG_BDSUTC
+### 3.4. MSG_BDSUTC
 BDS fixed-point UTC data (parameters synchronized with UTC time)[cite: 30].
 
 **Format:**
@@ -151,7 +197,7 @@ BDS fixed-point UTC data (parameters synchronized with UTC time)[cite: 30].
 |:-------|:---------------|:-----------|:--------|:---------|
 | 0xBA 0xCE | 20             | 0x08 0x00  | -       | 4 bytes  | [cite: 31]
 
-### 3.4. MSG_BDSION
+### 3.5. MSG_BDSION
 BDS Ionospheric data[cite: 31].
 
 **Format:**
@@ -160,7 +206,7 @@ BDS Ionospheric data[cite: 31].
 |:-------|:---------------|:-----------|:--------|:---------|
 | 0xBA 0xCE | 16             | 0x08 0x01  | -       | 4 bytes  | [cite: 32]
 
-### 3.5. MSG_BDSEPH
+### 3.6. MSG_BDSEPH
 BDS Ephemeris[cite: 31].
 
 **Format:**
@@ -169,7 +215,7 @@ BDS Ephemeris[cite: 31].
 |:-------|:---------------|:-----------|:--------|:---------|
 | 0xBA 0xCE | 92             | 0x08 0x02  | -       | 4 bytes  | [cite: 32]
 
-### 3.6. MSG_GPSUTC
+### 3.7. MSG_GPSUTC
 GPS fixed-point UTC data (parameters synchronized with UTC time)[cite: 33].
 
 **Format:**
@@ -178,7 +224,7 @@ GPS fixed-point UTC data (parameters synchronized with UTC time)[cite: 33].
 |:-------|:---------------|:-----------|:--------|:---------|
 | 0xBA 0xCE | 20             | 0x08 0x05  | -       | 4 bytes  | [cite: 34]
 
-### 3.7. MSG_GPSION
+### 3.8. MSG_GPSION
 GPS Ionospheric parameters[cite: 33].
 
 **Format:**
@@ -187,7 +233,7 @@ GPS Ionospheric parameters[cite: 33].
 |:-------|:---------------|:-----------|:--------|:---------|
 | 0xBA 0xCE | 16             | 0x08 0x06  | -       | 4 bytes  | [cite: 34]
 
-### 3.8. MSG_GPSEPH
+### 3.9. MSG_GPSEPH
 GPS Ephemeris[cite: 33].
 
 **Format:**
@@ -196,7 +242,7 @@ GPS Ephemeris[cite: 33].
 |:-------|:---------------|:-----------|:--------|:---------|
 | 0xBA 0xCE | 72             | 0x08 0x07  | -       | 4 bytes  | [cite: 34]
 
-### 3.9. ACK
+### 3.10. ACK
 This response message is used to acknowledge correctly received information[cite: 34]. If the AID-INI or satellite data sent by the terminal device's main controller is successfully received, the L76K module will send an ACK message to inform the main controller of successful reception[cite: 34].
 
 **Format:**
@@ -213,7 +259,7 @@ This response message is used to acknowledge correctly received information[cite
 | 1                | U1        | -            | MsgID | -    | Number of correctly received message |
 | 2                | U2        | -            | Res   | -    | Reserved                     | [cite: 35]
 
-### 3.10. NACK
+### 3.11. NACK
 This response message is used to indicate incorrectly received information[cite: 35]. If the AID-INI or satellite data sent by the terminal device's main controller is not correctly received, the L76K module will send a NACK message to inform the main controller of the reception failure[cite: 35].
 
 **Format:**
@@ -256,3 +302,121 @@ This response message is used to indicate incorrectly received information[cite:
 | RAM          | Random Access Memory        | 随机存储器               |
 | TTFF         | Time to First Fix           | 首次定位时间             |
 | UTC          | Coordinated Universal Time  | 协调世界时               |
+
+## 5. TinyGPS++ Wrapper 状态机设计
+
+### 5.1. 概述
+
+为了支持CASIC协议解析，需要设计一个TinyGPS++的包装器（wrapper），该包装器能够：
+1. 处理标准NMEA协议（通过内部TinyGPS++实例）
+2. 处理CASIC二进制协议（自定义解析器）
+3. 维护流式数据的解析状态
+
+### 5.2. 状态机设计
+
+#### 5.2.1. 主状态定义
+
+```
+enum CasicParserState {
+    IDLE = 0,           // 空闲状态，等待数据包开始
+    HEADER_1,           // 接收到0xBA，等待0xCE
+    HEADER_2,           // 接收到0xBA 0xCE，开始读取长度
+    LENGTH_1,           // 读取长度字段第1字节（小端序）
+    LENGTH_2,           // 读取长度字段第2字节
+    CLASS_ID,           // 读取Class字段
+    MSG_ID,             // 读取ID字段
+    PAYLOAD,            // 读取Payload数据
+    CHECKSUM_1,         // 读取校验和第1字节
+    CHECKSUM_2,         // 读取校验和第2字节
+    CHECKSUM_3,         // 读取校验和第3字节
+    CHECKSUM_4,         // 读取校验和第4字节
+    PACKET_COMPLETE     // 数据包接收完成
+};
+```
+
+#### 5.2.2. 状态转换图
+
+```
+IDLE ─┐
+      │ 0xBA
+      ▼
+   HEADER_1 ─┐
+             │ 0xCE
+             ▼
+          HEADER_2
+             │
+             ▼
+          LENGTH_1
+             │
+             ▼
+          LENGTH_2
+             │
+             ▼
+          CLASS_ID
+             │
+             ▼
+           MSG_ID
+             │
+             ▼
+           PAYLOAD ◄─┐
+             │      │ payload_len > 0
+             ▼      │
+        CHECKSUM_1 ─┘
+             │
+             ▼
+        CHECKSUM_2
+             │
+             ▼
+        CHECKSUM_3
+             │
+             ▼
+        CHECKSUM_4
+             │
+             ▼
+      PACKET_COMPLETE
+             │
+             ▼
+           IDLE
+```
+
+#### 5.2.3. 错误处理
+
+- **超时机制**: 如果在指定时间内未完成数据包接收，自动返回IDLE状态
+- **校验和验证**: 接收完成后验证校验和，失败则丢弃数据包
+- **长度验证**: 检查Payload长度是否合理（防止缓冲区溢出）
+- **重置机制**: 遇到非预期字节时根据情况选择重置或继续
+
+#### 5.2.4. 数据结构
+
+```cpp
+struct CasicPacket {
+    uint8_t class_id;           // 消息类别
+    uint8_t msg_id;             // 消息ID
+    uint16_t payload_length;    // Payload长度
+    uint8_t payload[256];       // Payload数据（最大256字节）
+    uint32_t checksum;          // 接收到的校验和
+    uint32_t calculated_checksum; // 计算的校验和
+    bool valid;                 // 数据包是否有效
+};
+```
+
+### 5.3. 实现要点
+
+1. **流式处理**: 每次调用只处理一个字节，适应UART流式特性
+2. **状态持久化**: 状态机状态在多次调用间保持
+3. **缓冲区管理**: 合理管理Payload缓冲区，防止溢出
+4. **性能优化**: 尽量减少不必要的数据拷贝和内存分配
+5. **兼容性**: 保持与TinyGPS++相同的接口风格
+
+### 5.4. 接口设计
+
+```cpp
+class CasicGpsWrapper {
+public:
+    bool encode(uint8_t byte);          // 处理单个字节
+    TinyGPSPlus& getTinyGPS();          // 获取内部TinyGPS++实例
+    bool isNewCasicData();              // 是否有新的CASIC数据
+    CasicPacket getLastCasicPacket();   // 获取最后接收的CASIC包
+    void reset();                       // 重置解析器状态
+};
+```
