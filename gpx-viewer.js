@@ -48,7 +48,7 @@ class GPXViewer extends HTMLElement {
         this.dispatchEvent(new CustomEvent('gpx-loaded'));
       } else {
         this._timestampDisplay.textContent = "GPX 解析失败";
-        this._mapContainer.classList.add('no-track');
+        this._mapMainContainer.classList.add('no-track');
         this._dropPromptMessage.textContent = "GPX 解析失败，请检查文件并重试\n或点击此处选择另一个文件";
         this.dispatchEvent(new CustomEvent('gpx-error'));
       }
@@ -61,8 +61,10 @@ class GPXViewer extends HTMLElement {
     this._gpxString = null;
     this._currentPoints = [];
     this._currentFullTrackGeoJSON = { type: 'Feature', geometry: { type: 'LineString', coordinates: [] }, properties: {} };
+    this._currentSegments = [];
+    this._segmentVisibility = this._currentSegments ? this._currentSegments.map(() => false) : [];
     this._timestampDisplay.textContent = "未加载数据";
-    this._mapContainer.classList.add('no-track');
+    this._mapMainContainer.classList.add('no-track');
     this._dropPromptMessage.textContent = "请拖放 GPX 文件到地图区域\n或点击此处选择文件";
     if (this._mapLoaded) {
       this._map.getSource('full-track').setData(this._currentFullTrackGeoJSON);
@@ -73,6 +75,7 @@ class GPXViewer extends HTMLElement {
     if (this._progressBarContainer) {
       this._progressBarContainer.innerHTML = '';
     }
+    this._hideSidebar();
   }
 
   // 属性支持（可选）
@@ -89,28 +92,361 @@ class GPXViewer extends HTMLElement {
       <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.1.0/dist/maplibre-gl.css">
       <style>
         :host { display: block; position: relative; width: 100%; height: 100%; }
-        .map { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: #f0f0f0; }
-        .controls { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); background: rgba(255,255,255,0.93); padding: 10px 20px; border-radius: 16px; z-index: 1; display: flex; flex-direction: column; align-items: center; gap: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.13); min-width: 220px; width: 80vw; max-width: 700px; }
+
+        .main-container {
+          display: flex;
+          width: 100%;
+          height: 100%;
+        }
+
+        .map-container {
+          flex: 1;
+          position: relative;
+          background: #f0f0f0;
+          transition: all 0.3s ease;
+        }
+
+        .map {
+          position: absolute;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+        }
+
+        .sidebar-container {
+          width: 0;
+          overflow: hidden;
+          transition: width 0.3s ease;
+          position: relative;
+        }
+
+        .sidebar-container.expanded {
+          width: 380px;
+        }
+
+        .sidebar {
+          width: 380px;
+          height: 100%;
+          background: #ffffff;
+          color: #333;
+          overflow-y: auto;
+          position: relative;
+          border-left: 1px solid #e0e0e0;
+        }
+
+        .sidebar-header {
+          background: #f8f9fa;
+          padding: 16px 20px;
+          border-bottom: 1px solid #e0e0e0;
+        }
+
+        .sidebar-title {
+          font-size: 1.2em;
+          font-weight: 600;
+          margin-bottom: 4px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          color: #333;
+        }
+
+        .sidebar-subtitle {
+          font-size: 0.85em;
+          color: #666;
+          line-height: 1.4;
+        }
+
+        .sidebar-content {
+          padding: 8px 0;
+        }
+
+        .segment-item {
+          background: #fff;
+          margin: 4px 12px;
+          border: 1px solid #e0e0e0;
+          border-radius: 6px;
+          padding: 12px;
+          cursor: pointer;
+          transition: all 0.15s ease;
+        }
+
+        .segment-item:hover {
+          background: #f5f5f5;
+          border-color: #ccc;
+        }
+
+        .segment-item.active {
+          background: #e3f2fd;
+          border-color: #2196f3;
+        }
+
+        .segment-header {
+          display: flex;
+          align-items: center;
+          margin-bottom: 8px;
+        }
+
+        .segment-checkbox {
+          margin-right: 10px;
+          width: 16px;
+          height: 16px;
+        }
+
+        .segment-title {
+          font-weight: 500;
+          font-size: 0.95em;
+          flex: 1;
+          color: #333;
+        }
+
+        .segment-type {
+          background: #f0f0f0;
+          color: #666;
+          padding: 2px 8px;
+          border-radius: 4px;
+          font-size: 0.75em;
+          font-weight: 500;
+        }
+
+        .segment-type.stop {
+          background: #ffebee;
+          color: #c62828;
+        }
+
+        .segment-type.move {
+          background: #e8f5e8;
+          color: #2e7d32;
+        }
+
+        .segment-details {
+          font-size: 0.85em;
+          color: #555;
+          line-height: 1.4;
+        }
+
+        .segment-time {
+          margin-bottom: 8px;
+          font-family: 'SF Mono', Monaco, monospace;
+          background: #f8f9fa;
+          padding: 6px 8px;
+          border-radius: 4px;
+          font-size: 0.8em;
+          color: #555;
+        }
+
+        .segment-stats {
+          display: grid;
+          grid-template-columns: 1fr 1fr 1fr;
+          gap: 6px;
+          margin-top: 8px;
+        }
+
+        .stat-item {
+          text-align: center;
+          background: #f8f9fa;
+          padding: 6px 4px;
+          border-radius: 4px;
+          border: 1px solid #e0e0e0;
+        }
+
+        .stat-label {
+          font-size: 0.7em;
+          color: #666;
+          margin-bottom: 2px;
+          text-transform: uppercase;
+          letter-spacing: 0.3px;
+        }
+
+        .stat-value {
+          font-weight: 500;
+          font-size: 0.85em;
+          color: #333;
+        }
+
+        .sidebar-actions {
+          padding: 12px 16px;
+          border-top: 1px solid #e0e0e0;
+          background: #f8f9fa;
+        }
+
+        .btn {
+          background: #fff;
+          color: #333;
+          border: 1px solid #ccc;
+          padding: 8px 16px;
+          border-radius: 6px;
+          cursor: pointer;
+          font-size: 0.9em;
+          font-weight: 500;
+          transition: all 0.15s ease;
+          width: 100%;
+        }
+
+        .btn:hover {
+          background: #f5f5f5;
+          border-color: #999;
+        }
+
+        .btn-close {
+          background: transparent;
+          border: none;
+          color: #666;
+          font-size: 1.1em;
+          cursor: pointer;
+          padding: 4px 8px;
+          border-radius: 4px;
+          transition: all 0.15s ease;
+        }
+
+        .btn-close:hover {
+          background: #f0f0f0;
+          color: #333;
+        }
+
+        .sidebar-toggle {
+          position: absolute;
+          top: 20px;
+          right: 20px;
+          width: 44px;
+          height: 44px;
+          background: #fff;
+          color: #333;
+          border: 1px solid #ccc;
+          border-radius: 8px;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 1.1em;
+          z-index: 15;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+          transition: all 0.2s ease;
+        }
+
+        .sidebar-toggle:hover {
+          background: #f5f5f5;
+          border-color: #999;
+        }
+
+        .sidebar-toggle.hidden {
+          opacity: 0;
+          pointer-events: none;
+        }
+
+        .controls {
+          position: absolute;
+          bottom: 20px;
+          left: 50%;
+          transform: translateX(-50%);
+          background: rgba(255,255,255,0.95);
+          padding: 12px 24px;
+          border-radius: 16px;
+          z-index: 5;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 10px;
+          box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+          backdrop-filter: blur(20px);
+          border: 1px solid rgba(255,255,255,0.2);
+          min-width: 220px;
+          width: 80vw;
+          max-width: 700px;
+        }
         .controls-row { display: flex; align-items: center; gap: 15px; width: 100%; justify-content: center; flex-wrap: wrap; }
         .track-progress-bar { width: 80vw; max-width: 700px; min-width: 160px; height: 100px; margin-bottom: 2px; user-select: none; touch-action: pan-x; margin-left: auto; margin-right: auto; }
-        .timestamp { font-family: monospace; font-size: 13px; min-width: 120px; padding: 5px; background: #f8f9fa; border-radius: 4px; }
-        .drop-prompt { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(255,255,255,0.95); padding: 25px 30px; border-radius: 10px; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 1.3em; color: #333; text-align: center; z-index: 10; pointer-events: auto; display: none; box-shadow: 0 4px 15px rgba(0,0,0,0.1); cursor: pointer; transition: background-color 0.2s, transform 0.1s; }
+        .timestamp { font-family: 'SF Mono', Monaco, monospace; font-size: 13px; min-width: 120px; padding: 8px 12px; background: #f8f9fa; border-radius: 8px; border: 1px solid #e9ecef; }
+        .drop-prompt { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(255,255,255,0.95); padding: 30px 40px; border-radius: 16px; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 1.3em; color: #333; text-align: center; z-index: 10; pointer-events: auto; display: none; box-shadow: 0 8px 32px rgba(0,0,0,0.1); cursor: pointer; transition: all 0.3s ease; backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.2); }
         .drop-prompt:hover { background: #fff; transform: translate(-50%, -50%) scale(1.02); }
         .drop-prompt:active { transform: translate(-50%, -50%) scale(0.98); }
-        .map.no-track .drop-prompt { display: block; }
+        .map-container.no-track .drop-prompt { display: block; }
         .file-input { display: none; }
-        .color-mode-select { font-size: 14px; padding: 3px 8px; border-radius: 4px; border: 1px solid #ccc; margin-left: 8px; }
-        @media (max-width: 600px) {
-          .controls { min-width: 0; padding: 8px 2vw; border-radius: 12px; width: 90vw; max-width: 98vw; }
-          .track-progress-bar { min-width: 0; width: 90vw; max-width: 98vw; height: 110px; margin-left: auto; margin-right: auto; }
-          .controls-row { flex-direction: row; flex-wrap: wrap; gap: 10px; justify-content: center; }
-          .timestamp { font-size: 15px; min-width: 100px; padding: 5px; }
-          label { font-size: 15px; }
-          .color-mode-select { font-size: 15px; padding: 4px 10px; margin-left: 6px; }
+        .color-mode-select { font-size: 14px; padding: 6px 12px; border-radius: 8px; border: 1px solid #ddd; margin-left: 8px; background: white; }
+
+        @media (max-width: 768px) {
+          .sidebar-container.expanded {
+            width: 100%;
+            position: absolute;
+            top: 0;
+            right: 0;
+            height: 100%;
+            z-index: 20;
+          }
+          .sidebar {
+            width: 100%;
+          }
+          .controls {
+            min-width: 0;
+            padding: 10px 16px;
+            border-radius: 12px;
+            width: 90vw;
+            max-width: 98vw;
+          }
+          .track-progress-bar {
+            min-width: 0;
+            width: 90vw;
+            max-width: 98vw;
+            height: 110px;
+          }
+          .controls-row {
+            flex-direction: row;
+            flex-wrap: wrap;
+            gap: 10px;
+            justify-content: center;
+          }
+          .timestamp {
+            font-size: 15px;
+            min-width: 100px;
+            padding: 6px 10px;
+          }
+          label {
+            font-size: 15px;
+          }
+          .color-mode-select {
+            font-size: 15px;
+            padding: 6px 12px;
+            margin-left: 6px;
+          }
+          .sidebar-toggle {
+            width: 40px;
+            height: 40px;
+            top: 10px;
+            right: 10px;
+            font-size: 1em;
+          }
+        }
+
+        @media (max-width: 480px) {
+          .sidebar-container.expanded {
+            width: 100%;
+          }
+          .sidebar {
+            width: 100%;
+          }
         }
       </style>
-      <div class="map no-track">
-        <div class="drop-prompt">请拖放 GPX 文件到地图区域<br>或点击此处选择文件</div>
+      <div class="main-container">
+        <div class="map-container no-track">
+          <div class="map"></div>
+          <div class="drop-prompt">请拖放 GPX 文件到地图区域<br>或点击此处选择文件</div>
+          <button class="sidebar-toggle hidden" title="显示侧边栏">☰</button>
+        </div>
+        <div class="sidebar-container">
+          <div class="sidebar">
+            <div class="sidebar-header">
+              <div class="sidebar-title">
+                <span>轨迹分段</span>
+                <button class="btn-close" title="关闭侧边栏">✕</button>
+              </div>
+              <div class="sidebar-subtitle">选择分段查看轨迹</div>
+            </div>
+            <div class="sidebar-content"></div>
+            <div class="sidebar-actions">
+              <button class="btn" id="reset-segments">重置选择</button>
+            </div>
+          </div>
+        </div>
       </div>
       <div class="controls">
         <div class="track-progress-bar"></div>
@@ -128,6 +464,11 @@ class GPXViewer extends HTMLElement {
       <input type="file" class="file-input" accept=".gpx" />
     `;
     this._mapContainer = this.shadowRoot.querySelector('.map');
+    this._mapMainContainer = this.shadowRoot.querySelector('.map-container');
+    this._sidebar = this.shadowRoot.querySelector('.sidebar');
+    this._sidebarContainer = this.shadowRoot.querySelector('.sidebar-container');
+    this._sidebarContent = this.shadowRoot.querySelector('.sidebar-content');
+    this._sidebarToggle = this.shadowRoot.querySelector('.sidebar-toggle');
     this._dropPromptMessage = this.shadowRoot.querySelector('.drop-prompt');
     this._timestampDisplay = this.shadowRoot.querySelector('.timestamp');
     this._fileInput = this.shadowRoot.querySelector('.file-input');
@@ -145,14 +486,82 @@ class GPXViewer extends HTMLElement {
         this._processSelectedFile(event.target.files[0]);
       }
     });
+
+    // 侧边栏切换事件
+    this._sidebarToggle.addEventListener('click', () => this._showSidebar());
+    this.shadowRoot.querySelector('.btn-close').addEventListener('click', () => this._hideSidebar());
+
+    // 重置分段按钮事件
+    this.shadowRoot.getElementById('reset-segments').addEventListener('click', () => {
+      if (this._currentSegments) {
+        this._segmentVisibility = this._currentSegments.map(() => false);
+        this._updateTrackSegmentsLayer();
+        this._renderTrackProgressBar();
+        this._renderSidebar();
+        this._fitMapToVisibleTrack();
+      }
+    });
+
     // 拖拽
-    this._mapContainer.addEventListener('dragover', e => { e.preventDefault(); e.stopPropagation(); this._mapContainer.classList.add('dragover'); this._dropPromptMessage.textContent = "松开以加载 GPX 文件"; });
-    this._mapContainer.addEventListener('dragleave', e => { e.preventDefault(); e.stopPropagation(); this._mapContainer.classList.remove('dragover'); if (this._currentPoints.length === 0) this._dropPromptMessage.textContent = "请拖放 GPX 文件到地图区域\n或点击此处选择文件"; });
-    this._mapContainer.addEventListener('drop', e => { e.preventDefault(); e.stopPropagation(); this._mapContainer.classList.remove('dragover'); this._dropPromptMessage.textContent = "正在处理 GPX 文件..."; if (e.dataTransfer.files && e.dataTransfer.files.length > 0) { this._processSelectedFile(e.dataTransfer.files[0]); } else { if (this._currentPoints.length === 0) this._dropPromptMessage.textContent = "请拖放 GPX 文件到地图区域\n或点击此处选择文件"; } });
-    // SVG进度条交互事件将在_renderTrackProgressBar中绑定
+    this._mapContainer.addEventListener('dragover', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      this._mapMainContainer.classList.add('dragover');
+      this._dropPromptMessage.textContent = "松开以加载 GPX 文件";
+    });
+    this._mapContainer.addEventListener('dragleave', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      this._mapMainContainer.classList.remove('dragover');
+      if (this._currentPoints.length === 0) this._dropPromptMessage.textContent = "请拖放 GPX 文件到地图区域\n或点击此处选择文件";
+    });
+    this._mapContainer.addEventListener('drop', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      this._mapMainContainer.classList.remove('dragover');
+      this._dropPromptMessage.textContent = "正在处理 GPX 文件...";
+      if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        this._processSelectedFile(e.dataTransfer.files[0]);
+      } else {
+        if (this._currentPoints.length === 0) this._dropPromptMessage.textContent = "请拖放 GPX 文件到地图区域\n或点击此处选择文件";
+      }
+    });
+
+    // 监听窗口大小变化，在移动设备和桌面设备之间切换时调整侧边栏状态
+    window.addEventListener('resize', () => {
+      if (this._currentSegments && this._currentSegments.length > 0) {
+        const sidebarExpanded = this._sidebarContainer && this._sidebarContainer.classList.contains('expanded');
+        if (this._isMobile() && sidebarExpanded) {
+          // 切换到移动设备时关闭侧边栏
+          this._hideSidebar();
+        } else if (!this._isMobile() && !sidebarExpanded) {
+          // 切换到桌面设备时打开侧边栏
+          this._showSidebar();
+        }
+      }
+    });
   }
 
-  // 动态加载 maplibre-gl（如未加载）
+  // 检测是否为移动设备
+  _isMobile() {
+    return window.innerWidth <= 768;
+  }
+
+  // 显示侧边栏
+  _showSidebar() {
+    if (this._sidebarContainer) {
+      this._sidebarContainer.classList.add('expanded');
+      this._sidebarToggle.classList.add('hidden');
+    }
+  }
+
+  // 隐藏侧边栏
+  _hideSidebar() {
+    if (this._sidebarContainer) {
+      this._sidebarContainer.classList.remove('expanded');
+      this._sidebarToggle.classList.remove('hidden');
+    }
+  }
   _ensureMaplibreLoaded() {
     if (window.maplibregl) return Promise.resolve();
     if (window._gpxViewerMaplibreLoading) return window._gpxViewerMaplibreLoading;
@@ -183,9 +592,19 @@ class GPXViewer extends HTMLElement {
         }
       });
       this._map.on('zoomend', () => {
-        if (this._currentPoints && this._currentPoints.length > 1 && this._map.getSource('arrow-points')) {
-          const arrowFeatures = this._generateArrowFeatures(this._currentPoints, this._map.getZoom());
-          this._map.getSource('arrow-points').setData(arrowFeatures);
+        // 只在箭头图层可见且有可见轨迹时才更新箭头
+        if (
+          this._currentPoints && this._currentPoints.length > 1 &&
+          this._map.getSource('arrow-points') &&
+          this._map.style.getImage('arrow-icon') &&
+          this._map.getLayoutProperty('gpx-arrows', 'visibility') === 'visible'
+        ) {
+          // 获取当前可见轨迹点
+          const pts = this._getVisibleTrackPoints();
+          if (pts && pts.length > 1) {
+            const arrowFeatures = this._generateArrowFeatures(pts, this._map.getZoom());
+            this._map.getSource('arrow-points').setData(arrowFeatures);
+          }
         }
       });
     });
@@ -223,7 +642,11 @@ class GPXViewer extends HTMLElement {
     this._map.addSource('current-point', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
     this._map.addLayer({ id: 'current-point-marker', type: 'circle', source: 'current-point', paint: { 'circle-radius': 8, 'circle-color': '#dc3545', 'circle-stroke-width': 2, 'circle-stroke-color': '#ffffff' } });
     this._map.addSource('track-segments', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+    // 添加分段轨迹描边层（黑色，更宽）
+    this._map.addLayer({ id: 'track-segments-stroke', type: 'line', source: 'track-segments', layout: { 'line-join': 'round', 'line-cap': 'round' }, paint: { 'line-color': '#000000', 'line-width': 8, 'line-opacity': 0.9 } }, 'full-track-line');
+    // 添加分段轨迹彩色层
     this._map.addLayer({ id: 'track-segments-line', type: 'line', source: 'track-segments', layout: { 'line-join': 'round', 'line-cap': 'round' }, paint: { 'line-color': ['get', 'color'], 'line-width': 5, 'line-opacity': 0.95 } }, 'full-track-line');
+    this._map.setLayoutProperty('track-segments-stroke', 'visibility', 'none');
     this._map.setLayoutProperty('track-segments-line', 'visibility', 'none');
 
     this._map.addSource('stop-points', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
@@ -270,13 +693,13 @@ class GPXViewer extends HTMLElement {
         this.dispatchEvent(new CustomEvent('gpx-loaded'));
       } else {
         this._timestampDisplay.textContent = "GPX 解析失败";
-        this._mapContainer.classList.add('no-track');
+        this._mapMainContainer.classList.add('no-track');
         this._dropPromptMessage.textContent = "GPX 解析失败，请检查文件并重试\n或点击此处选择另一个文件";
         this.dispatchEvent(new CustomEvent('gpx-error'));
       }
     } else {
       // 如果没有 gpxString，才显示初始的拖放提示状态
-      this._mapContainer.classList.add('no-track');
+      this._mapMainContainer.classList.add('no-track');
       this._timestampDisplay.textContent = "请拖放 GPX 文件";
       this._dropPromptMessage.textContent = "请拖放 GPX 文件到地图区域\n或点击此处选择文件";
       if (this._progressBarContainer) {
@@ -518,9 +941,12 @@ class GPXViewer extends HTMLElement {
     this._currentPoints = processed.points;
     this._currentFullTrackGeoJSON = processed.fullTrackGeoJSON;
     this._currentStops = processed.stops || [];
+    // 新增：分段
+    this._currentSegments = this._splitTrackByStops(this._currentPoints, this._currentStops);
+    this._segmentVisibility = this._currentSegments.map(() => false); // 默认全未选中
     if (this._currentPoints.length === 0) {
       this._timestampDisplay.textContent = "GPX 文件无有效轨迹数据";
-      this._mapContainer.classList.add('no-track');
+      this._mapMainContainer.classList.add('no-track');
       this._dropPromptMessage.textContent = "GPX 无有效数据或解析失败，请重试\n或点击此处选择另一个文件";
       if (this._map.getSource('full-track')) {
         this._map.getSource('full-track').setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: [] }, properties: {} });
@@ -537,7 +963,7 @@ class GPXViewer extends HTMLElement {
       }
       return;
     }
-    this._mapContainer.classList.remove('no-track');
+    this._mapMainContainer.classList.remove('no-track');
     this._map.getSource('full-track').setData(this._currentFullTrackGeoJSON);
     this._updateMapForIndex(0);
     if (this._map.getSource('arrow-points') && this._map.style.getImage('arrow-icon')) {
@@ -566,28 +992,37 @@ class GPXViewer extends HTMLElement {
     }
     // 渲染SVG进度条
     this._renderTrackProgressBar();
+    // 渲染侧边栏，桌面设备自动显示，移动设备需要手动打开
+    this._renderSidebar();
+    if (!this._isMobile()) {
+      this._showSidebar();
+    } else {
+      // 移动设备上确保侧边栏隐藏，按钮显示
+      this._hideSidebar();
+    }
   }
 
-  // 更新地图当前点和已走轨迹
+  // 更新地图当前点和已走轨迹（只用可见分段）
   _updateMapForIndex(index) {
+    const visiblePoints = this._getVisibleTrackPoints();
     if (!this._map.loaded() || !this._map.getSource('current-point') || !this._map.getSource('travelled-track')) {
       return;
     }
-    if (!this._currentPoints || this._currentPoints.length === 0 || index < 0 || index >= this._currentPoints.length) {
-      if (this._currentPoints && this._currentPoints.length === 0) {
+    if (!visiblePoints || visiblePoints.length === 0 || index < 0 || index >= visiblePoints.length) {
+      if (!visiblePoints || visiblePoints.length === 0) {
         this._timestampDisplay.textContent = "无轨迹数据";
         this._map.getSource('current-point').setData({ type: 'FeatureCollection', features: [] });
         this._map.getSource('travelled-track').setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: [] }, properties: {} });
       }
       return;
     }
-    const currentPointData = this._currentPoints[index];
+    const currentPointData = visiblePoints[index];
     this._map.getSource('current-point').setData({
       type: 'Feature',
       geometry: { type: 'Point', coordinates: [currentPointData.longitude, currentPointData.latitude] },
       properties: { timestamp: currentPointData.timestamp, altitude: currentPointData.altitude }
     });
-    const travelledCoordinates = this._currentPoints.slice(0, index + 1).map(p => [p.longitude, p.latitude, p.altitude]);
+    const travelledCoordinates = visiblePoints.slice(0, index + 1).map(p => [p.longitude, p.latitude, p.altitude]);
     this._map.getSource('travelled-track').setData({
       type: 'Feature',
       geometry: { type: 'LineString', coordinates: travelledCoordinates },
@@ -758,14 +1193,104 @@ class GPXViewer extends HTMLElement {
     this._map.getSource('stop-points').setData({ type: 'FeatureCollection', features });
   }
 
-  // 更新分段轨迹图层
+  // 更新分段轨迹图层（只显示选中段，未选中时显示全部）
   _updateTrackSegmentsLayer() {
     if (!this._map || !this._map.getSource('track-segments')) return;
+    if (this._currentSegments && this._segmentVisibility) {
+      const anySelected = this._segmentVisibility.some(v => v);
+      const allSegments = [];
+      const allFeatures = [];
+
+      this._currentSegments.forEach((seg, idx) => {
+        if (anySelected ? this._segmentVisibility[idx] : true) {
+          if (seg.points.length > 1) {
+            allSegments.push(seg.points.map(p => [p.longitude, p.latitude, p.altitude]));
+
+            // 为每个分段独立生成带颜色的features
+            const segGeoJSON = this._generateSegmentedTrackGeoJSON(seg.points, this._currentColorMode);
+            if (segGeoJSON && segGeoJSON.features) {
+              allFeatures.push(...segGeoJSON.features);
+            }
+          }
+        }
+      });
+
+      // 设置分段轨迹数据
+      this._map.getSource('track-segments').setData({ type: 'FeatureCollection', features: allFeatures });
+
+      // 主线和描边始终MultiLineString
+      const mainLineGeoJSON = { type: 'Feature', geometry: { type: 'MultiLineString', coordinates: allSegments }, properties: {} };
+      this._map.getSource('full-track').setData(mainLineGeoJSON);
+
+      // 箭头
+      if (this._map.getSource('arrow-points') && this._map.style.getImage('arrow-icon')) {
+        let arrowFeatures = { type: 'FeatureCollection', features: [] };
+        allSegments.forEach(segCoords => {
+          if (segCoords.length > 1) {
+            const segPoints = segCoords.map(c => ({ longitude: c[0], latitude: c[1], altitude: c[2] }));
+            const segArrows = this._generateArrowFeatures(segPoints, this._map.getZoom());
+            arrowFeatures.features = arrowFeatures.features.concat(segArrows.features);
+          }
+        });
+        this._map.getSource('arrow-points').setData(arrowFeatures);
+      }
+
+      // 显示/隐藏
+      const visible = allSegments.length > 0;
+      const showFull = this._currentColorMode === 'fixed';
+      this._map.setLayoutProperty('full-track-line', 'visibility', (visible && showFull) ? 'visible' : 'none');
+      this._map.setLayoutProperty('full-track-stroke', 'visibility', (visible && showFull) ? 'visible' : 'none');
+      this._map.setLayoutProperty('track-segments-stroke', 'visibility', (visible && !showFull) ? 'visible' : 'none');
+      this._map.setLayoutProperty('track-segments-line', 'visibility', (visible && !showFull) ? 'visible' : 'none');
+      this._map.setLayoutProperty('gpx-arrows', 'visibility', visible ? 'visible' : 'none');
+      this._map.setLayoutProperty('travelled-track-line', 'visibility', visible ? 'visible' : 'none');
+      this._map.setLayoutProperty('current-point-marker', 'visibility', visible ? 'visible' : 'none');
+      return;
+    }
     const segGeoJSON = this._generateSegmentedTrackGeoJSON(this._currentPoints, this._currentColorMode);
     this._map.getSource('track-segments').setData(segGeoJSON);
     const showFull = this._currentColorMode === 'fixed';
     this._map.setLayoutProperty('full-track-line', 'visibility', showFull ? 'visible' : 'none');
+    this._map.setLayoutProperty('full-track-stroke', 'visibility', showFull ? 'visible' : 'none');
+    this._map.setLayoutProperty('track-segments-stroke', 'visibility', showFull ? 'none' : 'visible');
     this._map.setLayoutProperty('track-segments-line', 'visibility', showFull ? 'none' : 'visible');
+  }
+
+  // 获取所有可见分段和自动补全段（始终补全连接）
+  _getVisibleSegmentsWithBridges() {
+    const segs = this._currentSegments || [];
+    const vis = this._segmentVisibility || [];
+    const result = [];
+    let lastEnd = null;
+    for (let i = 0; i < segs.length; i++) {
+      const seg = segs[i];
+      if (lastEnd && seg.points.length > 0) {
+        // 检查上一个分段结尾和当前分段开头是否断开，若断开则补一段
+        const prev = lastEnd;
+        const curr = seg.points[0];
+        if (prev.longitude !== curr.longitude || prev.latitude !== curr.latitude) {
+          result.push({
+            isBridge: true,
+            points: [prev, curr]
+          });
+        }
+      }
+      if (vis[i]) {
+        result.push({
+          isBridge: false,
+          points: seg.points
+        });
+        if (seg.points.length > 0) {
+          lastEnd = seg.points[seg.points.length - 1];
+        }
+      } else {
+        // 不可见分段也要更新lastEnd用于桥接
+        if (seg.points.length > 0) {
+          lastEnd = seg.points[seg.points.length - 1];
+        }
+      }
+    }
+    return result;
   }
 
   // 计算速度数组并返回p1和p99百分位数值
@@ -791,6 +1316,87 @@ class GPXViewer extends HTMLElement {
     const maxV = sortedSpeeds[p99Index] || 0;
 
     return { speeds, minV, maxV };
+  }
+
+  // 按静止区段切分，保证所有段首尾点连续，静止段和活动段都保留
+  _splitTrackByStops(points, stops) {
+    if (!points || points.length < 2) return [];
+    if (!stops || stops.length === 0) return [{ startIdx: 0, endIdx: points.length - 1, points: points.slice(), type: 'move' }];
+    const segments = [];
+    let segStart = 0;
+    for (let i = 0; i < stops.length; i++) {
+      const stop = stops[i];
+      // 活动段（静止前）
+      if (stop.startIdx > segStart) {
+        segments.push({
+          startIdx: segStart,
+          endIdx: stop.startIdx,
+          points: points.slice(segStart, stop.startIdx + 1), // 包含首尾点
+          type: 'move'
+        });
+      }
+      // 静止段
+      segments.push({
+        startIdx: stop.startIdx,
+        endIdx: stop.endIdx,
+        points: points.slice(stop.startIdx, stop.endIdx + 1), // 包含首尾点
+        type: 'stop'
+      });
+      segStart = stop.endIdx;
+    }
+    // 最后一个活动段
+    if (segStart < points.length - 1) {
+      segments.push({
+        startIdx: segStart,
+        endIdx: points.length - 1,
+        points: points.slice(segStart),
+        type: 'move'
+      });
+    }
+    // 统计信息
+    segments.forEach(seg => {
+      if (seg.points.length < 2) return;
+      seg.startTime = seg.points[0].timestamp;
+      seg.endTime = seg.points[seg.points.length - 1].timestamp;
+      seg.duration = seg.endTime - seg.startTime;
+      let dist = 0;
+      for (let i = 1; i < seg.points.length; i++) {
+        dist += this._calculateDistance(seg.points[i - 1].latitude, seg.points[i - 1].longitude, seg.points[i].latitude, seg.points[i].longitude);
+      }
+      seg.distance = dist;
+      seg.avgSpeed = seg.duration > 0 ? (dist / seg.duration) * 3.6 : 0; // km/h
+    });
+    return segments;
+  }
+
+  // 获取所有可见分段的点
+  _getVisibleTrackPoints() {
+    if (!this._currentSegments || !this._segmentVisibility) return [];
+    // 有选中时只显示选中段，否则显示全部
+    const anySelected = this._segmentVisibility.some(v => v);
+    let pts = [];
+    this._currentSegments.forEach((seg, idx) => {
+      if (anySelected ? this._segmentVisibility[idx] : true) {
+        if (pts.length > 0 && seg.points.length > 0 && pts[pts.length - 1].timestamp === seg.points[0].timestamp) {
+          pts = pts.concat(seg.points.slice(1));
+        } else {
+          pts = pts.concat(seg.points);
+        }
+      }
+    });
+    return pts;
+  }
+
+  // 缩放到当前可见轨迹的bbox
+  _fitMapToVisibleTrack() {
+    if (!this._map) return;
+    const pts = this._getVisibleTrackPoints();
+    if (!pts || pts.length === 0) return;
+    const bounds = new maplibregl.LngLatBounds();
+    pts.forEach(p => bounds.extend([p.longitude, p.latitude]));
+    if (!bounds.isEmpty()) {
+      this._map.fitBounds(bounds, { padding: 60 });
+    }
   }
 
   // 处理文件选择和拖拽的私有方法
@@ -834,12 +1440,12 @@ class GPXViewer extends HTMLElement {
     this._fileInput.value = '';
   }
 
-  // 渲染轨迹进度条（SVG）
+  // 渲染轨迹进度条（SVG）——只用可见分段的点
   _renderTrackProgressBar() {
     const container = this._progressBarContainer;
     container.innerHTML = '';
-    if (!this._currentPoints || this._currentPoints.length === 0) return;
-    const points = this._currentPoints;
+    const points = this._getVisibleTrackPoints();
+    if (!points || points.length === 0) return;
     const N = points.length;
     if (N < 2) return;
     // 响应式参数
@@ -1015,6 +1621,106 @@ class GPXViewer extends HTMLElement {
     updateAll(0);
     container.appendChild(svg);
   }
+
+  // 渲染侧边栏
+  _renderSidebar() {
+    if (!this._sidebarContent) return;
+
+    const segs = this._currentSegments || [];
+    if (segs.length === 0) {
+      this._hideSidebar();
+      return;
+    }
+
+    // 清空内容
+    this._sidebarContent.innerHTML = '';
+
+    // 只显示距离>=50米的段
+    const visibleSidebarSegs = segs.map((seg, idx) => ({ seg, idx }))
+      .filter(({ seg }) => (seg.distance || 0) >= 50);
+
+    if (visibleSidebarSegs.length === 0) {
+      this._sidebarContent.innerHTML = '<div style="padding: 20px; text-align: center; opacity: 0.7;">暂无可显示的分段</div>';
+      return;
+    }
+
+    visibleSidebarSegs.forEach(({ seg, idx }) => {
+      const checked = this._segmentVisibility && this._segmentVisibility[idx];
+      const start = new Date(seg.startTime * 1000);
+      const end = new Date(seg.endTime * 1000);
+
+      const startTime = start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const endTime = end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const startDate = start.toLocaleDateString();
+      const endDate = end.toLocaleDateString();
+
+      const speed = seg.avgSpeed ? seg.avgSpeed.toFixed(1) : '--';
+      const dist = seg.distance ? (seg.distance / 1000).toFixed(2) : '--';
+      const dur = seg.duration ? Math.round(seg.duration / 60) : 0;
+      const durText = dur > 0 ? (dur < 60 ? `${dur}分` : `${Math.floor(dur / 60)}时${dur % 60}分`) : '--';
+
+      const typeLabel = seg.type === 'stop' ? '静止' : '移动';
+      const typeClass = seg.type === 'stop' ? 'stop' : 'move';
+
+      const segmentEl = document.createElement('div');
+      segmentEl.className = `segment-item ${checked ? 'active' : ''}`;
+      segmentEl.dataset.seg = idx;
+
+      segmentEl.innerHTML = `
+        <div class="segment-header">
+          <input type="checkbox" class="segment-checkbox" ${checked ? 'checked' : ''}>
+          <div class="segment-title">分段 ${idx + 1}</div>
+          <div class="segment-type ${typeClass}">${typeLabel}</div>
+        </div>
+        <div class="segment-details">
+          <div class="segment-time">
+            ${startTime} - ${endTime}
+          </div>
+          <div class="segment-stats">
+            <div class="stat-item">
+              <div class="stat-label">距离</div>
+              <div class="stat-value">${dist}km</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-label">时长</div>
+              <div class="stat-value">${durText}</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-label">均速</div>
+              <div class="stat-value">${speed}</div>
+            </div>
+          </div>
+        </div>
+      `;
+
+      // 事件绑定
+      const checkbox = segmentEl.querySelector('.segment-checkbox');
+      checkbox.addEventListener('change', (e) => {
+        e.stopPropagation();
+        this._toggleSegment(idx);
+      });
+
+      segmentEl.addEventListener('click', (e) => {
+        if (e.target.type !== 'checkbox') {
+          this._toggleSegment(idx);
+        }
+      });
+
+      this._sidebarContent.appendChild(segmentEl);
+    });
+  }
+
+  // 切换分段显示状态
+  _toggleSegment(idx) {
+    if (!this._segmentVisibility || !this._currentSegments) return;
+
+    this._segmentVisibility[idx] = !this._segmentVisibility[idx];
+    this._updateTrackSegmentsLayer();
+    this._renderTrackProgressBar();
+    this._renderSidebar();
+    this._fitMapToVisibleTrack();
+  }
+
 }
 
 customElements.define('gpx-viewer', GPXViewer);
