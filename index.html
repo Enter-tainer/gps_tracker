@@ -1167,7 +1167,7 @@
 
     // --- 优化 sysinfo 卡片刷新逻辑 ---
     function updateSysInfoCard(info) {
-      const gpsStateMap = ['初始化中', "搜索中", "已关机", "已定位", "分析静止状态"]
+      const gpsStateMap = ['初始化中', "搜索中", "已关机", "已定位", "分析静止状态", "传输AGNSS数据中"]
       const yesNo = v => v ? '是' : '否';
       const set = (id, val) => { const el = document.getElementById(id); if (el) el.innerText = val; };
       if (!info) {

@@ -226,6 +226,9 @@ void updateDisplay() {
   case S4_ANALYZING_STILLNESS:
     display.print("Analyze-Still");
     break;
+  case S5_AGNSS_PROCESSING:
+    display.print("AGNSS Proc");
+    break;
   default:
     display.print("Unknown");
     break;
