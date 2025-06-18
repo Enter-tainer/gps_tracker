@@ -10,7 +10,8 @@ typedef enum {
   S1_GPS_SEARCHING_FIX,
   S2_IDLE_GPS_OFF,
   S3_TRACKING_FIXED,
-  S4_ANALYZING_STILLNESS
+  S4_ANALYZING_STILLNESS,
+  S5_AGNSS_PROCESSING
 } GpsState_t;
 
 // Structure to hold all system information

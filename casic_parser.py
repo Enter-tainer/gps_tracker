@@ -636,6 +636,145 @@ class CasicParser:
             print(f"  - UTC 数据: {len(bds_utc_packets)} 个")
             print(f"  - 电离层数据: {len(bds_ion_packets)} 个")
 
+    def create_dummy_aid_ini(self) -> bytes:
+        """创建一个上海位置的AID-INI数据包"""
+        # 上海的AID-INI参数
+        latitude = 31.2304  # 上海纬度
+        longitude = 121.4737  # 上海经度
+        altitude = 10.0  # 上海平均海拔（米）
+
+        # 计算当前时间的GPS时间
+        import datetime
+
+        now = datetime.datetime.now(datetime.timezone.utc)
+        gps_epoch = datetime.datetime(1980, 1, 6, tzinfo=datetime.timezone.utc)
+        total_seconds = (now - gps_epoch).total_seconds()
+        gps_week = int(total_seconds // (7 * 24 * 3600))
+        time_of_week = total_seconds % (7 * 24 * 3600)
+
+        frequency_bias = 0.0
+        position_accuracy = 10.0  # 10米精度
+        time_accuracy = 1.0  # 1秒精度
+        frequency_accuracy = 1.0  # 1Hz精度
+        reserved = 0
+        week_number = gps_week  # 当前GPS周数
+        timer_source = 1  # 外部时间源
+        flags = 0x07  # 位置、时间和频率有效
+
+        # 构造56字节的payload
+        payload = struct.pack(
+            "<ddddffffIHBB",
+            latitude,  # R8 - Latitude
+            longitude,  # R8 - Longitude
+            altitude,  # R8 - Altitude
+            time_of_week,  # R8 - GPS Time of Week
+            frequency_bias,  # R4 - Clock frequency offset
+            position_accuracy,  # R4 - Position accuracy
+            time_accuracy,  # R4 - Time accuracy
+            frequency_accuracy,  # R4 - Frequency accuracy
+            reserved,  # U4 - Reserved
+            week_number,  # U2 - GPS Week Number
+            timer_source,  # U1 - Time source
+            flags,  # U1 - Flag mask
+        )
+
+        return payload
+
+    def create_casic_packet_bytes(
+        self, class_id: int, message_id: int, payload: bytes
+    ) -> bytes:
+        """创建完整的CASIC数据包字节序列"""
+        length = len(payload)
+        checksum = self.calculate_checksum(class_id, message_id, length, payload)
+
+        # 构造完整数据包
+        packet_bytes = bytearray()
+        packet_bytes.extend(self.HEADER_MAGIC)  # 0xBA 0xCE
+        packet_bytes.extend(struct.pack("<H", length))  # 长度（小端序）
+        packet_bytes.append(class_id)  # Class ID
+        packet_bytes.append(message_id)  # Message ID
+        packet_bytes.extend(payload)  # Payload
+        packet_bytes.extend(struct.pack("<I", checksum))  # 校验和（小端序）
+
+        return bytes(packet_bytes)
+
+    def export_to_cpp_vector(
+        self, output_file: str, include_dummy_aid_ini: bool = True
+    ):
+        """导出为C++的vector<vector<uint8_t>>格式"""
+        try:
+            with open(output_file, "w", encoding="utf-8") as f:
+                f.write("// CASIC 协议数据包 - 自动生成\n")
+                f.write("// 使用 casic_parser.py 生成\n\n")
+                f.write("#include <vector>\n")
+                f.write("#include <cstdint>\n\n")
+                f.write("// AGNSS 数据包集合\n")
+                f.write("const std::vector<std::vector<uint8_t>> agnss_packets = {\n")
+
+                # 如果需要，添加上海位置的AID-INI包
+                if include_dummy_aid_ini:
+                    dummy_payload = self.create_dummy_aid_ini()
+                    dummy_packet_bytes = self.create_casic_packet_bytes(
+                        0x0B, 0x01, dummy_payload
+                    )
+
+                    f.write("    // 上海位置的AID-INI包\n")
+                    f.write("    {\n")
+                    # 每行16个字节
+                    for i in range(0, len(dummy_packet_bytes), 16):
+                        chunk = dummy_packet_bytes[i : i + 16]
+                        hex_values = ", ".join(f"0x{b:02X}" for b in chunk)
+                        if i + 16 < len(dummy_packet_bytes):
+                            f.write(f"        {hex_values},\n")
+                        else:
+                            f.write(f"        {hex_values}\n")
+                    f.write("    },\n\n")
+
+                # 添加解析出的所有数据包
+                for i, packet in enumerate(self.packets):
+                    msg_type = self.get_message_name(packet.class_id, packet.message_id)
+
+                    # 重构完整的数据包字节
+                    packet_bytes = self.create_casic_packet_bytes(
+                        packet.class_id, packet.message_id, packet.payload
+                    )
+
+                    f.write(
+                        f"    // 包 {i + 1}: {msg_type} (Class=0x{packet.class_id:02X}, ID=0x{packet.message_id:02X})\n"
+                    )
+                    f.write("    {\n")
+
+                    # 每行16个字节
+                    for j in range(0, len(packet_bytes), 16):
+                        chunk = packet_bytes[j : j + 16]
+                        hex_values = ", ".join(f"0x{b:02X}" for b in chunk)
+                        if j + 16 < len(packet_bytes):
+                            f.write(f"        {hex_values},\n")
+                        else:
+                            f.write(f"        {hex_values}\n")
+
+                    # 添加逗号，除非是最后一个包
+                    if i < len(self.packets) - 1:
+                        f.write("    },\n\n")
+                    else:
+                        f.write("    }\n")
+
+                f.write("};\n\n")
+                f.write(
+                    f"// 总计: {len(self.packets) + (1 if include_dummy_aid_ini else 0)} 个数据包\n"
+                )
+                f.write(f"// 原始数据包: {len(self.packets)} 个\n")
+                if include_dummy_aid_ini:
+                    f.write("// 上海位置AID-INI: 1 个\n")
+
+            print(f"C++代码已导出到: {output_file}")
+            print(
+                f"包含 {len(self.packets) + (1 if include_dummy_aid_ini else 0)} 个数据包"
+            )
+
+        except Exception as e:
+            print(f"导出C++代码时出错: {e}")
+
     def filter_packets_by_type(
         self, class_id: int, message_id: int
     ) -> List[CasicPacket]:
@@ -670,6 +809,14 @@ def main():
     )
     parser.add_argument(
         "-o", "--output", metavar="FILE", help="导出数据包信息到 CSV 文件"
+    )
+    parser.add_argument(
+        "--cpp", metavar="FILE", help="导出为 C++ vector<vector<uint8_t>> 格式"
+    )
+    parser.add_argument(
+        "--no-dummy-aid-ini",
+        action="store_true",
+        help="C++导出时不包含上海位置AID-INI包（仅在使用--cpp时有效）",
     )
     parser.add_argument("--no-summary", action="store_true", help="不显示解析摘要")
     parser.add_argument("--agnss", action="store_true", help="显示AGNSS会话分析")
@@ -725,6 +872,11 @@ def main():
     # 导出到CSV (如果指定)
     if args.output:
         casic_parser.export_to_csv(args.output)
+
+    # 导出到C++ (如果指定)
+    if args.cpp:
+        include_dummy = not args.no_dummy_aid_ini
+        casic_parser.export_to_cpp_vector(args.cpp, include_dummy_aid_ini=include_dummy)
 
 
 if __name__ == "__main__":

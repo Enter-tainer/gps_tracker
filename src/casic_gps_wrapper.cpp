@@ -1,4 +1,5 @@
 #include "casic_gps_wrapper.h"
+#include "logger.h"
 #include <Arduino.h>
 
 CasicGpsWrapper::CasicGpsWrapper() {

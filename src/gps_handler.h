@@ -3,6 +3,7 @@
 
 #include "casic_gps_wrapper.h" // For CASIC GPS wrapper
 #include "system_info.h"       // For GpsState_t and gSystemInfo
+#include <vector>              // For AGNSS message queue
 
 // Function to initialize GPS communication and power pin
 void initGPS();
@@ -23,5 +24,10 @@ void updateGpsSystemInfo();
 // Helper function to convert GPS date/time to an approximate Unix timestamp
 uint32_t dateTimeToUnixTimestamp(uint16_t year, uint8_t month, uint8_t day,
                                  uint8_t hour, uint8_t minute, uint8_t second);
+
+// AGNSS related functions
+void setAgnssMessageQueue(const std::vector<std::vector<uint8_t>> &messages);
+void triggerAgnssProcessing();
+void requestAgnssProcessing(const std::vector<std::vector<uint8_t>> &messages);
 
 #endif // GPS_HANDLER_H

@@ -7,8 +7,8 @@
 // CASIC协议相关常量
 constexpr uint8_t CASIC_HEADER_1 = 0xBA;
 constexpr uint8_t CASIC_HEADER_2 = 0xCE;
-constexpr uint8_t CASIC_MAX_PAYLOAD_SIZE = 256;
-constexpr uint8_t CASIC_PACKET_TIMEOUT_MS = 1000;
+constexpr int CASIC_MAX_PAYLOAD_SIZE = 256;
+constexpr int CASIC_PACKET_TIMEOUT_MS = 30000;
 
 // CASIC消息类型定义
 constexpr uint8_t CASIC_CLASS_ACK = 0x05;
