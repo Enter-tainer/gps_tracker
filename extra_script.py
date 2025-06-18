@@ -56,6 +56,12 @@ patches_to_apply = [
         ),  # Relative path to the C++ file
         "InternalFileSystem.cpp.patch",  # Your .patch file
     ),
+    (
+        join(
+            "cores", "nRF5", "RingBuffer.h"
+        ),  # Relative path to the RingBuffer header file
+        "RingBuffer.h.patch",  # Your .patch file
+    ),
 ]
 
 # MODIFIED: Logic for applying patches with backup and rollback

@@ -643,13 +643,12 @@ class CasicParser:
         longitude = 121.4737  # 上海经度
         altitude = 10.0  # 上海平均海拔（米）
 
-        # 计算当前时间的GPS时间
         import datetime
 
         now = datetime.datetime.now(datetime.timezone.utc)
-        gps_epoch = datetime.datetime(1980, 1, 6, tzinfo=datetime.timezone.utc)
+        gps_epoch = datetime.datetime(2006, 1, 1, tzinfo=datetime.timezone.utc)
         total_seconds = (now - gps_epoch).total_seconds()
-        gps_week = int(total_seconds // (7 * 24 * 3600))
+        gps_week = int(total_seconds // (7 * 24 * 3600))  # beidou 周数
         time_of_week = total_seconds % (7 * 24 * 3600)
 
         frequency_bias = 0.0
@@ -659,7 +658,16 @@ class CasicParser:
         reserved = 0
         week_number = gps_week  # 当前GPS周数
         timer_source = 1  # 外部时间源
-        flags = 0x07  # 位置、时间和频率有效
+        # flags标志位编码 (从低位到高位)：
+        # B0: 1=位置有效
+        # B1: 1=时间有效
+        # B2: 1=时钟频率漂移数据有效
+        # B3: 保留
+        # B4: 1=时钟频率数据有效
+        # B5: 1=位置是LLA格式
+        # B6: 1=高度无效
+        # B7: 保留
+        flags = 0b01100010  # 位置无效(B0=0) + 时间有效(B1=1) + LLA格式(B5=1) + 高度无效(B6=1)
 
         # 构造56字节的payload
         payload = struct.pack(
