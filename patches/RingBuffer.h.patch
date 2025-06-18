@@ -1,0 +1,11 @@
+--- "C:\\Users\\mgt\\.platformio\\packages\\framework-arduinoadafruitnrf52\\cores\\nRF5\\RingBuffer.h"	2024-05-20 22:50:13.646162500 +0800
++++ "C:\\Users\\mgt\\Desktop\\proj\\gps_tracker\\patches\\src\\Ringbuffer.h"	2025-06-19 00:28:30.071970700 +0800
+@@ -26,7 +26,7 @@
+ // to which to write the next incoming character and tail is the index of the
+ // location from which to read.
+ #ifndef SERIAL_BUFFER_SIZE
+-#define SERIAL_BUFFER_SIZE 64
++#define SERIAL_BUFFER_SIZE 1024
+ #endif
+ 
+ class RingBuffer
