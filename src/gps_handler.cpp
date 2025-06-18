@@ -246,20 +246,6 @@ void triggerAgnssProcessing() {
              AGNSS_Previous_State);
 }
 
-// --- Convenience function to set AGNSS data and trigger processing ---
-void requestAgnssProcessing(const std::vector<std::vector<uint8_t>> &messages) {
-  if (messages.empty()) {
-    Log.println("AGNSS: Cannot request processing with empty message queue");
-    return;
-  }
-
-  Log.printf("AGNSS: Requesting processing with %d messages\n",
-             (int)messages.size());
-  setAgnssMessageQueue(messages);
-  // The AGNSS request flag is set by setAgnssMessageQueue,
-  // and will be processed in the next handleGPS() call
-}
-
 // --- Function to initialize GPS communication and power pin ---
 void initGPS() {
   gSystemInfo.gpsState = S0_INITIALIZING;

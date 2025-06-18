@@ -3,6 +3,7 @@
 #include "InternalFileSystem.h"
 #include "Stream.h"
 #include <Arduino.h>
+#include <vector>
 
 using namespace Adafruit_LittleFS_Namespace;
 
@@ -12,6 +13,9 @@ using namespace Adafruit_LittleFS_Namespace;
 #define CMD_READ_CHUNK 0x03
 #define CMD_CLOSE_FILE 0x04
 #define CMD_DELETE_FILE 0x05
+#define CMD_START_AGNSS_WRITE 0x07
+#define CMD_WRITE_AGNSS_CHUNK 0x08
+#define CMD_END_AGNSS_WRITE 0x09
 
 // 目录项类型
 #define ENTRY_TYPE_FILE 0x00
@@ -40,6 +44,10 @@ private:
   bool _dirOpen;
   bool _listingInProgress;
 
+  // AGNSS 相关变量
+  std::vector<std::vector<uint8_t>> _agnssMessages;
+  bool _agnssWriteInProgress;
+
   // 命令解析状态
   enum CommandState {
     WAIT_CMD_ID,
@@ -56,6 +64,11 @@ private:
   void processCloseFile();
   void processDeleteFile();
   void processGetSysInfo(); // 处理GET_SYS_INFO (0x06)命令
+
+  // AGNSS 相关处理方法
+  void processStartAgnssWrite();
+  void processWriteAgnssChunk();
+  void processEndAgnssWrite();
 
   // 辅助方法
   void sendResponse(uint8_t *payload, uint16_t length);

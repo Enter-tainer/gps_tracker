@@ -28,6 +28,5 @@ uint32_t dateTimeToUnixTimestamp(uint16_t year, uint8_t month, uint8_t day,
 // AGNSS related functions
 void setAgnssMessageQueue(const std::vector<std::vector<uint8_t>> &messages);
 void triggerAgnssProcessing();
-void requestAgnssProcessing(const std::vector<std::vector<uint8_t>> &messages);
 
 #endif // GPS_HANDLER_H

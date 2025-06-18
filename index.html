@@ -138,7 +138,9 @@
       <h2>1. Connection</h2>
       <button id="connectButton">Connect to Device</button>
       <button id="sysInfoButton" style="margin-left:10px;">Query Status</button>
+      <button id="agnssButton" style="margin-left:10px;">Download & Send AGNSS</button>
       <div id="status" class="status">Disconnected</div>
+      <div id="agnssStatus" class="status" style="display:none;">AGNSS Status: Ready</div>
       <div id="sysInfoDisplay">
         <div
           style="margin-top:10px;max-width:420px;background:#f8f9fa;border-radius:8px;padding:18px 20px;box-shadow:0 2px 8px #0001;">
@@ -246,7 +248,17 @@
     const currentPathInput = document.getElementById('currentPath');
 
     // --- Protocol Constants ---
-    const CMD_ID = { LIST_DIR: 0x01, OPEN_FILE: 0x02, READ_CHUNK: 0x03, CLOSE_FILE: 0x04, DELETE_FILE: 0x05 };
+      const CMD_ID = {
+        LIST_DIR: 0x01,
+        OPEN_FILE: 0x02,
+        READ_CHUNK: 0x03,
+        CLOSE_FILE: 0x04,
+        DELETE_FILE: 0x05,
+        GET_SYS_INFO: 0x06,
+        START_AGNSS_WRITE: 0x07,
+        WRITE_AGNSS_CHUNK: 0x08,
+        END_AGNSS_WRITE: 0x09
+      };
     const ENTRY_TYPE = { FILE: 0x00, DIRECTORY: 0x01 };
 
     // --- Logging ---
@@ -563,6 +575,10 @@
     let currentReadChunkPromise = null;
     let currentCloseFilePromise = null;
     let currentDeleteFilePromise = null;
+      let currentGetSysInfoPromise = null;
+      let currentStartAgnssWritePromise = null;
+      let currentWriteAgnssChunkPromise = null;
+      let currentEndAgnssWritePromise = null;
 
     async function listDirectory(path) {
       if (!isConnected) { log("Not connected.", true); return; }
@@ -831,6 +847,43 @@
         } else {
           log(`DELETE_FILE_RSP for ${promise.filePath}: Unexpected payload length ${payloadLen}.`, true);
           promise.reject('Delete failed or not permitted');
+        }
+      } else if (currentGetSysInfoPromise) {
+        const promise = currentGetSysInfoPromise; currentGetSysInfoPromise = null;
+        if (payloadLen === 50 && payload.byteLength === 50) {
+          log("GET_SYS_INFO_RSP: Received system info data.");
+          const sysInfo = parseSysInfoFromBuffer(payload);
+          promise.resolve(sysInfo);
+        } else {
+          log(`GET_SYS_INFO_RSP: Unexpected payload length ${payloadLen}, expected 50.`, true);
+          promise.reject('GET_SYS_INFO_RSP: invalid payload length');
+        }
+      } else if (currentStartAgnssWritePromise) {
+        const promise = currentStartAgnssWritePromise; currentStartAgnssWritePromise = null;
+        if (payloadLen === 0) {
+          log("START_AGNSS_WRITE_RSP: Device ready to receive AGNSS data.");
+          promise.resolve();
+        } else {
+          log(`START_AGNSS_WRITE_RSP: Unexpected payload length ${payloadLen}.`, true);
+          promise.reject(new Error('START_AGNSS_WRITE failed'));
+        }
+      } else if (currentWriteAgnssChunkPromise) {
+        const promise = currentWriteAgnssChunkPromise; currentWriteAgnssChunkPromise = null;
+        if (payloadLen === 0) {
+          log("WRITE_AGNSS_CHUNK_RSP: Chunk written successfully.");
+          promise.resolve();
+        } else {
+          log(`WRITE_AGNSS_CHUNK_RSP: Unexpected payload length ${payloadLen}.`, true);
+          promise.reject(new Error('WRITE_AGNSS_CHUNK failed'));
+        }
+      } else if (currentEndAgnssWritePromise) {
+        const promise = currentEndAgnssWritePromise; currentEndAgnssWritePromise = null;
+        if (payloadLen === 0) {
+          log("END_AGNSS_WRITE_RSP: AGNSS data transfer completed successfully.");
+          promise.resolve();
+        } else {
+          log(`END_AGNSS_WRITE_RSP: Unexpected payload length ${payloadLen}.`, true);
+          promise.reject(new Error('END_AGNSS_WRITE failed'));
         }
       }
       else {
@@ -1162,7 +1215,210 @@
         btn.textContent = 'Query Status';
       }
     };
+
+  // --- AGNSS 按钮事件绑定 ---
+  document.getElementById('agnssButton').onclick = async function () {
+    await downloadAndSendAgnssData();
+  };
+
+  // --- AGNSS Protocol Functions ---
+  async function startAgnssWrite() {
+    if (!isConnected) { log("Not connected.", true); return Promise.reject("Not connected"); }
+    log(`Starting AGNSS write...`);
+    return new Promise(async (resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        if (currentStartAgnssWritePromise === promiseObj) {
+          currentStartAgnssWritePromise = null;
+          reject(new Error('Timeout waiting for START_AGNSS_WRITE response'));
+        }
+      }, 10000);
+
+      const promiseObj = {
+        resolve: (result) => {
+          clearTimeout(timeoutId);
+          resolve(result);
+        },
+        reject: (error) => {
+          clearTimeout(timeoutId);
+          reject(error);
+        }
+      };
+
+      currentStartAgnssWritePromise = promiseObj;
+
+      const payloadLength = 0;
+      const buffer = new ArrayBuffer(1 + 2 + payloadLength);
+      const view = new DataView(buffer);
+      view.setUint8(0, CMD_ID.START_AGNSS_WRITE);
+      view.setUint16(1, payloadLength, true);
+      await sendBleData(buffer);
+    });
+  }
+
+  async function writeAgnssChunk(chunkData) {
+    if (!isConnected) { log("Not connected.", true); return Promise.reject("Not connected"); }
+    const chunkSize = chunkData.byteLength;
+    log(`Writing AGNSS chunk of ${chunkSize} bytes...`);
+    return new Promise(async (resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        if (currentWriteAgnssChunkPromise === promiseObj) {
+          currentWriteAgnssChunkPromise = null;
+          reject(new Error('Timeout waiting for WRITE_AGNSS_CHUNK response'));
+        }
+      }, 10000); // 增加超时时间到10秒
+
+      const promiseObj = {
+        resolve: (result) => {
+          clearTimeout(timeoutId);
+          resolve(result);
+        },
+        reject: (error) => {
+          clearTimeout(timeoutId);
+          reject(error);
+        }
+      };
+
+      currentWriteAgnssChunkPromise = promiseObj;
+
+      const payloadLength = 2 + chunkSize; // Chunk Size (2B) + Data
+      const buffer = new ArrayBuffer(1 + 2 + payloadLength);
+      const view = new DataView(buffer);
+      let offset = 0;
+
+      view.setUint8(offset, CMD_ID.WRITE_AGNSS_CHUNK); offset++;
+      view.setUint16(offset, payloadLength, true); offset += 2;
+      view.setUint16(offset, chunkSize, true); offset += 2;
+      new Uint8Array(buffer, offset).set(new Uint8Array(chunkData));
+
+      await sendBleData(buffer);
+    });
+  }
+
+  async function endAgnssWrite() {
+    if (!isConnected) { log("Not connected.", true); return Promise.reject("Not connected"); }
+    log(`Ending AGNSS write...`);
+    return new Promise(async (resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        if (currentEndAgnssWritePromise === promiseObj) {
+          currentEndAgnssWritePromise = null;
+          reject(new Error('Timeout waiting for END_AGNSS_WRITE response'));
+        }
+      }, 10000);
+
+      const promiseObj = {
+        resolve: (result) => {
+          clearTimeout(timeoutId);
+          resolve(result);
+        },
+        reject: (error) => {
+          clearTimeout(timeoutId);
+          reject(error);
+        }
+      };
+
+      currentEndAgnssWritePromise = promiseObj;
+
+      const payloadLength = 0;
+      const buffer = new ArrayBuffer(1 + 2 + payloadLength);
+      const view = new DataView(buffer);
+      view.setUint8(0, CMD_ID.END_AGNSS_WRITE);
+      view.setUint16(1, payloadLength, true);
+      await sendBleData(buffer);
+    });
+  }
+
+  // --- AGNSS Data Transfer Function ---
+  async function downloadAndSendAgnssData() {
+    const agnssButton = document.getElementById('agnssButton');
+    const agnssStatus = document.getElementById('agnssStatus');
+
+    if (!isConnected) {
+      log("Cannot send AGNSS data: Not connected.", true);
+      return;
+    }
+
+    try {
+      // 禁用按钮并显示状态
+      agnssButton.disabled = true;
+      agnssButton.textContent = 'Processing...';
+      agnssStatus.style.display = 'block';
+      agnssStatus.textContent = 'AGNSS Status: Downloading data...';
+
+      log("Starting AGNSS data download and processing...");
+
+      // 调用 AGNSS 数据处理函数
+      const result = await window.processAGNSSData();
+
+      if (!result || !Array.isArray(result) || result.length === 0) {
+        throw new Error("No AGNSS data received or invalid format");
+      }
+
+      log(`Received ${result.length} AGNSS data chunks`);
+      agnssStatus.textContent = `AGNSS Status: Downloaded ${result.length} chunks, starting transfer...`;
+
+      // 开始 AGNSS 写入
+      await startAgnssWrite();
+      log("AGNSS write session started successfully");
+
+      // 计算最大块大小（考虑 MTU 限制）
+      // Max chunk size = MTU - ATT_HDR(3) - CMD_ID(1) - Payload_Len(2) - Chunk_Size(2)
+      const maxChunkSize = Math.max(16, Math.min(128, mtuSize - 8));
+      log(`Using max chunk size: ${maxChunkSize} bytes`);
+
+      let totalChunks = 0;
+      let totalBytes = 0;
+
+      // 逐个发送 AGNSS 数据块
+      for (let i = 0; i < result.length; i++) {
+        const agnssData = result[i];
+        if (!(agnssData instanceof Uint8Array)) {
+          log(`Warning: AGNSS data chunk ${i} is not Uint8Array, skipping`, true);
+          continue;
+        }
+
+        agnssStatus.textContent = `AGNSS Status: Sending chunk ${i + 1}/${result.length}...`;
+
+        // 如果数据块太大，需要分片发送
+        let offset = 0;
+        while (offset < agnssData.length) {
+          const chunkSize = Math.min(maxChunkSize, agnssData.length - offset);
+          const chunk = agnssData.slice(offset, offset + chunkSize);
+
+          await writeAgnssChunk(chunk);
+          log(`Sent AGNSS chunk ${totalChunks + 1}: ${chunkSize} bytes`);
+
+          offset += chunkSize;
+          totalChunks++;
+          totalBytes += chunkSize;
+
+          // 增加延迟以避免过载设备和竞态条件
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+      }
+
+      // 结束 AGNSS 写入
+      await endAgnssWrite();
+
+      log(`AGNSS data transfer completed successfully: ${totalChunks} chunks, ${totalBytes} bytes total`);
+      agnssStatus.textContent = `AGNSS Status: Transfer completed (${totalChunks} chunks, ${totalBytes} bytes)`;
+
+    } catch (error) {
+      log(`AGNSS data transfer failed: ${error}`, true);
+      agnssStatus.textContent = `AGNSS Status: Transfer failed - ${error.message}`;
+    } finally {
+      // 恢复按钮状态
+      agnssButton.disabled = false;
+      agnssButton.textContent = 'Download & Send AGNSS';
+      setTimeout(() => {
+        agnssStatus.style.display = 'none';
+      }, 5000);
+    }
+  }
+
+  // ...existing code...
   </script>
+  <script src="agnss_data_fetcher.js"></script>
+  <script src="casic_agnss_processor.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@5.6.0/dist/maplibre-gl.min.js"></script>
   <link href="https://cdn.jsdelivr.net/npm/maplibre-gl@5.6.0/dist/maplibre-gl.min.css" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/gpx_viewer@1.0.0/lib/gpx-viewer.umd.js"></script>

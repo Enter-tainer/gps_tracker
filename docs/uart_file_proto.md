@@ -47,14 +47,17 @@
 
 ## 3. 命令与响应标识符
 
-| 命令名称        | CMD ID | 描述                     |
-| :-------------- | :----- | :----------------------- |
-| `LIST_DIR`      | `0x01` | 列出目录内容             |
-| `OPEN_FILE`     | `0x02` | 打开文件                 |
-| `READ_CHUNK`    | `0x03` | 读取文件块               |
-| `CLOSE_FILE`    | `0x04` | 关闭文件                 |
-| `DELETE_FILE`   | `0x05` | 删除文件                 |
-| `GET_SYS_INFO`  | `0x06` | 查询设备系统信息         |
+| 命令名称              | CMD ID | 描述                     |
+| :-------------------- | :----- | :----------------------- |
+| `LIST_DIR`            | `0x01` | 列出目录内容             |
+| `OPEN_FILE`           | `0x02` | 打开文件                 |
+| `READ_CHUNK`          | `0x03` | 读取文件块               |
+| `CLOSE_FILE`          | `0x04` | 关闭文件                 |
+| `DELETE_FILE`         | `0x05` | 删除文件                 |
+| `GET_SYS_INFO`        | `0x06` | 查询设备系统信息         |
+| `START_AGNSS_WRITE`   | `0x07` | 开始 AGNSS 数据写入      |
+| `WRITE_AGNSS_CHUNK`   | `0x08` | 写入 AGNSS 数据块        |
+| `END_AGNSS_WRITE`     | `0x09` | 结束 AGNSS 数据写入      |
 
 ## 4. 详细命令规范
 
@@ -280,6 +283,61 @@
     *   主机发送 `GET_SYS_INFO` 命令，设备立即返回当前系统信息。
     *   响应包长度固定为 50 字节，主机可直接解析。
 
+### 4.7. `START_AGNSS_WRITE`
+
+*   **目的**: 开始 AGNSS 数据写入传输。
+*   **CMD ID**: `0x07`
+
+#### 4.7.1. 命令包 (`START_AGNSS_WRITE_CMD`)
+
+*   **Payload**: 无
+
+#### 4.7.2. 响应包 (`START_AGNSS_WRITE_RSP`)
+
+*   **Payload**: 无（`Payload Len` 为 `0`）
+*   **行为**: 收到此响应包即表示设备准备接收 AGNSS 数据。
+
+### 4.8. `WRITE_AGNSS_CHUNK`
+
+*   **目的**: 传输一块 AGNSS 数据。
+*   **CMD ID**: `0x08`
+
+#### 4.8.1. 命令包 (`WRITE_AGNSS_CHUNK_CMD`)
+
+*   **Payload**:
+    ```
+    +--------------------------+
+    | Chunk Size (2B)          |
+    +--------------------------+
+    | Data (Variable)          |
+    +--------------------------+
+    ```
+    *   **Chunk Size**: `Data` 字段的大小（字节），小端字节序。
+    *   **Data**: 要写入的 AGNSS 数据块。大小应考虑 MTU 限制。
+
+#### 4.8.2. 响应包 (`WRITE_AGNSS_CHUNK_RSP`)
+
+*   **Payload**: 无（`Payload Len` 为 `0`）
+*   **行为**: 收到此响应包即表示 AGNSS 数据块写入成功。
+
+### 4.9. `END_AGNSS_WRITE`
+
+*   **目的**: 结束当前的 AGNSS 数据写入传输。
+*   **CMD ID**: `0x09`
+
+#### 4.9.1. 命令包 (`END_AGNSS_WRITE_CMD`)
+
+*   **Payload**: 无（`Payload Len` 为 `0`）
+
+#### 4.9.2. 响应包 (`END_AGNSS_WRITE_RSP`)
+
+*   **Payload**: 无（`Payload Len` 为 `0`）
+
+*   **行为**:
+    *   设备收到 `END_AGNSS_WRITE` 命令后，完成 AGNSS 数据处理。
+    *   设备会将 AGNSS 数据发送给 GPS 模块。
+    *   收到响应包即表示 AGNSS 数据传输完成。
+
 ## 5. 流程示例
 
 ### 5.1. 列出根目录并读取文件 "/log.txt"
@@ -337,3 +395,49 @@
 7.  **设备发送 `CLOSE_FILE_RSP` 响应包**
     *   `Payload Len`: `0`
     *   主机确认文件已关闭。
+
+### 5.2. 传输 AGNSS 数据到设备
+
+1.  **主机发送 `START_AGNSS_WRITE` 命令 (开始 AGNSS 数据传输)**
+    *   `CMD ID`: `0x07`
+    *   `Payload Len`: `4` (Total Size)
+    *   `Payload`:
+        *   `Total Size`: AGNSS 数据的总大小 (例如 `0x00000800` 表示 2048 字节，小端)
+
+2.  **设备发送 `START_AGNSS_WRITE_RSP` 响应包**
+    *   `Payload Len`: `0`
+    *   主机确认设备准备接收 AGNSS 数据。
+
+3.  **主机循环发送 `WRITE_AGNSS_CHUNK` 命令传输数据**
+    *   假设总数据大小为 `TOTAL_DATA_SIZE`，主机选择一次传输 `CHUNK_SIZE` 字节 (需考虑 MTU)。
+    *   **第一次传输:**
+        *   `CMD ID`: `0x08`
+        *   `Payload Len`: `2 + CHUNK_SIZE` (Chunk Size + Data)
+        *   `Payload`:
+            *   `Chunk Size`: 当前块大小 (例如 `0x0080` 表示 128 字节)
+            *   `Data`: AGNSS 数据的第一块
+    *   **设备发送 `WRITE_AGNSS_CHUNK_RSP` 响应包:**
+        *   `Payload Len`: `0`
+    *   **后续传输:**
+        *   继续发送 `WRITE_AGNSS_CHUNK_CMD` 直到传输完所有 AGNSS 数据。
+
+4.  **数据传输完毕后，主机发送 `END_AGNSS_WRITE` 命令**
+    *   `CMD ID`: `0x09`
+    *   `Payload Len`: `0`
+
+5.  **设备发送 `END_AGNSS_WRITE_RSP` 响应包**
+    *   `Payload Len`: `0`
+
+6.  **传输完成**
+    *   设备将 AGNSS 数据发送给 GPS 模块以加速定位。
+
+## 6. MTU 考虑
+
+*   主机在 `WRITE_AGNSS_CHUNK` 命令中发送的数据大小应考虑 BLE MTU 限制。
+*   推荐的最大数据块大小: `Negotiated_MTU - (1+2+2)` (CMD ID + Payload Len + Chunk Size)
+*   对于典型的 BLE MTU (23-517 字节)，建议单个数据块不超过 100-500 字节。
+
+## 7. 协议版本和兼容性
+
+*   当前协议版本: 1.1
+*   新增的 AGNSS 写入功能保持向后兼容，不影响现有的文件读取功能。

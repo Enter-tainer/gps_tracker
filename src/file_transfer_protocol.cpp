@@ -1,10 +1,12 @@
 #include "file_transfer_protocol.h"
+#include "gps_handler.h"
 #include "logger.h"
 #include "system_info.h"
 
 FileTransferProtocol::FileTransferProtocol(Stream *stream)
     : _stream(stream), _fileOpened(false), _dirOpen(false),
-      _listingInProgress(false), _cmdState(WAIT_CMD_ID), _bytesRead(0) {
+      _listingInProgress(false), _cmdState(WAIT_CMD_ID), _bytesRead(0),
+      _agnssWriteInProgress(false) {
   memset(_currentPath, 0, MAX_PATH_LENGTH);
 }
 
@@ -139,6 +141,15 @@ void FileTransferProtocol::process() {
       break;
     case 0x06: // CMD_GET_SYS_INFO
       processGetSysInfo();
+      break;
+    case CMD_START_AGNSS_WRITE:
+      processStartAgnssWrite();
+      break;
+    case CMD_WRITE_AGNSS_CHUNK:
+      processWriteAgnssChunk();
+      break;
+    case CMD_END_AGNSS_WRITE:
+      processEndAgnssWrite();
       break;
 
     default:
@@ -432,4 +443,80 @@ void FileTransferProtocol::processGetSysInfo() {
   responseBuffer[offset++] = (uint8_t)gSystemInfo.gpsState;
 
   sendResponse(responseBuffer, offset);
+}
+
+void FileTransferProtocol::processStartAgnssWrite() {
+  // 开始 AGNSS 数据写入传输
+  _agnssMessages.clear(); // 清空之前的数据
+  _agnssWriteInProgress = true;
+
+  Log.println("开始 AGNSS 数据写入");
+
+  // 发送空响应表示准备就绪
+  sendResponse(nullptr, 0);
+}
+
+void FileTransferProtocol::processWriteAgnssChunk() {
+  if (!_agnssWriteInProgress) {
+    Log.println("错误：AGNSS 写入未开始");
+    sendResponse(nullptr, 0);
+    return;
+  }
+
+  // 解析数据块大小
+  if (_payloadLength < 2) {
+    Log.println("错误：AGNSS 数据块载荷长度无效");
+    sendResponse(nullptr, 0);
+    return;
+  }
+
+  uint16_t chunkSize;
+  memcpy(&chunkSize, &_buffer[0], 2); // 小端序
+
+  if (chunkSize == 0 || chunkSize > _payloadLength - 2) {
+    Log.printf("错误：AGNSS 数据块大小无效 %d\n", chunkSize);
+    sendResponse(nullptr, 0);
+    return;
+  }
+
+  // 创建新的消息向量并复制数据
+  std::vector<uint8_t> message;
+  message.resize(chunkSize);
+  memcpy(message.data(), &_buffer[2], chunkSize);
+
+  // 将消息添加到队列中
+  _agnssMessages.push_back(message);
+
+  Log.printf("接收 AGNSS 数据块，大小: %d，总块数: %d\n", chunkSize,
+             (int)_agnssMessages.size());
+
+  // 发送空响应表示接收成功
+  sendResponse(nullptr, 0);
+}
+
+void FileTransferProtocol::processEndAgnssWrite() {
+  if (!_agnssWriteInProgress) {
+    Log.println("错误：AGNSS 写入未开始");
+    sendResponse(nullptr, 0);
+    return;
+  }
+
+  _agnssWriteInProgress = false;
+
+  Log.printf("结束 AGNSS 数据写入，共接收 %d 个数据块\n",
+             (int)_agnssMessages.size());
+
+  // 将 AGNSS 消息队列设置到 GPS 处理器
+  if (!_agnssMessages.empty()) {
+    setAgnssMessageQueue(_agnssMessages);
+    Log.println("AGNSS 数据已发送到 GPS 处理器");
+  } else {
+    Log.println("警告：没有接收到 AGNSS 数据");
+  }
+
+  // 清空消息队列
+  _agnssMessages.clear();
+
+  // 发送空响应表示完成
+  sendResponse(nullptr, 0);
 }
