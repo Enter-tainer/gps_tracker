@@ -365,17 +365,31 @@ async function processAGNSSData() {
   try {
     console.log('=== CASIC AGNSS 数据处理器 ===\n');
 
-    // 1. 获取地理位置（仅在浏览器环境）
-    let geoData = { hasPosition: false };
-    geoData = await getBrowserLocation();
+    // 并发执行：同时获取地理位置和下载数据
+    console.log('正在并发执行：获取地理位置和下载星历数据...');
 
-    // 2. 下载数据
-    const fetcher = new AGNSSDataFetcher();
-    const data = await fetcher.downloadEphemeris('gps_bds.eph', '/');
-    const uint8Data = new Uint8Array(data);
+    const [geoData, rawData] = await Promise.all([
+      // 1. 获取地理位置（仅在浏览器环境）
+      getBrowserLocation().catch(error => {
+        console.warn('获取地理位置失败:', error);
+        return { hasPosition: false };
+      }),
+
+      // 2. 下载数据
+      (async () => {
+        const fetcher = new AGNSSDataFetcher();
+        return await fetcher.downloadEphemeris('gps_bds.eph', '/');
+      })().catch(error => {
+        console.error('下载星历数据失败:', error);
+        throw error;
+      })
+    ]);
+
+    console.log('并发任务完成！');
 
     // 3. 解析CASIC数据包
     console.log('\n正在解析CASIC数据包...');
+    const uint8Data = new Uint8Array(rawData);
     const processor = new CASICProcessor();
     const packets = processor.parseData(uint8Data);
 
@@ -401,6 +415,7 @@ async function processAGNSSData() {
 
   } catch (error) {
     console.error('处理失败:', error);
+    throw error;
   }
 }
 

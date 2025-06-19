@@ -15,7 +15,7 @@ class AGNSSDataFetcher {
    * @returns {Promise<ArrayBuffer>} 下载的数据
    */
   async downloadEphemeris(filename = 'gps_bds.eph', dir = '/') {
-    const url = `${this.baseUrl}?file=${encodeURIComponent(filename)}&dir=${encodeURIComponent(dir)}`;
+    const url = `https://agnss-server.mgt.workers.dev/api/cached`;
 
     try {
       console.log(`正在从 ${url} 下载星历数据...`);
