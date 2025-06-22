@@ -16,7 +16,7 @@
 ## 硬件平台
 
 - **主控芯片**: nRF52840 (Pro Micro 兼容)
-- **GPS 模块**: 支持 CASIC 协议的 GPS 模块
+- **GPS 模块**: 支持 CASIC 协议的 GPS 模块(L76k)
 - **传感器**: 
   - LIS3DHTR 三轴加速度计
   - BMP280 气压温度传感器
@@ -129,6 +129,13 @@ gps_tracker/
 2. 选择 "Deploy Frontend to GitHub Pages" 工作流
 3. 点击 "Run workflow" 按钮
 
+部署完成后可通过以下地址访问：
+```
+https://[username].github.io/gps_tracker/
+```
+
+请将[username]替换为你的GitHub用户名。
+
 ## 技术文档
 
 - [状态机设计规范](docs/state_spec.md)
@@ -143,3 +150,22 @@ gps_tracker/
 ## 许可证
 
 本项目采用 MIT 许可证，详见 [LICENSE](LICENSE) 文件。
+
+## 贡献者
+
+- [您的名字/组织] - 项目设计与开发
+
+## FAQ
+
+### 电池续航能力如何？
+- 凭借智能功耗管理系统，设备在正常使用下可持续工作 1-2 周，具体取决于移动频率和GPS唤醒间隔。
+
+### 定位效果如何？
+- 结合A-GNSS技术，本设备在室外环境下定位速度和准确性都有明显提升
+
+### 如何提高定位精度？
+- 定期更新A-GNSS数据
+- 确保设备天线朝向天空
+
+### Web前端是否需要安装额外软件？
+- 不需要，前端基于Web技术开发，任何支持Web Bluetooth API的现代浏览器即可使用（推荐Chrome、Edge等）。
