@@ -1,0 +1,121 @@
+body {
+  font-family: sans-serif;
+  margin: 20px;
+  background-color: #f4f4f4;
+  color: #333;
+}
+
+.container {
+  background-color: #fff;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+}
+
+h1,
+h2 {
+  color: #0056b3;
+}
+
+button,
+.action-button {
+  background-color: #007bff;
+  color: white;
+  border: none;
+  padding: 8px 12px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 0.9em;
+  margin: 5px 2px;
+  text-decoration: none;
+  display: inline-block;
+}
+
+button:hover,
+.action-button:hover {
+  background-color: #0056b3;
+}
+
+button:disabled,
+.action-button:disabled {
+  background-color: #ccc;
+  cursor: not-allowed;
+}
+
+#fileList,
+#messages {
+  margin-top: 15px;
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background-color: #e9ecef;
+  min-height: 100px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+#fileList .file-entry {
+  padding: 8px 5px;
+  border-bottom: 1px solid #ccc;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+#fileList .file-entry:last-child {
+  border-bottom: none;
+}
+
+#fileList .file-name {
+  flex-grow: 1;
+}
+
+#fileList .file-actions button,
+#fileList .file-actions .action-button {
+  font-size: 0.8em;
+  padding: 5px 8px;
+}
+
+.file-item-name {
+  color: #007bff;
+}
+
+.dir-item-name {
+  color: #28a745;
+  cursor: pointer;
+}
+
+.dir-item-name:hover {
+  text-decoration: underline;
+}
+
+.status {
+  margin-top: 10px;
+  font-style: italic;
+}
+
+.section {
+  margin-bottom: 20px;
+}
+
+label {
+  display: block;
+  margin-bottom: 5px;
+  font-weight: bold;
+}
+
+input[type="text"] {
+  width: calc(100% - 22px);
+  padding: 8px;
+  margin-bottom: 10px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+}
+
+#sysInfoDisplay {
+  height: 420px;
+}
+
+#gpxViewer {
+  height: 75vh;
+}

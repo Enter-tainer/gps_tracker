@@ -15,6 +15,7 @@ class AGNSSDataFetcher {
    * @returns {Promise<ArrayBuffer>} 下载的数据
    */
   async downloadEphemeris(filename = 'gps_bds.eph', dir = '/') {
+    // 使用用户指定的 API URL
     const url = `https://agnss-server.mgt.workers.dev/api/cached`;
 
     try {
@@ -47,7 +48,7 @@ class AGNSSDataFetcher {
   }
 
   /**
-   * 将数据保存到本地文件（Node.js环境）
+   * 将数据保存到本地文件
    * @param {ArrayBuffer} data 
    * @param {string} filename 
    */
@@ -100,8 +101,4 @@ class AGNSSDataFetcher {
 }
 
 // 导出模块
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = AGNSSDataFetcher;
-} else if (typeof window !== 'undefined') {
-  window.AGNSSDataFetcher = AGNSSDataFetcher;
-}
+export default AGNSSDataFetcher;

@@ -2,6 +2,7 @@
  * CASIC AGNSS 数据处理器
  * 下载星历数据，解析CASIC协议，添加AID-INI消息
  */
+import AGNSSDataFetcher from './AgnssDataFetcher.js';
 
 class CASICPacket {
   constructor() {
@@ -47,17 +48,18 @@ class CASICProcessor {
     return processor.MESSAGE_TYPES.get(key.toString()) ||
       processor.MESSAGE_TYPES.get(key) ||
       "UNKNOWN";
-  }    /**
-     * 计算CASIC校验和
-     * @param {number} classId 
-     * @param {number} messageId 
-     * @param {number} length 
-     * @param {Uint8Array} payload 
-     * @returns {number}
-     */
+  }
+  
+  /**
+   * 计算CASIC校验和
+   * @param {number} classId 
+   * @param {number} messageId 
+   * @param {number} length 
+   * @param {Uint8Array} payload 
+   * @returns {number}
+   */
   calculateChecksum(classId, messageId, length, payload) {
     // 初始校验和：(ID << 24) + (Class << 16) + Len
-    // 使用DataView来处理32位整数运算，避免JS位运算的符号问题
     let checksum = 0;
     checksum += (messageId & 0xFF) * 0x1000000;  // ID << 24
     checksum += (classId & 0xFF) * 0x10000;      // Class << 16  
@@ -125,8 +127,9 @@ class CASICProcessor {
 
       // 读取Payload
       packet.payload = data.slice(offset, offset + packet.length);
-      offset += packet.length;            // 读取校验和（小端序）
-      // 使用DataView来正确读取32位无符号整数
+      offset += packet.length;
+      
+      // 读取校验和（小端序）
       const checksumView = new DataView(data.buffer, data.byteOffset + offset, 4);
       packet.checksum = checksumView.getUint32(0, true); // true表示小端序
       offset += 4;
@@ -303,7 +306,6 @@ class CASICProcessor {
       console.log(`  ${index + 1}. ${packet.toString()}`);
     });
   }
-
 }
 
 /**
@@ -360,7 +362,9 @@ async function getBrowserLocation(timeout = 10000) {
   });
 }
 
-// 主处理函数
+/**
+ * 主处理函数
+ */
 async function processAGNSSData() {
   try {
     console.log('=== CASIC AGNSS 数据处理器 ===\n');
@@ -369,7 +373,7 @@ async function processAGNSSData() {
     console.log('正在并发执行：获取地理位置和下载星历数据...');
 
     const [geoData, rawData] = await Promise.all([
-      // 1. 获取地理位置（仅在浏览器环境）
+      // 1. 获取地理位置
       getBrowserLocation().catch(error => {
         console.warn('获取地理位置失败:', error);
         return { hasPosition: false };
@@ -420,11 +424,4 @@ async function processAGNSSData() {
 }
 
 // 导出模块
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { CASICProcessor, CASICPacket, processAGNSSData, getBrowserLocation };
-} else if (typeof window !== 'undefined') {
-  window.CASICProcessor = CASICProcessor;
-  window.CASICPacket = CASICPacket;
-  window.processAGNSSData = processAGNSSData;
-  window.getBrowserLocation = getBrowserLocation;
-}
+export { CASICProcessor, CASICPacket, processAGNSSData, getBrowserLocation };
