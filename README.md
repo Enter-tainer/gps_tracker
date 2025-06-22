@@ -122,7 +122,7 @@ gps_tracker/
 
 ### GitHub Pages 自动部署
 
-项目配置了 GitHub Actions 工作流，当代码推送到主分支时会自动部署到 GitHub Pages。
+项目配置了 GitHub Actions 工作流，当代码推送到主分支时会自动部署到 GitHub Pages。我们使用了官方的 GitHub Pages 部署 action，确保部署过程稳定可靠。
 
 手动触发部署：
 1. 访问 GitHub 仓库的 "Actions" 页面
@@ -135,6 +135,10 @@ https://[username].github.io/gps_tracker/
 ```
 
 请将[username]替换为你的GitHub用户名。
+
+注意：要使用 GitHub Pages 功能，你需要：
+1. 在仓库设置中启用 GitHub Pages
+2. 在「Settings > Pages」页面选择“Deploy from a branch”并选择“gh-pages”分支
 
 ## 技术文档
 

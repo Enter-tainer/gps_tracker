@@ -7,18 +7,24 @@ on:
       - 'frontend/**'
   workflow_dispatch:
 
+# 设置GITHUB_TOKEN的权限
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
 jobs:
-  build-and-deploy:
+  build:
     runs-on: ubuntu-latest
     
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       
       - name: Set up Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: '20'
           cache: 'npm'
           cache-dependency-path: 'frontend/package-lock.json'
       
@@ -32,30 +38,22 @@ jobs:
           cd frontend
           npm run build
       
-      # 配置 GitHub 页面部署的基础路径
-      - name: Update base path in vite.config.js
-        run: |
-          cd frontend
-          if grep -q "base:" "vite.config.js"; then
-            echo "Base path already configured in vite.config.js"
-          else
-            echo "Configuring base path in vite.config.js"
-            # 如果文件不存在，则创建
-            if [ ! -f "vite.config.js" ]; then
-              echo -e "import { defineConfig } from 'vite';\n\nexport default defineConfig({});" > vite.config.js
-            fi
-            
-            # 更新配置文件
-            sed -i "s|defineConfig({|defineConfig({\n  base: '/gps_tracker/',|g" vite.config.js
-            
-            # 重新构建
-            npm run build
-          fi
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    
+    steps:
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+      
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: 'frontend/dist'
       
       - name: Deploy to GitHub Pages
-        uses: JamesIves/github-pages-deploy-action@v4
-        with:
-          folder: frontend/dist
-          branch: gh-pages
-          clean: true
-          target-folder: .
+        id: deployment
+        uses: actions/deploy-pages@v4
