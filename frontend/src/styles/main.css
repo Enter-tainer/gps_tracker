@@ -1,65 +1,205 @@
+:root {
+  --primary-color: #3498db;
+  --primary-dark: #2980b9;
+  --secondary-color: #2ecc71;
+  --secondary-dark: #27ae60;
+  --danger-color: #e74c3c;
+  --warning-color: #f39c12;
+  --text-color: #2c3e50;
+  --text-light: #7f8c8d;
+  --bg-color: #f9f9f9;
+  --card-bg: #ffffff;
+  --border-color: #ecf0f1;
+  --shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  --radius: 8px;
+  --transition: all 0.3s ease;
+  --section-spacing: 30px;
+  --content-width: 1100px;
+}
+
+/* 基础样式 */
 body {
-  font-family: sans-serif;
-  margin: 20px;
-  background-color: #f4f4f4;
-  color: #333;
+  font-family: 'Segoe UI', 'Roboto', system-ui, -apple-system, sans-serif;
+  margin: 0;
+  padding: 0;
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  line-height: 1.6;
+}
+
+* {
+  box-sizing: border-box;
 }
 
 .container {
-  background-color: #fff;
+  max-width: var(--content-width);
+  margin: 0 auto;
   padding: 20px;
-  border-radius: 8px;
-  box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
 }
 
-h1,
+h1, h2, h3 {
+  color: var(--primary-dark);
+  font-weight: 600;
+  margin-top: 0;
+}
+
+h1 {
+  font-size: 1.8rem;
+  text-align: center;
+  margin-bottom: var(--section-spacing);
+  padding-bottom: 15px;
+  border-bottom: 2px solid var(--border-color);
+}
+
 h2 {
-  color: #0056b3;
+  font-size: 1.4rem;
+  display: flex;
+  align-items: center;
 }
 
+h2::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 20px;
+  background-color: var(--primary-color);
+  margin-right: 12px;
+  border-radius: 3px;
+}
+
+/* 部分和卡片样式 */
+.section {
+  background-color: var(--card-bg);
+  margin-bottom: var(--section-spacing);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 20px 25px;
+  transition: var(--transition);
+  overflow: hidden;
+}
+
+/* 按钮样式 */
 button,
 .action-button {
-  background-color: #007bff;
+  background-color: var(--primary-color);
   color: white;
   border: none;
-  padding: 8px 12px;
-  border-radius: 5px;
+  padding: 10px 15px;
+  border-radius: var(--radius);
   cursor: pointer;
-  font-size: 0.9em;
-  margin: 5px 2px;
+  font-size: 0.95rem;
+  margin: 5px 8px 5px 0;
+  transition: var(--transition);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   text-decoration: none;
-  display: inline-block;
+  font-weight: 500;
+  min-width: 100px;
 }
 
 button:hover,
 .action-button:hover {
-  background-color: #0056b3;
+  background-color: var(--primary-dark);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+}
+
+button:active,
+.action-button:active {
+  transform: translateY(0);
 }
 
 button:disabled,
 .action-button:disabled {
-  background-color: #ccc;
+  background-color: var(--text-light);
   cursor: not-allowed;
+  opacity: 0.7;
+  transform: none;
+  box-shadow: none;
 }
 
+.btn-success {
+  background-color: var(--secondary-color);
+}
+
+.btn-success:hover {
+  background-color: var(--secondary-dark);
+}
+
+.btn-danger {
+  background-color: var(--danger-color);
+}
+
+#sysInfoButton {
+  background-color: var(--primary-color);
+}
+
+#agnssButton {
+  background-color: var(--secondary-color); 
+}
+
+/* 状态显示 */
+.status {
+  margin-top: 12px;
+  padding: 10px 15px;
+  border-radius: var(--radius);
+  background-color: var(--border-color);
+  font-size: 0.9rem;
+  transition: var(--transition);
+  display: flex;
+  align-items: center;
+}
+
+.status::before {
+  content: '◉';
+  margin-right: 10px;
+  color: var(--text-light);
+  font-size: 1.2rem;
+}
+
+#status.connected {
+  background-color: rgba(46, 204, 113, 0.1);
+}
+
+#status.connected::before {
+  color: var(--secondary-color);
+}
+
+#agnssStatus {
+  background-color: rgba(243, 156, 18, 0.1);
+}
+
+#agnssStatus::before {
+  color: var(--warning-color);
+}
+
+/* 文件列表和消息容器 */
 #fileList,
 #messages {
   margin-top: 15px;
-  padding: 10px;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  background-color: #e9ecef;
-  min-height: 100px;
-  max-height: 300px;
+  padding: 15px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-color);
+  background-color: #ffffff;
+  min-height: 150px;
+  max-height: 400px;
   overflow-y: auto;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.05);
 }
 
+/* 文件项目样式 */
 #fileList .file-entry {
-  padding: 8px 5px;
-  border-bottom: 1px solid #ccc;
+  padding: 10px;
+  border-bottom: 1px solid var(--border-color);
   display: flex;
   justify-content: space-between;
   align-items: center;
+  transition: var(--transition);
+}
+
+#fileList .file-entry:hover {
+  background-color: rgba(52, 152, 219, 0.05);
 }
 
 #fileList .file-entry:last-child {
@@ -68,54 +208,256 @@ button:disabled,
 
 #fileList .file-name {
   flex-grow: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.file-item-name {
+  color: var(--primary-color);
+  transition: var(--transition);
+  position: relative;
+}
+
+.file-item-name::before {
+  content: '📄';
+  margin-right: 8px;
+}
+
+.dir-item-name {
+  color: var(--secondary-color);
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.dir-item-name::before {
+  content: '📁';
+  margin-right: 8px;
+}
+
+.dir-item-name:hover {
+  color: var(--secondary-dark);
+  text-decoration: underline;
+}
+
+#fileList .file-actions {
+  display: flex;
+  gap: 8px;
 }
 
 #fileList .file-actions button,
 #fileList .file-actions .action-button {
-  font-size: 0.8em;
-  padding: 5px 8px;
+  min-width: auto;
+  padding: 6px 12px;
+  font-size: 0.85rem;
 }
 
-.file-item-name {
-  color: #007bff;
-}
-
-.dir-item-name {
-  color: #28a745;
-  cursor: pointer;
-}
-
-.dir-item-name:hover {
-  text-decoration: underline;
-}
-
-.status {
-  margin-top: 10px;
-  font-style: italic;
-}
-
-.section {
-  margin-bottom: 20px;
-}
-
+/* 表单元素 */
 label {
   display: block;
-  margin-bottom: 5px;
-  font-weight: bold;
+  margin-bottom: 8px;
+  font-weight: 500;
+  color: var(--text-color);
 }
 
 input[type="text"] {
-  width: calc(100% - 22px);
-  padding: 8px;
-  margin-bottom: 10px;
-  border: 1px solid #ccc;
-  border-radius: 4px;
+  width: 100%;
+  padding: 10px 12px;
+  margin-bottom: 15px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  background-color: white;
+  transition: var(--transition);
+  font-size: 0.95rem;
 }
 
+input[type="text"]:focus {
+  outline: none;
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.15);
+}
+
+/* 系统信息卡片 */
 #sysInfoDisplay {
-  height: 420px;
+  height: auto;
+  max-height: 420px;
+  overflow: auto;
+  padding: 0;
 }
 
+#sysInfoDisplay > div {
+  padding: 0;
+  box-shadow: none;
+}
+
+#sysInfoDisplay table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+#sysInfoDisplay tr {
+  transition: var(--transition);
+}
+
+#sysInfoDisplay tr:nth-child(odd) {
+  background-color: rgba(0, 0, 0, 0.02);
+}
+
+#sysInfoDisplay tr:hover {
+  background-color: rgba(52, 152, 219, 0.05);
+}
+
+#sysInfoDisplay td {
+  padding: 10px 15px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+#sysInfoDisplay td:first-child {
+  font-weight: 500;
+  color: var(--text-color);
+  width: 40%;
+}
+
+#sysInfoDisplay td:last-child {
+  font-family: 'Consolas', 'SF Mono', monospace;
+}
+
+/* GPX查看器 */
 #gpxViewer {
   height: 75vh;
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
+
+/* 消息和日志显示 */
+#messages {
+  font-family: 'Consolas', 'SF Mono', monospace;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  padding: 12px 15px;
+  color: #333;
+}
+
+#messages .log-entry {
+  padding: 4px 0;
+  border-bottom: 1px dashed rgba(0, 0, 0, 0.05);
+}
+
+#messages .log-entry.error {
+  color: var(--danger-color);
+}
+
+#messages .log-entry.success {
+  color: var(--secondary-color);
+}
+
+#messages .log-entry.info {
+  color: var(--primary-color);
+}
+
+/* 路径显示和导航 */
+.path-navigation {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 15px;
+  background-color: rgba(52, 152, 219, 0.05);
+  padding: 8px 12px;
+  border-radius: var(--radius);
+}
+
+.path-navigation .path-segment {
+  color: var(--primary-color);
+  cursor: pointer;
+}
+
+.path-navigation .path-segment:hover {
+  text-decoration: underline;
+}
+
+.path-navigation .path-separator {
+  color: var(--text-light);
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  :root {
+    --section-spacing: 20px;
+  }
+
+  body {
+    padding: 10px;
+  }
+
+  .container {
+    padding: 10px;
+  }
+
+  h1 {
+    font-size: 1.5rem;
+  }
+
+  .section {
+    padding: 15px;
+  }
+
+  button, .action-button {
+    padding: 8px 12px;
+    font-size: 0.85rem;
+    min-width: 80px;
+  }
+
+  #gpxViewer {
+    height: 60vh;
+  }
+}
+
+/* 动画效果 */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.section {
+  animation: fadeIn 0.3s ease-out;
+}
+
+/* 暗色主题支持 */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --primary-color: #3498db;
+    --primary-dark: #2980b9;
+    --secondary-color: #2ecc71;
+    --secondary-dark: #27ae60;
+    --danger-color: #e74c3c;
+    --warning-color: #f39c12;
+    --text-color: #ecf0f1;
+    --text-light: #bdc3c7;
+    --bg-color: #2c3e50;
+    --card-bg: #34495e;
+    --border-color: #4a6077;
+  }
+
+  #fileList,
+  #messages {
+    background-color: rgba(0, 0, 0, 0.2);
+  }
+
+  input[type="text"] {
+    background-color: rgba(0, 0, 0, 0.1);
+    color: var(--text-color);
+    border-color: var(--border-color);
+  }
+
+  #sysInfoDisplay tr:nth-child(odd) {
+    background-color: rgba(255, 255, 255, 0.05);
+  }
 }
