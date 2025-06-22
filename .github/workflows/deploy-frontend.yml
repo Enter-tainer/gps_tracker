@@ -1,0 +1,61 @@
+name: Deploy Frontend to GitHub Pages
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'frontend/**'
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: 'frontend/package-lock.json'
+      
+      - name: Install Dependencies
+        run: |
+          cd frontend
+          npm ci
+      
+      - name: Build
+        run: |
+          cd frontend
+          npm run build
+      
+      # 配置 GitHub 页面部署的基础路径
+      - name: Update base path in vite.config.js
+        run: |
+          cd frontend
+          if grep -q "base:" "vite.config.js"; then
+            echo "Base path already configured in vite.config.js"
+          else
+            echo "Configuring base path in vite.config.js"
+            # 如果文件不存在，则创建
+            if [ ! -f "vite.config.js" ]; then
+              echo -e "import { defineConfig } from 'vite';\n\nexport default defineConfig({});" > vite.config.js
+            fi
+            
+            # 更新配置文件
+            sed -i "s|defineConfig({|defineConfig({\n  base: '/gps_tracker/',|g" vite.config.js
+            
+            # 重新构建
+            npm run build
+          fi
+      
+      - name: Deploy to GitHub Pages
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          folder: frontend/dist
+          branch: gh-pages
+          clean: true
+          target-folder: .

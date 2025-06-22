@@ -2,6 +2,7 @@
 import { defineConfig } from 'vite';
 
 export default defineConfig({
+  base: '/gps_tracker/',
   root: './',
   publicDir: 'public',
   build: {
