@@ -7,6 +7,9 @@ import { initLogger } from './components/Logger.js';
 import { initAgnssService } from './services/AgnssService.js';
 import { CONSTANTS } from './utils/constants.js';
 
+// 导入 GPXViewer 组件
+import 'gpx_viewer';
+
 // 导入 AGNSS 模块（确保全局可用）
 import { processAGNSSData, getBrowserLocation } from './modules/agnss/CasicAgnssProcessor.js';
 
