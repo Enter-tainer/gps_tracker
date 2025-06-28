@@ -662,7 +662,7 @@ export function initBleService(logger) {
           currentPromises.readChunk = null;
           p.reject(new Error('Timeout waiting for read chunk response'));
         }
-      }, 5000);
+      }, 10000);
     });
   }
 
