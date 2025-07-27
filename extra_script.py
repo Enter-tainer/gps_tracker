@@ -46,18 +46,6 @@ patchflag_path = join(patchflag_dir, patchflag_filename)
 patches_to_apply = [
     (
         join(
-            "cores", "nRF5", "linker", "nrf52840_s140_v6.ld"
-        ),  # Relative path to the linker script
-        "nrf52840_s140_v6.ld.patch",  # Your .patch file
-    ),
-    (
-        join(
-            "libraries", "InternalFileSytem", "src", "InternalFileSystem.cpp"
-        ),  # Relative path to the C++ file
-        "InternalFileSystem.cpp.patch",  # Your .patch file
-    ),
-    (
-        join(
             "cores", "nRF5", "RingBuffer.h"
         ),  # Relative path to the RingBuffer header file
         "RingBuffer.h.patch",  # Your .patch file
