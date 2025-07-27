@@ -2,7 +2,7 @@
 #include "config.h"
 #include "display_handler.h" // For toggling display
 #include "gps_handler.h"     // For resetting GPS update timer
-#include "littlefs_handler.h"
+#include "sd_handler.h"
 #include "logger.h"
 #include "utility/AdaCallback.h" // For ada_callback_fromISR
 #include <Arduino.h>
@@ -28,7 +28,7 @@ void onButtonPushed() {
   Log.println("Button Held Action Triggered!");
   Bluefruit.Advertising.setFastTimeout(5);
   Bluefruit.Advertising.start(5);
-  listInternalFlashContents(); // List files on button press
+  listSDRootContents(); // List SD card files on button press
   resetDisplayTimeout();       // Reset display timeout
   toggleDisplay();             // Toggle display on press
 }

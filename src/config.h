@@ -56,7 +56,8 @@ const unsigned long GPS_FIX_ATTEMPT_TIMEOUT =
 #define GPS_INITIAL_STATE_AFTER_INIT S2_IDLE_GPS_OFF
 
 // LittleFS settings
-#define MAX_FILE_SIZE 520 * 1024 // Maximum total file size in bytes (520 KB)
+#define MAX_FILE_SIZE                                                          \
+  1024 * 1024 * 1024 // Maximum total file size in bytes (1 GB)
 // Optional: GPS Power Enable Pin (if used) - Commented out as we define
 // PIN_GPS_EN above #define PIN_GPS_EN YOUR_GPS_ENABLE_PIN #define
 // GPS_POWER_TOGGLE // Uncomment if power needs toggling (LOW->HIGH) instead of

@@ -4,6 +4,7 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include <SdFat.h>
+#include "sd_fs_handler.h"
 
 // 简单的SD卡功能
 namespace SDSimple {

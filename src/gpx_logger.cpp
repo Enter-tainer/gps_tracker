@@ -1,6 +1,6 @@
 // filepath: src/gpx_logger.cpp
 #include "gpx_logger.h"
-#include "littlefs_handler.h" // <--- 包含 littlefs_handler
+#include "sd_handler.h" // <--- 使用 SD 卡处理程序
 #include "logger.h"
 #include <Arduino.h> // For Serial
 #include <math.h>    // For round()
@@ -47,8 +47,8 @@ bool appendGpxPoint(uint32_t timestamp, double latitude, double longitude,
   entry.altitude_m_scaled_1e1 =
       static_cast<int32_t>(round(altitude_m * 10)); // 海拔缩放到分米
 
-  // 调用 LittleFS handler 来写入数据
-  return writeGpsLogData(entry); // Pass the scaled data struct
+  // 调用 SD handler 来写入数据
+  return writeGpsLogDataToSD(entry); // Pass the scaled data struct
 }
 
 GpsDataEncoder::GpsDataEncoder(int full_block_interval)

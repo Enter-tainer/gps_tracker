@@ -1,6 +1,5 @@
 #include "ble_handler.h"
 #include "file_transfer_protocol.h"
-#include <InternalFileSystem.h>
 
 // BLE Services
 BLEDis bledis; // Device Information Service
@@ -8,9 +7,7 @@ BLEUart bleuart;
 // BLEBas blebas; // Battery Service
 static FileTransferProtocol
     fileTransferProtocol(&bleuart); // File Transfer Protocol
-// File transfer state variables
-static Adafruit_LittleFS_Namespace::File
-    currentFile(InternalFS); // File object for the active transfer
+// File transfer state variables (moved to file_transfer_protocol.cpp)
 static uint16_t negotiatedMtuPayloadSize = BLE_DEFAULT_MTU_PAYLOAD;
 
 // --- Helper Functions ---

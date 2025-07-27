@@ -4,8 +4,8 @@
 // 使用LORA_CS引脚作为SD卡CS引脚
 #define SD_CS_PIN LORA_CS
 
-// SdFat实例
-SdFat sd;
+// 使用全局SdFat实例
+extern SdFat sd;
 
 bool SDSimple::initSD() {
   Log.println("初始化SD卡...");

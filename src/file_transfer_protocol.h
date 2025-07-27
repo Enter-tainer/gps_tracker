@@ -1,11 +1,11 @@
 #pragma once
-#include "Adafruit_LittleFS.h"
-#include "InternalFileSystem.h"
 #include "Stream.h"
+#include "SdFat.h"
 #include <Arduino.h>
 #include <vector>
 
-using namespace Adafruit_LittleFS_Namespace;
+// Use SdFat instead of LittleFS
+extern SdFat sd;
 
 // 命令 ID 常量定义
 #define CMD_LIST_DIR 0x01
@@ -32,8 +32,8 @@ public:
 
 private:
   Stream *_stream;
-  File _currentOpenFile{InternalFS};
-  File _currentDirectory{InternalFS};
+  SdFile _currentOpenFile;
+  SdFile _currentDirectory;
   bool _fileOpened;
   uint8_t _buffer[570]; // 命令接收缓冲区
   uint8_t _cmdId;

@@ -26,7 +26,7 @@ bool AccelHandler::begin(uint8_t addr) {
 
 void AccelHandler::update() {
   if (!ok) {
-    Log.println("LIS3DHTR 未初始化或连接失败，无法更新加速度数据");
+    // Log.println("LIS3DHTR 未初始化或连接失败，无法更新加速度数据");
     return;
   }
   float x, y, z;

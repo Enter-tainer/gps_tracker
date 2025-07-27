@@ -1,7 +1,7 @@
 #ifndef BLE_HANDLER_H
 #define BLE_HANDLER_H
 
-#include "littlefs_handler.h" // For InternalFS and File object
+#include "SdFat.h" // For SD card file operations
 #include "logger.h"           // For logging
 #include "system_info.h" // For SYSTEM_INFO_FW_VERSION (optional for device name)
 #include <bluefruit.h>

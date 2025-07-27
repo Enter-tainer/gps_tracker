@@ -3,6 +3,9 @@
 #include "logger.h"
 #include "system_info.h"
 
+// SdFat instance from sd_simple.cpp
+extern SdFat sd;
+
 FileTransferProtocol::FileTransferProtocol(Stream *stream)
     : _stream(stream), _fileOpened(false), _dirOpen(false),
       _listingInProgress(false), _cmdState(WAIT_CMD_ID), _bytesRead(0),
@@ -191,8 +194,7 @@ void FileTransferProtocol::processListDir() {
     Log.printf("列目录请求: %s\n", _currentPath);
 
     // 打开目录
-    _currentDirectory = InternalFS.open(_currentPath);
-    if (!_currentDirectory || !_currentDirectory.isDirectory()) {
+    if (!_currentDirectory.open(_currentPath, O_READ)) {
       Log.println("无法打开目录");
       sendResponse(nullptr, 0);
       return;
@@ -203,40 +205,42 @@ void FileTransferProtocol::processListDir() {
   }
 
   // 读取下一个目录项
-  File entry = _currentDirectory.openNextFile();
-
-  if (!entry) {
+  SdFile entry;
+  if (!entry.openNext(&_currentDirectory, O_READ)) {
     // 没有更多条目，发送完成响应
     responseBuffer[responseLength++] = 0x00; // More Flag = 0
     _listingInProgress = false;
     _dirOpen = false;
     _currentDirectory.close();
-  } else {
-    responseBuffer[responseLength++] = 0x01; // More Flag = 1 (还有更多)
-
-    // 设置条目类型
-    responseBuffer[responseLength++] =
-        entry.isDirectory() ? ENTRY_TYPE_DIRECTORY : ENTRY_TYPE_FILE;
-
-    // 获取名称并设置名称长度
-    const char *name = entry.name();
-    uint8_t nameLength = strlen(name);
-    Log.printf("目录项: %s, 长度: %d\n", name, (int)nameLength);
-    responseBuffer[responseLength++] = nameLength;
-
-    // 复制名称
-    memcpy(&responseBuffer[responseLength], name, nameLength);
-    responseLength += nameLength;
-
-    // 如果是文件，添加文件大小
-    if (!entry.isDirectory()) {
-      uint32_t size = entry.size();
-      memcpy(&responseBuffer[responseLength], &size, 4); // 小端序
-      responseLength += 4;
-    }
-
-    entry.close();
+    sendResponse(responseBuffer, responseLength);
+    return;
   }
+
+  responseBuffer[responseLength++] = 0x01; // More Flag = 1 (还有更多)
+
+  // 设置条目类型
+  uint8_t type = entry.isDir() ? ENTRY_TYPE_DIRECTORY : ENTRY_TYPE_FILE;
+  responseBuffer[responseLength++] = type;
+
+  // 获取名称并设置名称长度
+  char name[MAX_PATH_LENGTH];
+  entry.getName(name, sizeof(name));
+  uint8_t nameLength = strlen(name);
+  Log.printf("目录项: %s, 长度: %d\n", name, (int)nameLength);
+  responseBuffer[responseLength++] = nameLength;
+
+  // 复制名称
+  memcpy(&responseBuffer[responseLength], name, nameLength);
+  responseLength += nameLength;
+
+  // 如果是文件，添加文件大小
+  if (!entry.isDir()) {
+    uint32_t size = entry.fileSize();
+    memcpy(&responseBuffer[responseLength], &size, 4); // 小端序
+    responseLength += 4;
+  }
+
+  entry.close();
 
   sendResponse(responseBuffer, responseLength);
 }
@@ -266,8 +270,7 @@ void FileTransferProtocol::processOpenFile() {
   Log.printf("打开文件请求: %s\n", filePath);
 
   // 打开文件
-  _currentOpenFile = InternalFS.open(filePath, FILE_O_READ);
-  if (!_currentOpenFile) {
+  if (!_currentOpenFile.open(filePath, O_READ)) {
     Log.printf("无法打开文件: %s\n", filePath);
     sendResponse(nullptr, 0);
     return;
@@ -276,7 +279,7 @@ void FileTransferProtocol::processOpenFile() {
   _fileOpened = true;
 
   // 获取文件大小
-  uint32_t fileSize = _currentOpenFile.size();
+  uint32_t fileSize = _currentOpenFile.fileSize();
   memcpy(responseBuffer, &fileSize, 4); // 小端序
   responseLength = 4;
 
@@ -313,7 +316,7 @@ void FileTransferProtocol::processReadChunk() {
       min(bytesToRead, (uint16_t)(sizeof(responseBuffer) - dataOffset));
 
   // 设置文件位置
-  if (!_currentOpenFile.seek(offset)) {
+  if (!_currentOpenFile.seekSet(offset)) {
     Log.println("seek操作失败");
     responseBuffer[0] = 0;
     responseBuffer[1] = 0;
@@ -371,13 +374,13 @@ void FileTransferProtocol::processDeleteFile() {
   filePath[pathLength] = '\0';
   Log.printf("删除文件请求: %s\n", filePath);
   // 检查文件是否存在且不是目录
-  File f = InternalFS.open(filePath);
-  if (!f) {
+  SdFile f;
+  if (!f.open(filePath, O_READ)) {
     Log.println("文件不存在");
     sendResponse(nullptr, 0);
     return;
   }
-  if (f.isDirectory()) {
+  if (f.isDir()) {
     Log.println("不能删除目录");
     f.close();
     sendResponse(nullptr, 0);
@@ -385,7 +388,7 @@ void FileTransferProtocol::processDeleteFile() {
   }
   f.close();
   // 删除文件
-  bool ok = InternalFS.remove(filePath);
+  bool ok = sd.remove(filePath);
   if (ok) {
     Log.println("文件删除成功");
   } else {
