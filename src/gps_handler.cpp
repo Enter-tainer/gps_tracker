@@ -266,12 +266,12 @@ void initGPS() {
   gpsSerial.begin(GPS_DEFAULT_BAUD_RATE);
   gpsSerial.println("$PCAS04,7*1E"); // Configure for Beidou + GPS + GLONASS
   gpsSerial.println("$PCAS03,1,0,0,0,1,0,0,0,0,0,,,0,0*02"); // GGA + RMC
-  gpsSerial.flush();
-  delay(100);
+  gpsSerial.flush();                 // Ensure all data is sent
+  delay(1500);                       // Wait for GPS module to process config
   gpsSerial.println("$PCAS01,5*19"); // 115200 baud rate
   gpsSerial.flush();                 // Ensure all data is sent
   gpsSerial.end();
-  delay(100);
+  delay(1500);
   gpsSerial.begin(GPS_BAUD_RATE); // Reinitialize with new baud rate
   gpsSerial.println("$PCAS02,100*1E");
   Log.println("GPS Serial Initialized, NMEA configured.");
