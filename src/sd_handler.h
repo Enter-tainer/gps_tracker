@@ -2,7 +2,7 @@
 #define SD_HANDLER_H
 
 #include "gpx_logger.h" // Include for GpxPointInternal definition
-#include <stdint.h>
+#include <cstdint>
 
 // 初始化 SD 卡用于 GPS 日志记录
 bool initSDForGPSLogging();
@@ -19,5 +19,11 @@ void listSDRootContents();
 
 // 管理旧日志文件
 void manageOldSDFiles();
+
+// 立即将缓存数据写入SD卡
+bool flushCacheToSD();
+
+// 获取缓存使用情况
+std::size_t getCacheUsage();
 
 #endif // SD_HANDLER_H

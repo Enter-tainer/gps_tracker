@@ -10,8 +10,7 @@
 
 // --- State Machine Constants (as per state_spec.md, kept internal to
 // gps_handler.cpp) ---
-static const unsigned long T_ACTIVE_SAMPLING_INTERVAL =
-    10 * 1000UL; // 10 seconds
+static const unsigned long T_ACTIVE_SAMPLING_INTERVAL = 1 * 1000UL; // 1 seconds
 // ACCEL_STILL_THRESHOLD is used by accel_handler, gSystemInfo.isStationary
 // reflects its outcome
 static const unsigned long T_STILLNESS_CONFIRM_DURATION =

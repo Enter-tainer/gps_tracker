@@ -22,6 +22,11 @@ static bool isFileOpen = false;
 
 static GpsDataEncoder gpsDataEncoder(64);
 
+// 4KB缓存相关变量
+static uint8_t writeCache[4096];
+static size_t cachePosition = 0;
+static bool cacheDirty = false;
+
 // Helper function to manage old log files - keeps total file size below MAX_FILE_SIZE
 void manageOldSDFiles() {
     std::vector<String> gpxFiles;
@@ -102,11 +107,13 @@ bool RotateSDLogFileIfNeeded(uint32_t timestamp) {
 
     // Check if the date has changed or if no file is currently open
     if (newDate != currentFileDate || !isFileOpen) {
-        if (isFileOpen) {
-            currentGpxFile.close(); // Close the previous day's file
-            isFileOpen = false;     // Mark as closed
-            Log.printf("Closed log file: %s\n", currentFilename.c_str());
-        }
+      // 文件切换前，先flush缓存中的数据
+      if (isFileOpen) {
+        flushCacheToSD();       // 确保缓存数据写入当前文件
+        currentGpxFile.close(); // Close the previous day's file
+        isFileOpen = false;     // Mark as closed
+        Log.printf("Closed log file: %s\n", currentFilename.c_str());
+      }
 
         // Format the new filename: YYYYMMDD.gpx
         char filenameBuffer[14]; // "YYYYMMDD.gpx" + null terminator
@@ -155,6 +162,41 @@ bool initSDForGPSLogging() {
     return true;
 }
 
+// 立即将缓存数据写入SD卡
+bool flushCacheToSD() {
+  if (!cacheDirty || cachePosition == 0) {
+    return true; // 没有数据需要写入
+  }
+
+  if (!isFileOpen) {
+    Log.println("Cannot flush cache: No file open");
+    return false;
+  }
+
+  // 写入缓存数据
+  size_t bytesWritten = currentGpxFile.write(writeCache, cachePosition);
+
+  if (bytesWritten != cachePosition) {
+    Log.printf("Failed to flush cache to %s. Expected %d, wrote %d\n",
+               currentFilename.c_str(), (int)cachePosition, (int)bytesWritten);
+    return false;
+  }
+
+  // 确保数据写入物理存储
+  currentGpxFile.sync();
+
+  Log.printf("Flushed %d bytes to SD card\n", (int)cachePosition);
+
+  // 重置缓存
+  cachePosition = 0;
+  cacheDirty = false;
+
+  return true;
+}
+
+// 获取缓存使用情况
+std::size_t getCacheUsage() { return cachePosition; }
+
 // Write GPS log data to the current daily file
 bool writeGpsLogDataToSD(const GpxPointInternal &entry) {
     // Ensure the correct file is open for the entry's timestamp
@@ -164,24 +206,26 @@ bool writeGpsLogDataToSD(const GpxPointInternal &entry) {
     }
     
     auto len = gpsDataEncoder.encode(entry);
-    
-    // Write the binary data
-    size_t bytesWritten = currentGpxFile.write(gpsDataEncoder.getBuffer(), len);
-    
-    if (bytesWritten != len) {
-        Log.printf("Failed to write GPS data to %s. Expected %d, wrote %d\n",
-                   currentFilename.c_str(), (int)len, (int)bytesWritten);
-        // Attempt to close and mark as not open on error
-        currentGpxFile.close();
-        isFileOpen = false;   // Mark as closed due to error
-        currentFilename = ""; // Force file rotation check on next call
-        currentFileDate = 0;
+
+    // 检查是否有足够空间在缓存中
+    if (cachePosition + len > sizeof(writeCache)) {
+      // 缓存已满，先flush
+      if (!flushCacheToSD()) {
+        Log.println("Failed to flush cache before writing new data");
         return false;
+      }
     }
-    
-    // Flush data to ensure it's written physically
-    currentGpxFile.sync();
-    
+
+    // 将数据写入缓存
+    memcpy(writeCache + cachePosition, gpsDataEncoder.getBuffer(), len);
+    cachePosition += len;
+    cacheDirty = true;
+
+    // 如果缓存已满，立即写入
+    if (cachePosition >= sizeof(writeCache)) {
+      return flushCacheToSD();
+    }
+
     return true;
 }
 

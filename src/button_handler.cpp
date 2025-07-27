@@ -28,6 +28,15 @@ void onButtonPushed() {
   Log.println("Button Held Action Triggered!");
   Bluefruit.Advertising.setFastTimeout(5);
   Bluefruit.Advertising.start(5);
+  
+  // 立即flush缓存数据到SD卡
+  extern bool flushCacheToSD();
+  if (flushCacheToSD()) {
+    Log.println("Cache flushed to SD card successfully");
+  } else {
+    Log.println("Failed to flush cache to SD card");
+  }
+  
   listSDRootContents(); // List SD card files on button press
   resetDisplayTimeout();       // Reset display timeout
   toggleDisplay();             // Toggle display on press
