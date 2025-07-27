@@ -12,6 +12,7 @@
 #include "gps_handler.h"
 #include "littlefs_handler.h" // Include Internal Flash handler
 #include "logger.h"           // Include Logger
+#include "sd_simple.h"        // 简单SD卡功能
 #include "system_info.h"      // Include system info
 #include <Arduino.h>
 #include <LIS3DHTR.h>
@@ -71,11 +72,20 @@ void setup() {
   // bmp280Handler.start(1000); // 已移除定时器
 
   // 初始化 LIS3DHTR
-  accelHandler.begin(0x19);
+  accelHandler.begin();
   // accelHandler.start(50); // 已移除定时器
 
   initInternalFlash();
   BleHandler::setup();
+
+  // 初始化SD卡并列出文件
+  Log.println("正在初始化SD卡...");
+  if (SDSimple::initSD()) {
+    Log.println("SD卡已就绪，列出根目录文件:");
+    SDSimple::listRootFiles();
+  } else {
+    Log.println("SD卡不可用，跳过");
+  }
 
   // No initial GPS message here, handleGPS will manage it.
   Log.println("Setup Complete. Entering loop.");
@@ -102,5 +112,6 @@ void loop() {
       Bluefruit.Advertising.start(5);
     }
   }
+  SDSimple::listRootFiles();
   delay(50); // 100ms delay for loop stability
 }
