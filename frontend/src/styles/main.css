@@ -323,6 +323,64 @@ input[type="text"]:focus {
   font-family: 'Consolas', 'SF Mono', monospace;
 }
 
+/* 设备信息卡片样式 */
+.device-info-card {
+  margin-top: 10px;
+  max-width: 420px;
+  background-color: var(--card-bg);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  box-shadow: var(--shadow);
+  border: 1px solid var(--border-color);
+}
+
+.device-info-card h3 {
+  margin-top: 0;
+  color: var(--primary-color);
+  font-size: 1.2rem;
+  margin-bottom: 15px;
+}
+
+.device-info-card table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.device-info-card td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 0.95rem;
+}
+
+.device-info-card td:first-child {
+  font-weight: 500;
+  color: var(--text-color);
+  width: 40%;
+}
+
+.device-info-card td:last-child {
+  font-family: 'Consolas', 'SF Mono', monospace;
+  color: var(--text-color);
+}
+
+.device-info-card tr:last-child td {
+  border-bottom: none;
+}
+
+.device-info-card tr:nth-child(odd) {
+  background-color: rgba(0, 0, 0, 0.02);
+}
+
+.device-info-card tr:hover {
+  background-color: rgba(52, 152, 219, 0.05);
+}
+
+.error-text {
+  color: var(--danger-color);
+  margin-top: 8px;
+  font-size: 0.9rem;
+}
+
 /* GPX查看器 */
 #gpxViewer {
   height: 75vh;
@@ -459,5 +517,31 @@ input[type="text"]:focus {
 
   #sysInfoDisplay tr:nth-child(odd) {
     background-color: rgba(255, 255, 255, 0.05);
+  }
+
+  .device-info-card {
+    background-color: var(--card-bg);
+    border-color: var(--border-color);
+  }
+
+  .device-info-card h3 {
+    color: var(--primary-color);
+  }
+
+  .device-info-card td {
+    border-color: var(--border-color);
+    color: var(--text-color);
+  }
+
+  .device-info-card tr:nth-child(odd) {
+    background-color: rgba(255, 255, 255, 0.05);
+  }
+
+  .device-info-card tr:hover {
+    background-color: rgba(52, 152, 219, 0.1);
+  }
+
+  .error-text {
+    color: var(--danger-color);
   }
 }

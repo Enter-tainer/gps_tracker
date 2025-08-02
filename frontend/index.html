@@ -21,10 +21,9 @@
       <div id="status" class="status">Disconnected</div>
       <div id="agnssStatus" class="status" style="display:none;">AGNSS Status: Ready</div>
       <div id="sysInfoDisplay">
-        <div
-          style="margin-top:10px;max-width:420px;background:#f8f9fa;border-radius:8px;padding:18px 20px;box-shadow:0 2px 8px #0001;">
-          <h3 style='margin-top:0;color:#0056b3;'>设备系统信息</h3>
-          <table style='width:100%;border-collapse:collapse;'>
+        <div class="device-info-card">
+          <h3>设备系统信息</h3>
+          <table>
             <tbody>
               <tr>
                 <td><b>纬度</b></td>
@@ -80,7 +79,7 @@
               </tr>
             </tbody>
           </table>
-          <div id="sysinfo-error" style="color:#dc3545;margin-top:8px;"></div>
+          <div id="sysinfo-error" class="error-text"></div>
         </div>
       </div>
     </div>
