@@ -66,3 +66,44 @@ export function getElement(id) {
   }
   return element;
 }
+
+/**
+ * 智能格式化文件大小，自动转换为合适的单位
+ * @param {number|null|undefined} bytes - 文件大小（字节）
+ * @returns {string} - 格式化后的文件大小字符串
+ */
+export function formatFileSize(bytes) {
+  if (bytes === null || bytes === undefined || bytes < 0) {
+    return 'N/A';
+  }
+
+  // 定义单位
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  
+  // 处理0字节的情况
+  if (bytes === 0) {
+    return '0 B';
+  }
+
+  // 计算合适的单位
+  const k = 1024;
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  
+  // 确保不会超出单位范围
+  const unitIndex = Math.min(i, units.length - 1);
+  
+  // 计算数值并保留合适的小数位
+  const size = bytes / Math.pow(k, unitIndex);
+  
+  // 根据大小决定小数位精度
+  let precision;
+  if (unitIndex === 0) {
+    precision = 0; // 字节不需要小数位
+  } else if (unitIndex >= 3) {
+    precision = 1; // GB及以上保留1位小数
+  } else {
+    precision = 2; // KB和MB保留2位小数
+  }
+  
+  return `${size.toFixed(precision)} ${units[unitIndex]}`;
+}

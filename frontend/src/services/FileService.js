@@ -3,7 +3,7 @@
  * 负责文件系统操作，如列目录、读取文件等
  */
 import { UI_ELEMENTS, CONSTANTS } from '../utils/constants.js';
-import { getElement } from '../utils/helpers.js';
+import { getElement, formatFileSize } from '../utils/helpers.js';
 import { createGpsDecoder } from './GpsDecoder.js';
 import { createGpxConverter } from './GpxConverter.js';
 
@@ -56,7 +56,7 @@ export function initFileService(bleService, logger) {
       nameSpan.onclick = () => navigateToDirectory(path, name);
       entryDiv.appendChild(nameSpan);
     } else { // File
-      nameSpan.textContent = `${name} (${size === null ? 'N/A' : size} bytes)`;
+      nameSpan.textContent = `${name} (${formatFileSize(size)})`;
       nameSpan.className += ' file-item-name';
       entryDiv.appendChild(nameSpan);
 
