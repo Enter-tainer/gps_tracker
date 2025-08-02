@@ -143,6 +143,14 @@ export function initBleService(logger) {
     uartService = null; 
     bleDevice = null;
     
+    // 清理所有未完成的promise，防止内存泄漏
+    Object.keys(currentPromises).forEach(key => {
+      if (currentPromises[key] && currentPromises[key].reject) {
+        currentPromises[key].reject(new Error('Device disconnected'));
+      }
+      currentPromises[key] = null;
+    });
+    
     // 触发连接状态变更回调
     if (connectionChangedCallback) {
       connectionChangedCallback(false);
@@ -527,17 +535,29 @@ export function initBleService(logger) {
       view.setUint16(1, payloadLength, true);
       
       return new Promise((resolve, reject) => {
-        currentPromises.getSysInfo = { resolve, reject };
-        sendBleData(buffer).catch(reject);
-        
-        // 添加超时保护
-        setTimeout(() => {
+        const timeoutId = setTimeout(() => {
           if (currentPromises.getSysInfo) {
-            const p = currentPromises.getSysInfo;
             currentPromises.getSysInfo = null;
-            p.reject(new Error('Timeout waiting for system info response'));
+            reject(new Error('Timeout waiting for system info response'));
           }
         }, 5000);
+
+        currentPromises.getSysInfo = {
+          resolve: (result) => {
+            clearTimeout(timeoutId);
+            resolve(result);
+          },
+          reject: (error) => {
+            clearTimeout(timeoutId);
+            reject(error);
+          }
+        };
+        
+        sendBleData(buffer).catch(error => {
+          clearTimeout(timeoutId);
+          currentPromises.getSysInfo = null;
+          reject(error);
+        });
       });
     } catch (e) {
       logger.error('Failed to get system info: ' + e);
@@ -560,21 +580,32 @@ export function initBleService(logger) {
     listDirEntries = []; // 重置条目列表
     
     return new Promise((resolve, reject) => {
-      currentPromises.listDir = { resolve, reject, path, onEntry, onEmpty };
+      const timeoutId = setTimeout(() => {
+        if (currentPromises.listDir) {
+          currentPromises.listDir = null;
+          reject(new Error('Timeout waiting for directory listing'));
+        }
+      }, 10000);
+
+      currentPromises.listDir = {
+        resolve: (result) => {
+          clearTimeout(timeoutId);
+          resolve(result);
+        },
+        reject: (error) => {
+          clearTimeout(timeoutId);
+          reject(error);
+        },
+        path,
+        onEntry,
+        onEmpty
+      };
       
       sendListDirCommand(path).catch(error => {
+        clearTimeout(timeoutId);
         currentPromises.listDir = null;
         reject(error);
       });
-      
-      // 添加超时保护
-      setTimeout(() => {
-        if (currentPromises.listDir) {
-          const p = currentPromises.listDir;
-          currentPromises.listDir = null;
-          p.reject(new Error('Timeout waiting for directory listing'));
-        }
-      }, 10000);
     });
   }
 
@@ -591,7 +622,24 @@ export function initBleService(logger) {
     logger.log(`Opening file: ${filePath}...`);
     
     return new Promise(async (resolve, reject) => {
-      currentPromises.openFile = { resolve, reject, filePath };
+      const timeoutId = setTimeout(() => {
+        if (currentPromises.openFile) {
+          currentPromises.openFile = null;
+          reject(new Error('Timeout waiting for file open response'));
+        }
+      }, 5000);
+
+      currentPromises.openFile = {
+        resolve: (result) => {
+          clearTimeout(timeoutId);
+          resolve(result);
+        },
+        reject: (error) => {
+          clearTimeout(timeoutId);
+          reject(error);
+        },
+        filePath
+      };
       
       const pathBytes = new TextEncoder().encode(filePath);
       const payloadLength = 1 + pathBytes.byteLength; // File Path Length (1B) + File Path string
@@ -607,18 +655,10 @@ export function initBleService(logger) {
       try {
         await sendBleData(buffer);
       } catch (error) {
+        clearTimeout(timeoutId);
         currentPromises.openFile = null;
         reject(error);
       }
-      
-      // 添加超时保护
-      setTimeout(() => {
-        if (currentPromises.openFile) {
-          const p = currentPromises.openFile;
-          currentPromises.openFile = null;
-          p.reject(new Error('Timeout waiting for file open response'));
-        }
-      }, 5000);
     });
   }
 
@@ -636,7 +676,23 @@ export function initBleService(logger) {
     logger.log(`Reading chunk: offset=${offset}, length=${bytesToRead}`);
     
     return new Promise(async (resolve, reject) => {
-      currentPromises.readChunk = { resolve, reject };
+      const timeoutId = setTimeout(() => {
+        if (currentPromises.readChunk) {
+          currentPromises.readChunk = null;
+          reject(new Error('Timeout waiting for read chunk response'));
+        }
+      }, 10000);
+
+      currentPromises.readChunk = {
+        resolve: (result) => {
+          clearTimeout(timeoutId);
+          resolve(result);
+        },
+        reject: (error) => {
+          clearTimeout(timeoutId);
+          reject(error);
+        }
+      };
       
       const payloadLength = 4 + 2; // Offset (4B) + Bytes to Read (2B)
       const buffer = new ArrayBuffer(1 + 2 + payloadLength);
@@ -651,18 +707,10 @@ export function initBleService(logger) {
       try {
         await sendBleData(buffer);
       } catch (error) {
+        clearTimeout(timeoutId);
         currentPromises.readChunk = null;
         reject(error);
       }
-      
-      // 添加超时保护
-      setTimeout(() => {
-        if (currentPromises.readChunk) {
-          const p = currentPromises.readChunk;
-          currentPromises.readChunk = null;
-          p.reject(new Error('Timeout waiting for read chunk response'));
-        }
-      }, 10000);
     });
   }
 
@@ -678,7 +726,23 @@ export function initBleService(logger) {
     logger.log(`Closing file...`);
     
     return new Promise(async (resolve, reject) => {
-      currentPromises.closeFile = { resolve, reject };
+      const timeoutId = setTimeout(() => {
+        if (currentPromises.closeFile) {
+          currentPromises.closeFile = null;
+          resolve(); // 即使超时也尝试解析，因为关闭操作相对不敏感
+        }
+      }, 3000);
+
+      currentPromises.closeFile = {
+        resolve: (result) => {
+          clearTimeout(timeoutId);
+          resolve(result);
+        },
+        reject: (error) => {
+          clearTimeout(timeoutId);
+          reject(error);
+        }
+      };
       
       const payloadLength = 0;
       const buffer = new ArrayBuffer(1 + 2 + payloadLength);
@@ -690,18 +754,10 @@ export function initBleService(logger) {
       try {
         await sendBleData(buffer);
       } catch (error) {
+        clearTimeout(timeoutId);
         currentPromises.closeFile = null;
         reject(error);
       }
-      
-      // 添加超时保护
-      setTimeout(() => {
-        if (currentPromises.closeFile) {
-          const p = currentPromises.closeFile;
-          currentPromises.closeFile = null;
-          p.resolve(); // 即使超时也尝试解析，因为关闭操作相对不敏感
-        }
-      }, 3000);
     });
   }
 
@@ -718,7 +774,24 @@ export function initBleService(logger) {
     logger.log(`Sending DELETE_FILE for: ${filePath}`);
     
     return new Promise(async (resolve, reject) => {
-      currentPromises.deleteFile = { resolve, reject, filePath };
+      const timeoutId = setTimeout(() => {
+        if (currentPromises.deleteFile) {
+          currentPromises.deleteFile = null;
+          reject(new Error('Timeout waiting for delete response'));
+        }
+      }, 3000);
+
+      currentPromises.deleteFile = {
+        resolve: (result) => {
+          clearTimeout(timeoutId);
+          resolve(result);
+        },
+        reject: (error) => {
+          clearTimeout(timeoutId);
+          reject(error);
+        },
+        filePath
+      };
       
       const pathBytes = new TextEncoder().encode(filePath);
       const payloadLength = 1 + pathBytes.byteLength;
@@ -734,18 +807,10 @@ export function initBleService(logger) {
       try {
         await sendBleData(buffer);
       } catch (error) {
+        clearTimeout(timeoutId);
         currentPromises.deleteFile = null;
         reject(error);
       }
-      
-      // 添加超时保护
-      setTimeout(() => {
-        if (currentPromises.deleteFile) {
-          const p = currentPromises.deleteFile;
-          currentPromises.deleteFile = null;
-          p.reject(new Error('Timeout waiting for delete response'));
-        }
-      }, 3000);
     });
   }
 
