@@ -272,7 +272,10 @@ void initGPS() {
   gpsSerial.end();
   delay(1500);
   gpsSerial.begin(GPS_BAUD_RATE); // Reinitialize with new baud rate
-  gpsSerial.println("$PCAS02,100*1E");
+  for (int i = 0; i < 4; i++) {
+    gpsSerial.println("$PCAS02,100*1E");
+    delay(100);
+  }
   Log.println("GPS Serial Initialized, NMEA configured.");
 
 #ifdef PIN_GPS_EN
