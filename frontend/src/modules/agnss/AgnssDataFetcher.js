@@ -5,7 +5,7 @@
 
 class AGNSSDataFetcher {
   constructor() {
-    this.baseUrl = 'https://agnss-server.mgt.workers.dev/api/download';
+    this.baseUrl = 'https://agnss.mgt.moe/api/download';
   }
 
   /**
@@ -16,7 +16,7 @@ class AGNSSDataFetcher {
    */
   async downloadEphemeris(filename = 'gps_bds.eph', dir = '/') {
     // 使用用户指定的 API URL
-    const url = `https://agnss-server.mgt.workers.dev/api/cached`;
+    const url = `https://agnss.mgt.moe/api/cached`;
 
     try {
       console.log(`正在从 ${url} 下载星历数据...`);
