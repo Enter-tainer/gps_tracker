@@ -16,6 +16,6 @@
     "vite": "^6.3.5"
   },
   "dependencies": {
-    "gpx_viewer": "^1.0.1"
+    "gpx_viewer": "^1.0.3"
   }
 }
