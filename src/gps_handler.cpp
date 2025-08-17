@@ -298,7 +298,19 @@ void initGPS() {
 void updateGpsSystemInfo() {
   TinyGPSPlus &gps =
       gpsWrapper.getTinyGPS(); // Get TinyGPS++ instance from wrapper
-  gSystemInfo.locationValid = gps.location.isValid();
+
+  // Enhanced location validity check including HDOP and datetime
+  bool locationValid = gps.location.isValid();
+  bool dateTimeValid = gps.date.isValid() && gps.time.isValid();
+  bool hdopValid = gps.hdop.isValid() &&
+                   (gps.hdop.value() / 100.0f <= MIN_HDOP_FOR_VALID_FIX);
+  bool satellitesValid =
+      gps.satellites.isValid() && (gps.satellites.value() >= 4);
+
+  gSystemInfo.locationValid =
+      locationValid && dateTimeValid && hdopValid && satellitesValid;
+  gSystemInfo.dateTimeValid = dateTimeValid;
+
   if (gSystemInfo.locationValid) {
     gSystemInfo.latitude = gps.location.lat();
     gSystemInfo.longitude = gps.location.lng();
@@ -430,8 +442,7 @@ void handleGPS() {
       powerOnGPS(); // Ensure GPS is ON
 
     // E1.1_GPS_Fix_Acquired
-    if (gSystemInfo.locationValid && gSystemInfo.dateTimeValid &&
-        gSystemInfo.hdop <= MIN_HDOP_FOR_VALID_FIX) {
+    if (gSystemInfo.locationValid) {
       Log.println("GPS State: S1 -> S3_TRACKING_FIXED (Fix Acquired)");
       resetAllStateTimers();
       Active_Sampling_Timer_Start = now;
@@ -533,8 +544,7 @@ void handleGPS() {
       powerOnGPS(); // Ensure GPS is ON
 
     // E3.5_GPS_Signal_Lost_Or_Degraded (Primary check)
-    if (!(gSystemInfo.locationValid && gSystemInfo.dateTimeValid &&
-          gSystemInfo.hdop <= MIN_HDOP_FOR_VALID_FIX)) {
+    if (!gSystemInfo.locationValid) {
       Log.println(
           "GPS State: S3 -> S1_GPS_SEARCHING_FIX (Signal Lost/Degraded)");
       resetAllStateTimers();
@@ -549,8 +559,7 @@ void handleGPS() {
       Log.println("S3: Active Sampling Timer. Logging GPX.");
       // Ensure data is still good before logging (already checked by E3.5, but
       // good practice)
-      if (gSystemInfo.locationValid && gSystemInfo.dateTimeValid &&
-          gSystemInfo.hdop <= MIN_HDOP_FOR_VALID_FIX) {
+      if (gSystemInfo.locationValid) {
         last_successful_position.timestamp = dateTimeToUnixTimestamp(
             gSystemInfo.year, gSystemInfo.month, gSystemInfo.day,
             gSystemInfo.hour, gSystemInfo.minute, gSystemInfo.second);
