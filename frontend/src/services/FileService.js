@@ -213,7 +213,7 @@ export function initFileService(bleService, logger) {
       const fileChunks = [];
       // 计算请求块大小（考虑MTU限制）
       const mtuSize = bleService.getMtuSize();
-      const CHUNK_SIZE_TO_REQUEST = Math.max(16, Math.min(128, mtuSize - 10));
+      const CHUNK_SIZE_TO_REQUEST = Math.max(16, Math.min(251, mtuSize - 10));
       logger.log(`Requesting chunks of size: ${CHUNK_SIZE_TO_REQUEST}`);
 
       while (receivedBytes < effectiveFileSize) {
