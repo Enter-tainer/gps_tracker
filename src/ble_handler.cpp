@@ -91,6 +91,7 @@ bool setup() { // Modified to return bool
     return false; // Critical failure
   }
   Log.print("BLE: Bluefruit stack initialized successfully.");
+  Bluefruit.setName("MGT GPS Tracker"); // Set custom Bluetooth device name
   Bluefruit.setTxPower(4); // Check documentation for valid power levels
   Bluefruit.Periph.setConnectCallback(connect_callback);
   Bluefruit.Periph.setDisconnectCallback(disconnect_callback);
