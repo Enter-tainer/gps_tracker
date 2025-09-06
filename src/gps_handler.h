@@ -29,4 +29,7 @@ uint32_t dateTimeToUnixTimestamp(uint16_t year, uint8_t month, uint8_t day,
 void setAgnssMessageQueue(const std::vector<std::vector<uint8_t>> &messages);
 void triggerAgnssProcessing();
 
+// GPS wakeup function to simulate motion detection
+void triggerGpsWakeup();
+
 #endif // GPS_HANDLER_H

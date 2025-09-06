@@ -33,7 +33,8 @@ export function initBleService(logger) {
     getSysInfo: null,
     startAgnssWrite: null,
     writeAgnssChunk: null,
-    endAgnssWrite: null
+    endAgnssWrite: null,
+    gpsWakeup: null
   };
   
   // 存储目录列表条目
@@ -329,6 +330,21 @@ export function initBleService(logger) {
       } else {
         logger.error(`END_AGNSS_WRITE_RSP: Unexpected payload length ${payloadLen}.`);
         promise.reject(new Error('END_AGNSS_WRITE failed'));
+      }
+      return;
+    }
+
+    // --- GPS 唤醒响应处理 ---
+    if (currentPromises.gpsWakeup) {
+      const promise = currentPromises.gpsWakeup;
+      currentPromises.gpsWakeup = null;
+      
+      if (payloadLen === 0) {
+        logger.log("GPS_WAKEUP_RSP: GPS wakeup command executed successfully.");
+        promise.resolve();
+      } else {
+        logger.error(`GPS_WAKEUP_RSP: Unexpected payload length ${payloadLen}.`);
+        promise.reject(new Error('GPS wakeup failed'));
       }
       return;
     }
@@ -838,6 +854,55 @@ export function initBleService(logger) {
     return mtuSize;
   }
 
+  // --- GPS 唤醒方法 ---
+  
+  /**
+   * 触发GPS唤醒
+   * @returns {Promise<void>}
+   */
+  async function triggerGpsWakeup() {
+    if (!isConnected) {
+      return Promise.reject(new Error("Not connected"));
+    }
+    
+    logger.log(`Triggering GPS wakeup...`);
+    
+    return new Promise(async (resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        if (currentPromises.gpsWakeup) {
+          currentPromises.gpsWakeup = null;
+          reject(new Error('Timeout waiting for GPS wakeup response'));
+        }
+      }, 5000);
+
+      currentPromises.gpsWakeup = {
+        resolve: (result) => {
+          clearTimeout(timeoutId);
+          resolve(result);
+        },
+        reject: (error) => {
+          clearTimeout(timeoutId);
+          reject(error);
+        }
+      };
+
+      const payloadLength = 0;
+      const buffer = new ArrayBuffer(1 + 2 + payloadLength);
+      const view = new DataView(buffer);
+      
+      view.setUint8(0, CONSTANTS.CMD_ID.GPS_WAKEUP);
+      view.setUint16(1, payloadLength, true);
+      
+      try {
+        await sendBleData(buffer);
+      } catch (error) {
+        clearTimeout(timeoutId);
+        currentPromises.gpsWakeup = null;
+        reject(error);
+      }
+    });
+  }
+
   // --- AGNSS 相关方法 ---
   
   /**
@@ -1001,7 +1066,8 @@ export function initBleService(logger) {
     deleteFile,
     startAgnssWrite,
     writeAgnssChunk,
-    endAgnssWrite
+    endAgnssWrite,
+    triggerGpsWakeup
   };
 }
 

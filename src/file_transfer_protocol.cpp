@@ -155,6 +155,10 @@ void FileTransferProtocol::process() {
       processEndAgnssWrite();
       break;
 
+    case CMD_GPS_WAKEUP:
+      processGpsWakeup();
+      break;
+
     default:
       Log.printf("未知命令ID: 0x%02X\n", _cmdId);
       // 发送空响应表示错误
@@ -521,5 +525,15 @@ void FileTransferProtocol::processEndAgnssWrite() {
   _agnssMessages.clear();
 
   // 发送空响应表示完成
+  sendResponse(nullptr, 0);
+}
+
+void FileTransferProtocol::processGpsWakeup() {
+  Log.println("接收到 GPS 唤醒命令");
+  
+  // 调用 GPS 唤醒函数，模拟运动检测
+  triggerGpsWakeup();
+  
+  // 发送空响应表示成功
   sendResponse(nullptr, 0);
 }

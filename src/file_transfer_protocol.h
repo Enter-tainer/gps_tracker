@@ -16,6 +16,7 @@ extern SdFat sd;
 #define CMD_START_AGNSS_WRITE 0x07
 #define CMD_WRITE_AGNSS_CHUNK 0x08
 #define CMD_END_AGNSS_WRITE 0x09
+#define CMD_GPS_WAKEUP 0x0A
 
 // 目录项类型
 #define ENTRY_TYPE_FILE 0x00
@@ -69,6 +70,9 @@ private:
   void processStartAgnssWrite();
   void processWriteAgnssChunk();
   void processEndAgnssWrite();
+  
+  // GPS 唤醒处理方法
+  void processGpsWakeup();
 
   // 辅助方法
   void sendResponse(uint8_t *payload, uint16_t length);

@@ -19,6 +19,14 @@ export function initStatusPanel(bleService, logger) {
   const agnssButton = getElement(UI_ELEMENTS.AGNSS_BUTTON);
   const agnssStatus = getElement(UI_ELEMENTS.AGNSS_STATUS);
   
+  // 创建GPS唤醒按钮
+  const gpsWakeupButton = document.createElement('button');
+  gpsWakeupButton.id = 'gpsWakeupButton';
+  gpsWakeupButton.className = 'btn btn-warning';
+  gpsWakeupButton.textContent = '唤醒GPS';
+  gpsWakeupButton.disabled = true;
+  gpsWakeupButton.style.marginLeft = '10px';
+  
   // 初始化连接按钮事件
   if (connectButton) {
     connectButton.onclick = () => {
@@ -29,6 +37,42 @@ export function initStatusPanel(bleService, logger) {
       }
     };
   }
+
+  // 初始化GPS唤醒按钮事件
+  gpsWakeupButton.onclick = async () => {
+    gpsWakeupButton.disabled = true;
+    gpsWakeupButton.textContent = '唤醒中...';
+    
+    try {
+      await bleService.triggerGpsWakeup();
+      logger.log('GPS唤醒命令发送成功');
+      
+      // 短暂显示成功状态
+      gpsWakeupButton.textContent = '唤醒成功!';
+      gpsWakeupButton.className = 'btn btn-success';
+      
+      // 2秒后恢复原状
+      setTimeout(() => {
+        gpsWakeupButton.textContent = '唤醒GPS';
+        gpsWakeupButton.className = 'btn btn-warning';
+        gpsWakeupButton.disabled = false;
+      }, 2000);
+      
+    } catch (error) {
+      logger.error(`GPS唤醒失败: ${error}`);
+      
+      // 显示错误状态
+      gpsWakeupButton.textContent = '唤醒失败';
+      gpsWakeupButton.className = 'btn btn-danger';
+      
+      // 2秒后恢复原状
+      setTimeout(() => {
+        gpsWakeupButton.textContent = '唤醒GPS';
+        gpsWakeupButton.className = 'btn btn-warning';
+        gpsWakeupButton.disabled = false;
+      }, 2000);
+    }
+  };
 
   // 初始化系统信息查询按钮事件
   if (sysInfoButton) {
@@ -85,6 +129,9 @@ export function initStatusPanel(bleService, logger) {
     if (listDirButton) {
       listDirButton.disabled = !isConnected;
     }
+    
+    // 启用或禁用GPS唤醒按钮
+    gpsWakeupButton.disabled = !isConnected;
   }
 
   /**
@@ -148,6 +195,11 @@ export function initStatusPanel(bleService, logger) {
   // 初始化状态显示
   updateConnectionStatus(false);
   updateSysInfoCard(null);
+  
+  // 将GPS唤醒按钮添加到页面
+  if (sysInfoButton && sysInfoButton.parentNode) {
+    sysInfoButton.parentNode.appendChild(gpsWakeupButton);
+  }
   
   // 返回状态面板接口
   return {

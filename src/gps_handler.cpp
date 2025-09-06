@@ -245,6 +245,24 @@ void triggerAgnssProcessing() {
              AGNSS_Previous_State);
 }
 
+void triggerGpsWakeup() {
+  Log.println("手动触发 GPS 唤醒 - 模拟运动检测");
+  
+  // 模拟运动检测，将静止状态设置为 false
+  gSystemInfo.isStationary = false;
+  
+  // 如果当前在 S2_IDLE_GPS_OFF 状态，直接触发状态转换
+  if (gSystemInfo.gpsState == S2_IDLE_GPS_OFF) {
+    Log.println("GPS State: S2 -> S1_GPS_SEARCHING_FIX (手动唤醒)");
+    powerOnGPS();
+    resetAllStateTimers();
+    Fix_Attempt_Timer_Start = millis();
+    gSystemInfo.gpsState = S1_GPS_SEARCHING_FIX;
+  } else {
+    Log.printf("当前 GPS 状态为 %d，等待状态机自动处理运动检测\n", gSystemInfo.gpsState);
+  }
+}
+
 // --- Function to initialize GPS communication and power pin ---
 void initGPS() {
   gSystemInfo.gpsState = S0_INITIALIZING;

@@ -19,7 +19,8 @@ export const CONSTANTS = {
     GET_SYS_INFO: 0x06,
     START_AGNSS_WRITE: 0x07,
     WRITE_AGNSS_CHUNK: 0x08,
-    END_AGNSS_WRITE: 0x09
+    END_AGNSS_WRITE: 0x09,
+    GPS_WAKEUP: 0x0A
   },
   
   // 文件系统条目类型
