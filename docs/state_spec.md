@@ -74,11 +74,12 @@
 | 加速度静止阈值                            | `ACCEL_STILL_THRESHOLD`                  | 0.1          | g       | 低于此加速度值认为设备可能处于静止状态。                             |
 | 持续静止确认时长                          | `T_STILLNESS_CONFIRM_DURATION`           | 60           | 秒      | 加速度持续低于静止阈值此有时长后，确认为设备进入持续静止状态。         |
 | GPS速度判断车辆阈值                       | `GPS_SPEED_VEHICLE_THRESHOLD`            | 5            | km/h    | `S4_ANALYZING_STILLNESS`状态下，用于判断是否为交通工具短暂停留的GPS速度阈值。 |
+| GPS高速运动阈值                           | `GPS_HIGH_SPEED_THRESHOLD`               | 20           | km/h    | 平均速度超过此阈值时，忽略HDOP检查，只要求卫星数 > 4。               |
 | S4分析静止状态GPS查询超时                 | `T_GPS_QUERY_TIMEOUT_FOR_STILLNESS`      | 5            | 秒      | 在`S4`状态下，等待获取GPS当前速度和状态的超时时间。                    |
 | GPS冷/温启动搜星定位超时                  | `T_GPS_COLD_START_FIX_TIMEOUT`           | 90           | 秒      | 从GPS关闭状态启动后，尝试获取首次定位的最大允许时间。                  |
 | GPS重捕获定位超时                         | `T_GPS_REACQUIRE_FIX_TIMEOUT`            | 30           | 秒      | 在已有定位后信号丢失，尝试重新获取定位的最大允许时间。                 |
 | GPS休眠周期性唤醒间隔                     | `T_GPS_SLEEP_PERIODIC_WAKE_INTERVAL`     | 15           | 分钟    | `S2_IDLE_GPS_OFF`状态下，周期性唤醒GPS尝试定位的间隔。               |
-| 有效定位最小HDOP                          | `MIN_HDOP_FOR_VALID_FIX`                 | 2.0          | (float) | HDOP值小于此值才认为是一次有效的定位。                               |
+| 有效定位最小HDOP                          | `MIN_HDOP_FOR_VALID_FIX`                 | 2.0          | (float) | HDOP值小于此值才认为是一次有效的定位（低速场景）。                   |
 | GPS连续搜星失败次数阈值                   | `MAX_CONSECUTIVE_FIX_FAILURES`           | 16            | 次      | 连续搜星失败达到此次数后，可能采取特殊操作（如GPS模块重启）。            |
 | 加速度数据采样/处理频率                   | (非直接状态机定时器，但为前提)             | 20         | Hz      | 加速度传感器采样数据的频率，用于及时检测运动和静止。                   |
 | AGNSS单条消息发送超时                     | `T_AGNSS_MESSAGE_SEND_TIMEOUT`           | 5            | 秒      | 发送单条AGNSS消息并等待ACK的超时时间。                              |

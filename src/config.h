@@ -39,6 +39,7 @@ const unsigned long GPS_FIX_ATTEMPT_TIMEOUT =
 #define T_ACTIVE_SAMPLING_INTERVAL_MS (10 * 1000)              // 10 seconds
 #define T_STILLNESS_CONFIRM_DURATION_MS (60 * 1000)            // 60 seconds
 #define GPS_SPEED_VEHICLE_THRESHOLD_KMPH (5.0)                 // km/h
+#define GPS_HIGH_SPEED_THRESHOLD_KMPH (20.0)                   // km/h
 #define T_GPS_QUERY_TIMEOUT_FOR_STILLNESS_MS (5 * 1000)        // 5 seconds
 #define T_GPS_COLD_START_FIX_TIMEOUT_MS (90 * 1000)            // 90 seconds
 #define T_GPS_REACQUIRE_FIX_TIMEOUT_MS (30 * 1000)             // 30 seconds

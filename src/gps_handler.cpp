@@ -16,6 +16,7 @@ static const unsigned long T_ACTIVE_SAMPLING_INTERVAL = 1 * 1000UL; // 1 seconds
 static const unsigned long T_STILLNESS_CONFIRM_DURATION =
     60 * 1000UL;                                       // 60 seconds
 static const float GPS_SPEED_VEHICLE_THRESHOLD = 5.0f; // 5 km/h
+static const float GPS_HIGH_SPEED_THRESHOLD = 20.0f;    // 20 km/h
 static const unsigned long T_GPS_QUERY_TIMEOUT_FOR_STILLNESS =
     5 * 1000UL; // 5 seconds
 static const unsigned long T_GPS_COLD_START_FIX_TIMEOUT =
@@ -56,6 +57,47 @@ static unsigned long GPS_Query_Timeout_Timer_S4_Start = 0;
 static bool isGpsPoweredOn = false;
 
 static uint8_t Consecutive_Fix_Failures_Counter = 0;
+
+// SpeedAverage class for calculating average speed
+class SpeedAverage {
+private:
+  static const int SAMPLES_COUNT = 10;
+  static const int SAMPLE_INTERVAL = 20; // Sample every 20 calls
+  float samples[SAMPLES_COUNT] = {0};
+  int sampleIndex = 0;
+  int callCounter = 0;
+  
+public:
+  void addSample(float speed) {
+    callCounter++;
+    if (callCounter % SAMPLE_INTERVAL == 0) {
+      samples[sampleIndex] = speed;
+      sampleIndex = (sampleIndex + 1) % SAMPLES_COUNT;
+    }
+  }
+  
+  float getAverage() const {
+    float sum = 0.0f;
+    int validSamples = 0;
+    for (int i = 0; i < SAMPLES_COUNT; i++) {
+      if (samples[i] > 0) {
+        sum += samples[i];
+        validSamples++;
+      }
+    }
+    return validSamples > 0 ? sum / validSamples : 0.0f;
+  }
+  
+  void reset() {
+    for (int i = 0; i < SAMPLES_COUNT; i++) {
+      samples[i] = 0;
+    }
+    sampleIndex = 0;
+    callCounter = 0;
+  }
+};
+
+static SpeedAverage speedAverage;
 // AGNSS related variables
 static unsigned long AGNSS_Message_Timer_Start = 0;
 static unsigned long AGNSS_Total_Timer_Start = 0;
@@ -325,8 +367,16 @@ void updateGpsSystemInfo() {
   bool satellitesValid =
       gps.satellites.isValid() && (gps.satellites.value() >= 4);
 
-  gSystemInfo.locationValid =
-      locationValid && dateTimeValid && hdopValid && satellitesValid;
+  // High-speed scenario: ignore HDOP check if average speed > 20km/h and satellites > 4
+  bool isHighSpeed = speedAverage.getAverage() > GPS_HIGH_SPEED_THRESHOLD;
+  
+  if (isHighSpeed && satellitesValid) {
+    // High-speed motion: only require satellites > 4, ignore HDOP
+    gSystemInfo.locationValid = locationValid && dateTimeValid && satellitesValid;
+  } else {
+    // Normal scenario: strict validation with HDOP
+    gSystemInfo.locationValid = locationValid && dateTimeValid && hdopValid && satellitesValid;
+  }
   gSystemInfo.dateTimeValid = dateTimeValid;
 
   if (gSystemInfo.locationValid) {
@@ -351,6 +401,9 @@ void updateGpsSystemInfo() {
 
   if (gps.speed.isValid()) {
     gSystemInfo.speed = gps.speed.kmph();
+    
+    // Update average speed calculation
+    speedAverage.addSample(gSystemInfo.speed);
   } else {
     gSystemInfo.speed = -1.0f; // Invalid speed
   }
