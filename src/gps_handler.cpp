@@ -361,7 +361,8 @@ void updateGpsSystemInfo() {
 
   // Enhanced location validity check including HDOP and datetime
   bool locationValid = gps.location.isValid();
-  bool dateTimeValid = gps.date.isValid() && gps.time.isValid();
+  bool dateTimeValid =
+      gps.date.isValid() && gps.time.isValid() && gps.date.year() >= 2025;
   bool hdopValid = gps.hdop.isValid() &&
                    (gps.hdop.value() / 100.0f <= MIN_HDOP_FOR_VALID_FIX);
   bool satellitesValid =
