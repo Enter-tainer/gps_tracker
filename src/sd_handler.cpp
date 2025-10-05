@@ -204,13 +204,20 @@ bool writeGpsLogDataToSD(const GpxPointInternal &entry) {
         Log.println("Cannot write GPS data: Log file not ready");
         return false;
     }
-    
-    auto len = gpsDataEncoder.encode(entry);
+    // 先保存编码器与缓存状态，便于写入失败时回滚
+    const auto encoder_snapshot = gpsDataEncoder;
+    const auto cache_position_snapshot = cachePosition;
+    const auto cache_dirty_snapshot = cacheDirty;
+
+    const auto len = gpsDataEncoder.encode(entry);
 
     // 检查是否有足够空间在缓存中
     if (cachePosition + len > sizeof(writeCache)) {
       // 缓存已满，先flush
       if (!flushCacheToSD()) {
+        gpsDataEncoder = encoder_snapshot;
+        cachePosition = cache_position_snapshot;
+        cacheDirty = cache_dirty_snapshot;
         Log.println("Failed to flush cache before writing new data");
         return false;
       }
@@ -223,7 +230,13 @@ bool writeGpsLogDataToSD(const GpxPointInternal &entry) {
 
     // 如果缓存已满，立即写入
     if (cachePosition >= sizeof(writeCache)) {
-      return flushCacheToSD();
+      if (!flushCacheToSD()) {
+        gpsDataEncoder = encoder_snapshot;
+        cachePosition = cache_position_snapshot;
+        cacheDirty = cache_dirty_snapshot;
+        Log.println("Failed to flush cache after writing new data");
+        return false;
+      }
     }
 
     return true;
