@@ -1,0 +1,50 @@
+[package]
+name = "gps-tracker-firmware"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# --- Embassy 核心 ---
+embassy-executor = { version = "0.9.1", features = ["arch-cortex-m", "executor-thread", "defmt"] }
+embassy-time = { version = "0.5.0", features = ["defmt", "defmt-timestamp-uptime"] }
+# 注意：time-driver-rtc1 很重要，因为 SoftDevice 占用 RTC0
+embassy-nrf = { version = "0.9.0", features = ["defmt", "nrf52840", "time-driver-rtc1", "gpiote", "unstable-pac"] }
+embassy-sync = { version = "0.7.2", features = ["defmt"] }
+embassy-futures = { version = "0.1" }
+
+# --- 蓝牙 (SoftDevice) ---
+# s140 是 nRF52840 的蓝牙协议栈
+nrf-softdevice = { version = "0.1", features = ["defmt", "nrf52840", "s140", "ble-peripheral", "ble-central", "critical-section-impl"] }
+nrf-softdevice-s140 = "0.1" 
+
+# --- 常用嵌入式库 ---
+cortex-m = { version = "0.7", features = ["inline-asm", "critical-section-single-core"] }
+cortex-m-rt = "0.7"
+defmt = "1.0"         # 高效日志库
+defmt-rtt = "1.1"     # 通过调试器传输日志
+panic-probe = { version = "1.0", features = ["print-defmt"] } # Panic 时通过调试器打印
+
+# --- 你的硬件驱动 ---
+embedded-graphics = "0.8"
+ssd1306 = "0.10" 
+embedded-hal-async = "1.0"
+# 注意：以下驱动版本可能随时间更新，建议去 crates.io 确认
+bmp280-rs = "0.1" 
+lis3dh = "0.4.4"
+embedded-sdmmc = "0.9"
+nmea = { version = "0.7", default-features = false, features = ["GNSS", "defmt-03"]}
+
+# 优化配置：发布模式下尽可能优化体积和速度
+[profile.release]
+codegen-units = 1
+debug = 2
+debug-assertions = false
+incremental = false
+lto = "fat"
+opt-level = 'z'
+overflow-checks = false
+
+[profile.dev]
+debug = 2
+lto = "fat"
+opt-level = "z" # 即使是 dev 模式也建议优化，否则 async 状态机可能会栈溢出

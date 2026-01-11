@@ -1,0 +1,16 @@
+[target.thumbv7em-none-eabihf]
+# 使用 probe-rs 直接烧录并查看日志
+runner = "probe-rs run --chip nRF52840_xxAA"
+
+rustflags = [
+  "-C", "link-arg=-Tlink.x",
+  "-C", "link-arg=-Tdefmt.x",
+  # 这一行非常重要，因为 SoftDevice 会改变内存布局
+  "-C", "link-arg=-Tdefmt.x", 
+]
+
+[build]
+target = "thumbv7em-none-eabihf"
+
+[env]
+DEFMT_LOG = "info" # 设置日志级别
