@@ -7,10 +7,6 @@ name = "Inflector"
 version = "0.11.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fe438c63458706e03479442743baae6c88256498e6431708f6dfc520a26515d3"
-dependencies = [
- "lazy_static",
- "regex",
-]
 
 [[package]]
 name = "accelerometer"
@@ -19,15 +15,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1a4586d95cb0695e748760c9a751141eebb68265b1b20392a0f14db608679f7a"
 dependencies = [
  "micromath 1.1.1",
-]
-
-[[package]]
-name = "aho-corasick"
-version = "1.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ddd31a130427c27518df266943a5308ed92d4b226cc639f5a8f1002816174301"
-dependencies = [
- "memchr",
 ]
 
 [[package]]
@@ -133,7 +120,6 @@ checksum = "8ec610d8f49840a5b376c69663b6369e71f4b34484b9b2eb29fb918d92516cb9"
 dependencies = [
  "bare-metal",
  "bitfield",
- "critical-section",
  "embedded-hal 0.2.7",
  "volatile-register",
 ]
@@ -438,13 +424,14 @@ dependencies = [
 
 [[package]]
 name = "embassy-sync"
-version = "0.5.0"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd938f25c0798db4280fcd8026bf4c2f48789aebf8f77b6e5cf8a7693ba114ec"
+checksum = "8d2c8cdff05a7a51ba0087489ea44b0b1d97a296ca6b1d6d1a33ea7423d34049"
 dependencies = [
  "cfg-if",
  "critical-section",
  "embedded-io-async",
+ "futures-sink",
  "futures-util",
  "heapless",
 ]
@@ -772,12 +759,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lazy_static"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
-
-[[package]]
 name = "libm"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -899,15 +880,13 @@ dependencies = [
 [[package]]
 name = "nrf-softdevice"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "225a21d963b2382617dbbff5953dc8c6c43fe56db5c5155f4d20a30c50c2766d"
+source = "git+https://github.com/embassy-rs/nrf-softdevice?rev=5949a5b1445cc907745c6449a35577e4544cd255#5949a5b1445cc907745c6449a35577e4544cd255"
 dependencies = [
  "cortex-m",
- "cortex-m-rt",
  "critical-section",
  "defmt 0.3.100",
  "embassy-futures",
- "embassy-sync 0.5.0",
+ "embassy-sync 0.6.2",
  "embedded-storage",
  "embedded-storage-async",
  "fixed",
@@ -915,15 +894,13 @@ dependencies = [
  "heapless",
  "nrf-softdevice-macro",
  "nrf-softdevice-s140",
- "nrf52840-pac",
  "num_enum 0.7.5",
 ]
 
 [[package]]
 name = "nrf-softdevice-macro"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3af0752f2f12e202fa29f5a8d2f6dcc8a421c7a7e368d9dab7feb6bfe24ff0e9"
+source = "git+https://github.com/embassy-rs/nrf-softdevice?rev=5949a5b1445cc907745c6449a35577e4544cd255#5949a5b1445cc907745c6449a35577e4544cd255"
 dependencies = [
  "Inflector",
  "darling 0.13.4",
@@ -936,19 +913,7 @@ dependencies = [
 [[package]]
 name = "nrf-softdevice-s140"
 version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ea93a1e11efdafcf914ed6b81b5be0cd99ee8ff6c3060102265ea863a355393"
-
-[[package]]
-name = "nrf52840-pac"
-version = "0.12.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30713f36f1be02e5bc9abefa30eae4a1f943d810f199d4923d3ad062d1be1b3d"
-dependencies = [
- "cortex-m",
- "cortex-m-rt",
- "vcell",
-]
+source = "git+https://github.com/embassy-rs/nrf-softdevice?rev=5949a5b1445cc907745c6449a35577e4544cd255#5949a5b1445cc907745c6449a35577e4544cd255"
 
 [[package]]
 name = "num-traits"
@@ -1115,35 +1080,6 @@ name = "rand_core"
 version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "99d9a13982dcf210057a8a78572b2217b667c3beacbf3a0d8b454f6f82837d38"
-
-[[package]]
-name = "regex"
-version = "1.12.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "843bc0191f75f3e22651ae5f1e72939ab2f72a4bc30fa80a066bd66edefc24d4"
-dependencies = [
- "aho-corasick",
- "memchr",
- "regex-automata",
- "regex-syntax",
-]
-
-[[package]]
-name = "regex-automata"
-version = "0.4.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5276caf25ac86c8d810222b3dbb938e512c55c6831a10f3e6ed1c93b84041f1c"
-dependencies = [
- "aho-corasick",
- "memchr",
- "regex-syntax",
-]
-
-[[package]]
-name = "regex-syntax"
-version = "0.8.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a2d987857b319362043e95f5353c0535c1f58eec5336fdfcf626430af7def58"
 
 [[package]]
 name = "rustc_version"
