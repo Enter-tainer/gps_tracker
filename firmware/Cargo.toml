@@ -14,8 +14,8 @@ embassy-futures = { version = "0.1" }
 
 # --- 蓝牙 (SoftDevice) ---
 # s140 是 nRF52840 的蓝牙协议栈
-nrf-softdevice = { version = "0.1", features = ["defmt", "nrf52840", "s140", "ble-peripheral", "ble-central", "critical-section-impl"] }
-nrf-softdevice-s140 = "0.1" 
+nrf-softdevice = { version = "0.1", optional = true, features = ["defmt", "nrf52840", "s140", "ble-peripheral", "ble-central", "critical-section-impl"] }
+nrf-softdevice-s140 = { version = "0.1", optional = true }
 
 # --- 常用嵌入式库 ---
 cortex-m = { version = "0.7", features = ["inline-asm", "critical-section-single-core"] }
@@ -33,6 +33,10 @@ bmp280-rs = "0.1"
 lis3dh = "0.4.4"
 embedded-sdmmc = "0.9"
 nmea = { version = "0.7", default-features = false, features = ["GNSS", "defmt-03"]}
+
+[features]
+default = []
+ble = ["nrf-softdevice", "nrf-softdevice-s140"]
 
 # 优化配置：发布模式下尽可能优化体积和速度
 [profile.release]
