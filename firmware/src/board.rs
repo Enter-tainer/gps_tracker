@@ -20,6 +20,10 @@ pub struct Board {
     pub twispi0: Peri<'static, peripherals::TWISPI0>,
     pub spi3: Peri<'static, peripherals::SPI3>,
     pub saadc: Peri<'static, peripherals::SAADC>,
+    pub timer1: Peri<'static, peripherals::TIMER1>,
+    pub ppi_ch8: Peri<'static, peripherals::PPI_CH8>,
+    pub ppi_ch9: Peri<'static, peripherals::PPI_CH9>,
+    pub ppi_group1: Peri<'static, peripherals::PPI_GROUP1>,
 }
 
 impl Board {
@@ -44,6 +48,10 @@ impl Board {
             twispi0: p.TWISPI0,
             spi3: p.SPI3,
             saadc: p.SAADC,
+            timer1: p.TIMER1,
+            ppi_ch8: p.PPI_CH8,
+            ppi_ch9: p.PPI_CH9,
+            ppi_group1: p.PPI_GROUP1,
         }
     }
 }

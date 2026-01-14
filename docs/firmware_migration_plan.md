@@ -51,10 +51,10 @@ Rust/Embassy firmware in `firmware/`, targeting nRF52840 with no LoRa support.
 - [x] Confirm flashing/debug flow (probe-rs or UF2).
 
 ## Phase 2: Core drivers and async runtime
-- [ ] UART driver for GPS (async + RX buffering).
-- [ ] I2C driver for sensors/display with a shared bus lock.
-- [ ] SPI driver for SD (and any other SPI peripherals).
-- [ ] Time source and timers (Embassy time with RTC1, compatible with SoftDevice).
+- [x] UART driver for GPS (async + RX buffering).
+- [x] I2C driver for sensors/display with a shared bus lock.
+- [x] SPI driver for SD (and any other SPI peripherals).
+- [x] Time source and timers (Embassy time with RTC1, compatible with SoftDevice).
 
 ## Phase 3: GPS and state machine
 - [ ] Port CASIC protocol parser (`casic_gps_wrapper.*`) to Rust.
