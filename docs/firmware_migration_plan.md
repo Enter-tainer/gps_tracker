@@ -19,15 +19,15 @@ Rust/Embassy firmware in `firmware/`, targeting nRF52840 with no LoRa support.
 - Preserve protocol compatibility with existing frontend and tools.
 - Protocol parity is the top priority; change only with explicit agreement.
 
-## Protocol parity (highest priority)
-- [ ] Freeze protocol spec from legacy code:
+## Protocol parity (guideline)
+- [x] Freeze protocol spec from legacy code (see `docs/protocol_parity_spec.md`):
   - command IDs and payload framing
   - endianness and field order
   - error behaviors (empty response vs. error code)
   - path encoding and limits
 - [ ] Mirror BLE service/characteristics and device name used by the frontend.
 - [ ] Match MTU negotiation and max payload behavior (MTU minus ATT header).
-- [ ] Build golden test vectors from legacy exchanges and replay against Rust.
+- [ ] Build protocol test vectors and a runnable harness (defer until protocol port).
 
 ## Phase 0: Inventory and mapping
 - [ ] Build a module map from legacy code:
@@ -94,6 +94,7 @@ Rust/Embassy firmware in `firmware/`, targeting nRF52840 with no LoRa support.
 - [ ] End-to-end runtime (GPS -> logging -> BLE transfer -> frontend).
 - [ ] Stress test file transfer with large GPX files.
 - [ ] Regression checklist vs. legacy firmware.
+- [ ] Protocol regression tests (vectors + harness) using mocks.
 
 ## Deliverables
 - [ ] Rust firmware parity for required features (no LoRa).
