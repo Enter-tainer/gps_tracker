@@ -1,6 +1,8 @@
 #![no_std]
 #![no_main]
 
+mod board;
+
 use embassy_executor::Spawner;
 use embassy_nrf::gpio::{Level, Output, OutputDrive};
 use embassy_time::Timer;
@@ -26,12 +28,13 @@ async fn main(spawner: Spawner) {
     }
 
     let p = embassy_nrf::init(config);
+    let board::Board { led, .. } = board::Board::new(p);
 
     let sd = Softdevice::enable(&Default::default());
     spawner.spawn(softdevice_task(sd)).unwrap();
 
     // LED is on P0.15 per promicro_diy variant.
-    let mut led = Output::new(p.P0_15, Level::Low, OutputDrive::Standard);
+    let mut led = Output::new(led, Level::Low, OutputDrive::Standard);
 
     loop {
         led.set_high();

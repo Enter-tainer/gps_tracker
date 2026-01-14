@@ -30,7 +30,7 @@ Rust/Embassy firmware in `firmware/`, targeting nRF52840 with no LoRa support.
 - [ ] Build protocol test vectors and a runnable harness (defer until protocol port).
 
 ## Phase 0: Inventory and mapping
-- [ ] Build a module map from legacy code:
+- [x] Build a module map from legacy code (see `docs/firmware_phase0_inventory.md`):
   - `src/main.cpp` (system orchestration)
   - `src/gps_handler.*`, `src/casic_gps_wrapper.*`, `src/gpx_logger.*`
   - `src/ble_handler.*`, `src/file_transfer_protocol.*`
@@ -39,10 +39,10 @@ Rust/Embassy firmware in `firmware/`, targeting nRF52840 with no LoRa support.
   - `src/display_handler.*`
   - `src/sd_handler.*`, `src/sd_fs_handler.*`
   - `src/battery.*`, `src/button_handler.*`, `src/system_info.h`, `src/logger.*`
-- [ ] Map pins from `variant.h` to Embassy GPIO/UART/I2C/SPI definitions.
-- [ ] Identify which storage backend is required (SD only vs. SD + internal FS).
-- [ ] Decide if A-GNSS stays identical to current protocol.
-- [ ] Confirm legacy LittleFS usage is out-of-scope for the new firmware.
+- [x] Map pins from `variant.h` to Embassy GPIO/UART/I2C/SPI definitions.
+- [x] Identify which storage backend is required (SD only vs. SD + internal FS).
+- [x] Decide if A-GNSS stays identical to current protocol.
+- [x] Confirm legacy LittleFS usage is out-of-scope for the new firmware.
 
 ## Phase 1: Bring-up and toolchain
 - [x] Confirm `firmware/.cargo/config.toml` runner and target for nRF52840.
