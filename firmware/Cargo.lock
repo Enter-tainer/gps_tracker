@@ -691,6 +691,7 @@ name = "gps-tracker-firmware"
 version = "0.1.0"
 dependencies = [
  "bmp280-rs",
+ "chrono",
  "cortex-m",
  "cortex-m-rt",
  "defmt 1.0.1",

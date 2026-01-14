@@ -33,6 +33,7 @@ bmp280-rs = "0.1"
 lis3dh = "0.4.4"
 embedded-sdmmc = "0.9"
 nmea = { version = "0.7", default-features = false, features = ["GNSS", "defmt-03"]}
+chrono = { version = "0.4", default-features = false }
 
 # 优化配置：发布模式下尽可能优化体积和速度
 [profile.release]

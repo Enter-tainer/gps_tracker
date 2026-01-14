@@ -2,6 +2,9 @@
 #![no_main]
 
 mod board;
+mod casic;
+mod gps;
+mod system_info;
 
 use embassy_executor::Spawner;
 use embassy_nrf::gpio::{Level, Output, OutputDrive};
@@ -108,16 +111,17 @@ async fn main(spawner: Spawner) {
     };
 
     let mut _sd_cs = Output::new(spi_cs, Level::High, OutputDrive::Standard);
+    let gps_en = Output::new(gps_en, Level::Low, OutputDrive::Standard);
+    spawner.spawn(gps::gps_task(_gps_uart, gps_en)).unwrap();
+
     let _unused = (
         button,
-        gps_en,
         battery_adc,
         v3v3_en,
         serial2_rx,
         serial2_tx,
         saadc,
         _sd_cs,
-        _gps_uart,
         _i2c_bus,
         _spi,
     );
