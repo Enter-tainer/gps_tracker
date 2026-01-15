@@ -21,6 +21,10 @@ const MAX_GATT_PAYLOAD: usize = 244;
 const ADV_INTERVAL_UNITS: u32 = 32; // 20ms (units of 0.625ms).
 const ADV_TIMEOUT_BOOT_10MS: u16 = 3000; // 30s (units of 10ms).
 const ADV_TIMEOUT_FAST_10MS: u16 = 500; // 5s (units of 10ms).
+const CONN_MIN_INTERVAL: u16 = 6; // 7.5ms (units of 1.25ms).
+const CONN_MAX_INTERVAL: u16 = 12; // 15ms (units of 1.25ms).
+const CONN_SLAVE_LATENCY: u16 = 0;
+const CONN_SUP_TIMEOUT: u16 = 400; // 4s (units of 10ms).
 
 static RX_CHANNEL: Channel<CriticalSectionRawMutex, Vec<u8, MAX_GATT_PAYLOAD>, 8> = Channel::new();
 static ADV_REQUEST_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
@@ -68,7 +72,6 @@ pub fn request_fast_advertising() {
 #[task]
 pub async fn ble_task(sd: &'static Softdevice, server: &'static Server) {
     let mut pending_timeout = Some(ADV_TIMEOUT_BOOT_10MS);
-    let mut last_timeout = ADV_TIMEOUT_BOOT_10MS;
 
     loop {
         let timeout = match pending_timeout.take() {
@@ -81,8 +84,6 @@ pub async fn ble_task(sd: &'static Softdevice, server: &'static Server) {
                 }
             }
         };
-        last_timeout = timeout;
-
         let config = peripheral::Config {
             interval: ADV_INTERVAL_UNITS,
             timeout: Some(timeout),
@@ -117,6 +118,14 @@ pub async fn ble_task(sd: &'static Softdevice, server: &'static Server) {
         let mut conn = conn;
         let _ = conn.data_length_update(None);
         let _ = conn.phy_update(PhySet::M2, PhySet::M2);
+        let mut conn_params = conn.conn_params();
+        conn_params.min_conn_interval = CONN_MIN_INTERVAL;
+        conn_params.max_conn_interval = CONN_MAX_INTERVAL;
+        conn_params.slave_latency = CONN_SLAVE_LATENCY;
+        conn_params.conn_sup_timeout = CONN_SUP_TIMEOUT;
+        if let Err(err) = conn.set_conn_params(conn_params) {
+            defmt::warn!("BLE conn params update failed: {:?}", err);
+        }
 
         RX_CHANNEL.clear();
         let mut protocol = FileTransferProtocol::new();
@@ -146,7 +155,7 @@ pub async fn ble_task(sd: &'static Softdevice, server: &'static Server) {
             Either::Second(_) => {}
         }
 
-        pending_timeout = take_adv_request().or(Some(last_timeout));
+        pending_timeout = take_adv_request().or(Some(timeout));
     }
 }
 
