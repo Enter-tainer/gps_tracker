@@ -28,6 +28,9 @@ panic-probe = { version = "1.0", features = ["print-defmt"] } # Panic 时通过�
 embedded-graphics = "0.8"
 ssd1306 = "0.10" 
 embedded-hal-async = "1.0"
+embedded-hal = "1.0"
+heapless = "0.9"
+libm = "0.2"
 # 注意：以下驱动版本可能随时间更新，建议去 crates.io 确认
 bmp280-rs = "0.1" 
 lis3dh = "0.4.4"

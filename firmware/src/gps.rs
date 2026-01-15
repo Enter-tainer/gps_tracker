@@ -7,6 +7,7 @@ use embassy_time::{Instant, Timer};
 use nmea::Nmea;
 
 use crate::casic::{CasicPacket, CasicParser, CasicParserState, CASIC_MAX_PAYLOAD_SIZE};
+use crate::storage;
 use crate::system_info::{GpsState, SystemInfo, SYSTEM_INFO};
 
 const MIN_HDOP_FOR_VALID_FIX: f32 = 2.0;
@@ -670,12 +671,13 @@ impl GpsStateMachine {
                 ) {
                     if location_valid {
                         update_last_position(&mut self.last_successful_position).await;
-                        append_gpx_point(
+                        let _ = storage::append_gpx_point(
                             self.last_successful_position.timestamp,
                             self.last_successful_position.latitude,
                             self.last_successful_position.longitude,
                             self.last_successful_position.altitude_m,
-                        );
+                        )
+                        .await;
                     }
                     self.active_sampling_start = Some(now_ms);
                 }
@@ -1053,8 +1055,6 @@ async fn request_gps_parser_reset() {
     events.nack = false;
     events.ephemeris = false;
 }
-
-fn append_gpx_point(_timestamp: u32, _lat: f64, _lon: f64, _altitude_m: f32) {}
 
 async fn update_last_position(last: &mut PositionResult) {
     let info = SYSTEM_INFO.lock().await;

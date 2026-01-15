@@ -4,6 +4,7 @@
 mod board;
 mod casic;
 mod gps;
+mod storage;
 mod system_info;
 
 use embassy_executor::Spawner;
@@ -106,11 +107,16 @@ async fn main(spawner: Spawner) {
     let _i2c_bus: Mutex<NoopRawMutex, twim::Twim<'static>> = Mutex::new(i2c);
 
     let mut _spi = {
-        let cfg = spim::Config::default();
+        let mut cfg = spim::Config::default();
+        cfg.frequency = spim::Frequency::K250;
+        cfg.orc = 0xFF;
         spim::Spim::new(spi3, Irqs, spi_sck, spi_miso, spi_mosi, cfg)
     };
 
-    let mut _sd_cs = Output::new(spi_cs, Level::High, OutputDrive::Standard);
+    let _sd_cs = Output::new(spi_cs, Level::High, OutputDrive::Standard);
+    if !storage::init_sd_logger(_spi, _sd_cs) {
+        defmt::warn!("SD logger init failed");
+    }
     let gps_en = Output::new(gps_en, Level::Low, OutputDrive::Standard);
     let (gps_rx, gps_tx) = _gps_uart.split();
     spawner.spawn(gps::gps_rx_task(gps_rx)).unwrap();
@@ -123,9 +129,7 @@ async fn main(spawner: Spawner) {
         serial2_rx,
         serial2_tx,
         saadc,
-        _sd_cs,
         _i2c_bus,
-        _spi,
     );
 
     loop {

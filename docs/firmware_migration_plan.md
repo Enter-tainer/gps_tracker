@@ -68,17 +68,17 @@ Rust/Embassy firmware in `firmware/`, targeting nRF52840 with no LoRa support.
 - [x] Define `SystemInfo` model for parity with legacy firmware.
 - [x] Implement `SystemInfo` serialization for BLE responses.
 
-## Phase 4: BLE and file transfer
+## Phase 4: Storage
+- [x] SD card stack (choose crate: `embedded-sdmmc` or equivalent).
+- [x] Port GPX logging (`gpx_logger.*`) and file layout.
+- [ ] Verify large file handling and chunked reads over BLE.
+
+## Phase 5: BLE and file transfer
 - [ ] Mirror BLE UART service/characteristics (UUIDs/handles) used today.
 - [ ] Implement MTU negotiation and chunking identical to legacy behavior.
 - [ ] Port `file_transfer_protocol.*` with identical framing and responses:
   - list dir, open/read/close/delete, sysinfo, AGNSS upload, GPS wakeup
 - [ ] Validate with existing frontend expectations (payload format).
-
-## Phase 5: Storage
-- [ ] SD card stack (choose crate: `embedded-sdmmc` or equivalent).
-- [ ] Port GPX logging (`gpx_logger.*`) and file layout.
-- [ ] Verify large file handling and chunked reads over BLE.
 
 ## Phase 6: Sensors, display, and UI
 - [ ] LIS3DH accel via `lis3dh` crate; confirm range/ODR settings.
