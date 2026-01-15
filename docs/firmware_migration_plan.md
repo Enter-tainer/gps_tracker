@@ -25,8 +25,8 @@ Rust/Embassy firmware in `firmware/`, targeting nRF52840 with no LoRa support.
   - endianness and field order
   - error behaviors (empty response vs. error code)
   - path encoding and limits
-- [ ] Mirror BLE service/characteristics and device name used by the frontend.
-- [ ] Match MTU negotiation and max payload behavior (MTU minus ATT header).
+- [x] Mirror BLE service/characteristics and device name used by the frontend (NUS UUIDs, `MGT GPS Tracker`).
+- [x] Match MTU negotiation and max payload behavior (MTU minus ATT header).
 - [ ] Build protocol test vectors and a runnable harness (defer until protocol port).
 
 ## Phase 0: Inventory and mapping
@@ -71,12 +71,13 @@ Rust/Embassy firmware in `firmware/`, targeting nRF52840 with no LoRa support.
 ## Phase 4: Storage
 - [x] SD card stack (choose crate: `embedded-sdmmc` or equivalent).
 - [x] Port GPX logging (`gpx_logger.*`) and file layout.
+- [x] Implement SD list/open/read/close/delete hooks for file transfer.
 - [ ] Verify large file handling and chunked reads over BLE.
 
 ## Phase 5: BLE and file transfer
-- [ ] Mirror BLE UART service/characteristics (UUIDs/handles) used today.
-- [ ] Implement MTU negotiation and chunking identical to legacy behavior.
-- [ ] Port `file_transfer_protocol.*` with identical framing and responses:
+- [x] Mirror BLE UART service/characteristics (UUIDs/handles) used today.
+- [x] Implement MTU negotiation and chunking identical to legacy behavior.
+- [x] Port `file_transfer_protocol.*` with identical framing and responses:
   - list dir, open/read/close/delete, sysinfo, AGNSS upload, GPS wakeup
 - [ ] Validate with existing frontend expectations (payload format).
 

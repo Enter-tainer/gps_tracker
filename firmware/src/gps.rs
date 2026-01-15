@@ -66,6 +66,7 @@ impl GpsEvents {
 }
 
 static GPS_EVENTS: Mutex<CriticalSectionRawMutex, GpsEvents> = Mutex::new(GpsEvents::new());
+static GPS_WAKEUP: Mutex<CriticalSectionRawMutex, bool> = Mutex::new(false);
 
 #[derive(Clone, Copy)]
 struct AgnssMessage {
@@ -548,7 +549,10 @@ impl GpsStateMachine {
         tx: &mut BufferedUarteTx<'static>,
         gps_en: &mut Output<'static>,
     ) {
-        let (state, location_valid, is_stationary, speed) = snapshot_system_info().await;
+        let (state, location_valid, mut is_stationary, speed) = snapshot_system_info().await;
+        if take_gps_wakeup().await {
+            is_stationary = false;
+        }
 
         if state != GpsState::S5AgnssProcessing {
             drain_non_agnss_events().await;
@@ -950,6 +954,13 @@ pub async fn trigger_agnss_processing() -> bool {
     true
 }
 
+pub async fn trigger_gps_wakeup() {
+    let mut wake = GPS_WAKEUP.lock().await;
+    *wake = true;
+    let mut info = SYSTEM_INFO.lock().await;
+    info.is_stationary = false;
+}
+
 fn update_system_info_from_nmea(info: &mut SystemInfo, nmea: &Nmea, speed_avg: &mut SpeedAverage) {
     let location_valid = nmea
         .fix_type
@@ -1204,6 +1215,16 @@ async fn take_agnss_ack() -> AgnssAck {
         return AgnssAck::Nack;
     }
     AgnssAck::None
+}
+
+async fn take_gps_wakeup() -> bool {
+    let mut wake = GPS_WAKEUP.lock().await;
+    if *wake {
+        *wake = false;
+        true
+    } else {
+        false
+    }
 }
 
 async fn write_all(tx: &mut BufferedUarteTx<'static>, data: &[u8]) {

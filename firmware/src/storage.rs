@@ -19,6 +19,18 @@ const FULL_BLOCK_INTERVAL: usize = 64;
 const MAX_FILE_SIZE_BYTES: u64 = 1024 * 1024 * 1024;
 const MAX_GPX_FILES: usize = 64;
 const LOG_EXTENSION: &[u8] = b"GPX";
+pub const MAX_PATH_LENGTH: usize = 64;
+
+pub enum ListDirOutcome {
+    Entry {
+        is_dir: bool,
+        name: [u8; MAX_PATH_LENGTH],
+        name_len: usize,
+        size: u32,
+    },
+    Done,
+    Error,
+}
 
 static SD_LOGGER: Mutex<CriticalSectionRawMutex, Option<SdLogger>> = Mutex::new(None);
 
@@ -52,6 +64,46 @@ pub async fn flush_sd_cache() -> bool {
     logger.flush_cache()
 }
 
+pub async fn list_dir_next(path: &[u8]) -> ListDirOutcome {
+    let mut logger = SD_LOGGER.lock().await;
+    let Some(logger) = logger.as_mut() else {
+        return ListDirOutcome::Error;
+    };
+    logger.list_dir_next(path)
+}
+
+pub async fn open_file(path: &[u8]) -> Option<u32> {
+    let mut logger = SD_LOGGER.lock().await;
+    let Some(logger) = logger.as_mut() else {
+        return None;
+    };
+    logger.open_transfer_file(path)
+}
+
+pub async fn read_file(offset: u32, out: &mut [u8]) -> Result<usize, ()> {
+    let mut logger = SD_LOGGER.lock().await;
+    let Some(logger) = logger.as_mut() else {
+        return Err(());
+    };
+    logger.read_transfer_file(offset, out)
+}
+
+pub async fn close_file() -> bool {
+    let mut logger = SD_LOGGER.lock().await;
+    let Some(logger) = logger.as_mut() else {
+        return false;
+    };
+    logger.close_transfer_file()
+}
+
+pub async fn delete_file(path: &[u8]) -> bool {
+    let mut logger = SD_LOGGER.lock().await;
+    let Some(logger) = logger.as_mut() else {
+        return false;
+    };
+    logger.delete_transfer_file(path)
+}
+
 fn send_idle_clocks(mut spi: Spim<'static>, mut cs: Output<'static>) -> bool {
     cs.set_high();
     let idle = [0xFFu8; 10];
@@ -81,6 +133,26 @@ fn send_idle_clocks(mut spi: Spim<'static>, mut cs: Output<'static>) -> bool {
     false
 }
 
+struct TransferState {
+    open_file: Option<RawFile>,
+    listing_dir: Option<RawDirectory>,
+    listing_in_progress: bool,
+    listing_dir_is_root: bool,
+    list_index: usize,
+}
+
+impl TransferState {
+    const fn new() -> Self {
+        Self {
+            open_file: None,
+            listing_dir: None,
+            listing_in_progress: false,
+            listing_dir_is_root: true,
+            list_index: 0,
+        }
+    }
+}
+
 struct SdLogger {
     volume_mgr: VolumeManager<SdCard<SdSpiDevice, Delay>, FixedTimeSource, 4, 4, 1>,
     volume: RawVolume,
@@ -93,6 +165,7 @@ struct SdLogger {
     cache_dirty: bool,
     last_timestamp: u32,
     last_nrf_timestamp: u32,
+    transfer: TransferState,
 }
 
 impl SdLogger {
@@ -113,6 +186,7 @@ impl SdLogger {
             cache_dirty: false,
             last_timestamp: 0,
             last_nrf_timestamp: 0,
+            transfer: TransferState::new(),
         }
     }
 
@@ -261,6 +335,218 @@ impl SdLogger {
             total_size = total_size.saturating_sub(file.size as u64);
         }
     }
+
+    fn list_dir_next(&mut self, path: &[u8]) -> ListDirOutcome {
+        if !self.transfer.listing_in_progress {
+            let (dir, is_root) = match self.open_dir_from_path(path) {
+                Ok(result) => result,
+                Err(_) => return ListDirOutcome::Error,
+            };
+            self.transfer.listing_dir = Some(dir);
+            self.transfer.listing_dir_is_root = is_root;
+            self.transfer.listing_in_progress = true;
+            self.transfer.list_index = 0;
+        }
+
+        let dir = match self.transfer.listing_dir {
+            Some(dir) => dir,
+            None => return ListDirOutcome::Error,
+        };
+
+        let target_index = self.transfer.list_index;
+        let mut found: Option<DirEntry> = None;
+        let mut idx = 0usize;
+
+        if self
+            .volume_mgr
+            .iterate_dir(dir, |entry| {
+                if found.is_some() {
+                    return;
+                }
+                if should_skip_entry(entry) {
+                    return;
+                }
+                if idx == target_index {
+                    found = Some(entry.clone());
+                }
+                idx = idx.saturating_add(1);
+            })
+            .is_err()
+        {
+            self.finish_listing();
+            return ListDirOutcome::Error;
+        }
+
+        if let Some(entry) = found {
+            self.transfer.list_index = self.transfer.list_index.saturating_add(1);
+            let mut name = [0u8; MAX_PATH_LENGTH];
+            let name_len = short_name_to_buf(&entry.name, &mut name);
+            let is_dir = entry.attributes.is_directory();
+            return ListDirOutcome::Entry {
+                is_dir,
+                name,
+                name_len,
+                size: entry.size,
+            };
+        }
+
+        self.finish_listing();
+        ListDirOutcome::Done
+    }
+
+    fn open_transfer_file(&mut self, path: &[u8]) -> Option<u32> {
+        if path.is_empty() || path.len() >= MAX_PATH_LENGTH {
+            return None;
+        }
+        let path_str = core::str::from_utf8(path).ok()?;
+        let trimmed = path_str.trim_matches('/');
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        let (dir_path, file_name) = match trimmed.rfind('/') {
+            Some(idx) => (&trimmed[..idx], &trimmed[idx + 1..]),
+            None => ("", trimmed),
+        };
+        if file_name.is_empty() {
+            return None;
+        }
+
+        if let Some(file) = self.transfer.open_file.take() {
+            let _ = self.volume_mgr.close_file(file);
+        }
+
+        let (dir, is_root) = self.open_dir_from_path(dir_path.as_bytes()).ok()?;
+        let file = match self
+            .volume_mgr
+            .open_file_in_dir(dir, file_name, Mode::ReadOnly)
+        {
+            Ok(file) => file,
+            Err(_) => {
+                self.close_dir_if_needed(dir, is_root);
+                return None;
+            }
+        };
+
+        let size = self.volume_mgr.file_length(file).ok()?;
+        self.transfer.open_file = Some(file);
+        self.close_dir_if_needed(dir, is_root);
+        Some(size)
+    }
+
+    fn read_transfer_file(&mut self, offset: u32, out: &mut [u8]) -> Result<usize, ()> {
+        let Some(file) = self.transfer.open_file else {
+            return Err(());
+        };
+        self.volume_mgr
+            .file_seek_from_start(file, offset)
+            .map_err(|_| ())?;
+        self.volume_mgr.read(file, out).map_err(|_| ())
+    }
+
+    fn close_transfer_file(&mut self) -> bool {
+        if let Some(file) = self.transfer.open_file.take() {
+            let _ = self.volume_mgr.close_file(file);
+        }
+        true
+    }
+
+    fn delete_transfer_file(&mut self, path: &[u8]) -> bool {
+        if self.transfer.open_file.is_some() {
+            return false;
+        }
+        if path.is_empty() || path.len() >= MAX_PATH_LENGTH {
+            return false;
+        }
+        let path_str = match core::str::from_utf8(path) {
+            Ok(path) => path,
+            Err(_) => return false,
+        };
+        let trimmed = path_str.trim_matches('/');
+        if trimmed.is_empty() {
+            return false;
+        }
+
+        let (dir_path, file_name) = match trimmed.rfind('/') {
+            Some(idx) => (&trimmed[..idx], &trimmed[idx + 1..]),
+            None => ("", trimmed),
+        };
+        if file_name.is_empty() {
+            return false;
+        }
+
+        let (dir, is_root) = match self.open_dir_from_path(dir_path.as_bytes()) {
+            Ok(result) => result,
+            Err(_) => return false,
+        };
+
+        let entry = match self.volume_mgr.find_directory_entry(dir, file_name) {
+            Ok(entry) => entry,
+            Err(_) => {
+                self.close_dir_if_needed(dir, is_root);
+                return false;
+            }
+        };
+
+        if entry.attributes.is_directory() {
+            self.close_dir_if_needed(dir, is_root);
+            return false;
+        }
+
+        let ok = self
+            .volume_mgr
+            .delete_file_in_dir(dir, file_name)
+            .is_ok();
+        self.close_dir_if_needed(dir, is_root);
+        ok
+    }
+
+    fn open_dir_from_path(&mut self, path: &[u8]) -> Result<(RawDirectory, bool), ()> {
+        if path.is_empty() {
+            return Ok((self.root_dir, true));
+        }
+        let path_str = core::str::from_utf8(path).map_err(|_| ())?;
+        let trimmed = path_str.trim_matches('/');
+        if trimmed.is_empty() {
+            return Ok((self.root_dir, true));
+        }
+
+        let mut current = self.root_dir;
+        let mut current_is_root = true;
+
+        for component in trimmed.split('/') {
+            if component.is_empty() {
+                continue;
+            }
+            let next = match self.volume_mgr.open_dir(current, component) {
+                Ok(dir) => dir,
+                Err(_) => {
+                    self.close_dir_if_needed(current, current_is_root);
+                    return Err(());
+                }
+            };
+            self.close_dir_if_needed(current, current_is_root);
+            current = next;
+            current_is_root = false;
+        }
+
+        Ok((current, current_is_root))
+    }
+
+    fn close_dir_if_needed(&mut self, dir: RawDirectory, is_root: bool) {
+        if !is_root {
+            let _ = self.volume_mgr.close_dir(dir);
+        }
+    }
+
+    fn finish_listing(&mut self) {
+        if let Some(dir) = self.transfer.listing_dir.take() {
+            self.close_dir_if_needed(dir, self.transfer.listing_dir_is_root);
+        }
+        self.transfer.listing_in_progress = false;
+        self.transfer.listing_dir_is_root = true;
+        self.transfer.list_index = 0;
+    }
 }
 
 #[derive(Clone)]
@@ -294,6 +580,29 @@ fn compare_short_name(a: &ShortFileName, b: &ShortFileName) -> Ordering {
         return base_cmp;
     }
     a.extension().cmp(b.extension())
+}
+
+fn short_name_to_buf(name: &ShortFileName, out: &mut [u8; MAX_PATH_LENGTH]) -> usize {
+    let base = name.base_name();
+    let ext = name.extension();
+    let mut len = 0;
+    let base_len = core::cmp::min(base.len(), out.len());
+    out[..base_len].copy_from_slice(&base[..base_len]);
+    len += base_len;
+
+    if !ext.is_empty() && len < out.len() {
+        out[len] = b'.';
+        len += 1;
+        let ext_len = core::cmp::min(ext.len(), out.len() - len);
+        out[len..len + ext_len].copy_from_slice(&ext[..ext_len]);
+        len += ext_len;
+    }
+
+    len
+}
+
+fn should_skip_entry(entry: &DirEntry) -> bool {
+    entry.name == ShortFileName::this_dir() || entry.name == ShortFileName::parent_dir()
 }
 
 fn is_gpx_entry(entry: &DirEntry) -> bool {
