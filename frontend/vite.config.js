@@ -1,11 +1,15 @@
 // vite.config.js
 import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig({
   base: '/gps_tracker/',
   root: './',
   publicDir: 'public',
+  resolve: {
+    extensions: ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.json']
+  },
   build: {
     outDir: 'dist',
     emptyOutDir: true,
@@ -17,6 +21,7 @@ export default defineConfig({
     open: true,
   },
   plugins: [
+    react(),
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.ico', 'apple-touch-icon-180x180.png', 'maskable-icon-512x512.png'],
@@ -24,8 +29,8 @@ export default defineConfig({
         name: 'GPS Tracker PWA',
         short_name: 'GPSTracker',
         description: 'GPS tracking device interface with offline capabilities',
-        theme_color: '#2563eb',
-        background_color: '#ffffff',
+        theme_color: '#0e7490',
+        background_color: '#f6f1ea',
         display: 'standalone',
         orientation: 'portrait-primary',
         scope: '/gps_tracker/',

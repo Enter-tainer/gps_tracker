@@ -1,123 +1,33 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>GPS Tracker PWA</title>
-  <meta name="description" content="GPS tracking device interface with offline capabilities">
-  
-  <!-- PWA Meta Tags -->
-  <link rel="manifest" href="/gps_tracker/manifest.json">
-  <meta name="theme-color" content="#2563eb">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="GPS Tracker">
-  <link rel="apple-touch-icon" href="/gps_tracker/icons/icon-192.png">
-  
-  <!-- Icons -->
-  <link rel="icon" type="image/png" sizes="32x32" href="/gps_tracker/icons/icon-192.png">
-  <link rel="mask-icon" href="/gps_tracker/icons/icon-192.png" color="#2563eb">
-  
-  <link rel="stylesheet" href="/src/styles/main.css">
-  <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@5.6.0/dist/maplibre-gl.min.js"></script>
-  <!-- GPX Viewer is now imported from npm -->
-</head>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GPS Tracker PWA</title>
+    <meta name="description" content="GPS tracking device interface with offline capabilities" />
 
-<body>
-  <div class="container">
-    <h1>Web Bluetooth File Explorer & GPX Converter</h1>
+    <link rel="manifest" href="/gps_tracker/manifest.json" />
+    <meta name="theme-color" content="#0e7490" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="GPS Tracker" />
+    <link rel="apple-touch-icon" href="/gps_tracker/icons/icon-192.png" />
 
-    <div class="section">
-      <h2>1. Connection</h2>
-      <button id="connectButton">Connect to Device</button>
-      <button id="sysInfoButton" style="margin-left:10px;">Query Status</button>
-      <button id="agnssButton" style="margin-left:10px;">Download & Send AGNSS</button>
-      <div id="status" class="status">Disconnected</div>
-      <div id="agnssStatus" class="status" style="display:none;">AGNSS Status: Ready</div>
-      <div id="sysInfoDisplay">
-        <div class="device-info-card">
-          <h3>设备系统信息</h3>
-          <table>
-            <tbody>
-              <tr>
-                <td><b>纬度</b></td>
-                <td id="sysinfo-latitude">-</td>
-              </tr>
-              <tr>
-                <td><b>经度</b></td>
-                <td id="sysinfo-longitude">-</td>
-              </tr>
-              <tr>
-                <td><b>海拔</b></td>
-                <td id="sysinfo-altitude">-</td>
-              </tr>
-              <tr>
-                <td><b>卫星数</b></td>
-                <td id="sysinfo-satellites">-</td>
-              </tr>
-              <tr>
-                <td><b>HDOP</b></td>
-                <td id="sysinfo-hdop">-</td>
-              </tr>
-              <tr>
-                <td><b>速度</b></td>
-                <td id="sysinfo-speed">-</td>
-              </tr>
-              <tr>
-                <td><b>航向</b></td>
-                <td id="sysinfo-course">-</td>
-              </tr>
-              <tr>
-                <td><b>日期</b></td>
-                <td id="sysinfo-date">-</td>
-              </tr>
-              <tr>
-                <td><b>时间</b></td>
-                <td id="sysinfo-time">-</td>
-              </tr>
-              <tr>
-                <td><b>定位有效</b></td>
-                <td id="sysinfo-locationValid">-</td>
-              </tr>
-              <tr>
-                <td><b>时间有效</b></td>
-                <td id="sysinfo-dateTimeValid">-</td>
-              </tr>
-              <tr>
-                <td><b>电池电压</b></td>
-                <td id="sysinfo-batteryVoltage">-</td>
-              </tr>
-              <tr>
-                <td><b>GPS状态</b></td>
-                <td id="sysinfo-gpsState">-</td>
-              </tr>
-            </tbody>
-          </table>
-          <div id="sysinfo-error" class="error-text"></div>
-        </div>
-      </div>
-    </div>
+    <link rel="icon" type="image/png" sizes="32x32" href="/gps_tracker/icons/icon-192.png" />
+    <link rel="mask-icon" href="/gps_tracker/icons/icon-192.png" color="#0e7490" />
 
-    <div class="section">
-      <h2>2. File System</h2>
-      <label for="currentPath">Current Path:</label>
-      <input type="text" id="currentPath" value="/" readonly>
-      <button id="listDirButton" disabled>List Directory</button>
-      <div id="fileList">No files listed.</div>
-    </div>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
 
-    <div class="section">
-      <!-- 只保留 gpx-viewer 组件，移除原有地图/轨迹/进度条等控件 -->
-      <gpx-viewer id="gpxViewer"></gpx-viewer>
-    </div>
-
-    <div class="section">
-      <h2>3. Device Messages/Log</h2>
-      <div id="messages"></div>
-    </div>
-  </div>
-
-  <script type="module" src="/src/main.js"></script>
-</body>
-
+    <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@5.6.0/dist/maplibre-gl.min.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
 </html>
+
