@@ -7,6 +7,7 @@ use crate::display::{send_command, DisplayCommand};
 use crate::storage::{self, ListDirOutcome};
 
 const DEBOUNCE_DELAY_MS: u64 = 50;
+const LIST_SD_ON_BUTTON: bool = false;
 
 #[task]
 pub async fn button_task(mut button: Input<'static>) {
@@ -34,7 +35,9 @@ async fn handle_button_press() {
         defmt::warn!("SD cache flush failed");
     }
 
-    list_sd_root().await;
+    if LIST_SD_ON_BUTTON {
+        list_sd_root().await;
+    }
 
     send_command(DisplayCommand::ResetTimeout);
     send_command(DisplayCommand::Toggle);
@@ -66,5 +69,6 @@ async fn list_sd_root() {
                 break;
             }
         }
+        Timer::after_millis(0).await;
     }
 }
