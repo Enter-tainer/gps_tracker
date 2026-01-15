@@ -15,7 +15,6 @@ mod storage;
 mod system_info;
 
 use core::cell::RefCell;
-use core::mem;
 
 use embassy_embedded_hal::shared_bus::blocking::i2c::I2cDevice;
 use embassy_executor::Spawner;
@@ -26,6 +25,7 @@ use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use static_cell::StaticCell;
 
 use {defmt_rtt as _, panic_probe as _};
+use nrf_softdevice::ble::SecurityMode;
 use nrf_softdevice::{raw, Softdevice};
 
 bind_interrupts!(struct Irqs {
@@ -36,9 +36,9 @@ bind_interrupts!(struct Irqs {
 });
 
 // DMA buffers must live in RAM for UARTE/TWIM.
-static mut GPS_RX_BUF: [u8; 512] = [0; 512];
-static mut GPS_TX_BUF: [u8; 128] = [0; 128];
-static mut I2C_TX_BUF: [u8; 32] = [0; 32];
+static GPS_RX_BUF: StaticCell<[u8; 512]> = StaticCell::new();
+static GPS_TX_BUF: StaticCell<[u8; 128]> = StaticCell::new();
+static I2C_TX_BUF: StaticCell<[u8; 32]> = StaticCell::new();
 static BLE_SERVER: StaticCell<ble::Server> = StaticCell::new();
 static I2C_BUS: StaticCell<BlockingMutex<NoopRawMutex, RefCell<twim::Twim<'static>>>> =
     StaticCell::new();
@@ -115,7 +115,7 @@ async fn main(spawner: Spawner) {
             p_value: device_name.as_ptr() as *mut u8,
             current_len: device_name.len() as u16,
             max_len: device_name.len() as u16,
-            write_perm: unsafe { mem::zeroed() },
+            write_perm: SecurityMode::NoAccess.into_raw(),
             _bitfield_1: raw::ble_gap_cfg_device_name_t::new_bitfield_1(
                 raw::BLE_GATTS_VLOC_STACK as u8,
             ),
@@ -136,11 +136,11 @@ async fn main(spawner: Spawner) {
     let _v3v3_en = Output::new(v3v3_en, Level::High, OutputDrive::Standard);
 
     // Phase 2 bring-up: create core drivers.
-    let gps_uart = unsafe {
+    let gps_uart = {
         let mut cfg = uarte::Config::default();
         cfg.baudrate = uarte::Baudrate::BAUD115200;
-        let rx_buf = &mut *core::ptr::addr_of_mut!(GPS_RX_BUF);
-        let tx_buf = &mut *core::ptr::addr_of_mut!(GPS_TX_BUF);
+        let rx_buf = GPS_RX_BUF.init([0; 512]);
+        let tx_buf = GPS_TX_BUF.init([0; 128]);
         buffered_uarte::BufferedUarte::new(
             uarte0,
             timer1,
@@ -156,9 +156,9 @@ async fn main(spawner: Spawner) {
         )
     };
 
-    let i2c = unsafe {
+    let i2c = {
         let cfg = twim::Config::default();
-        let tx_buf = &mut *core::ptr::addr_of_mut!(I2C_TX_BUF);
+        let tx_buf = I2C_TX_BUF.init([0; 32]);
         twim::Twim::new(twispi0, Irqs, i2c_sda, i2c_scl, cfg, tx_buf)
     };
     let i2c_bus = I2C_BUS.init(BlockingMutex::new(RefCell::new(i2c)));

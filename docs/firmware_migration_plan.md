@@ -55,6 +55,7 @@ Rust/Embassy firmware in `firmware/`, targeting nRF52840 with no LoRa support.
 - [x] I2C driver for sensors/display with a shared bus lock.
 - [x] SPI driver for SD (and any other SPI peripherals).
 - [x] Time source and timers (Embassy time with RTC1, compatible with SoftDevice).
+- [x] Remove `unsafe` usage in the main bring-up (DMA buffers and BLE config).
 
 ## Phase 3: GPS and state machine
 - [x] GPS UART task skeleton (read loop + power control).
@@ -65,6 +66,8 @@ Rust/Embassy firmware in `firmware/`, targeting nRF52840 with no LoRa support.
   - fix attempts, sleep/wake intervals
   - stillness/accel integration
 - [x] AGNSS message queue and send timing.
+- [ ] Tune AGNSS per-message timeout vs. state tick/ACK latency.
+- [ ] Reduce AGNSS buffering duplication between protocol and GPS tasks.
 - [x] Define `SystemInfo` model for parity with legacy firmware.
 - [x] Implement `SystemInfo` serialization for BLE responses.
 
@@ -73,6 +76,7 @@ Rust/Embassy firmware in `firmware/`, targeting nRF52840 with no LoRa support.
 - [x] Port GPX logging (`gpx_logger.*`) and file layout.
 - [x] Implement SD list/open/read/close/delete hooks for file transfer.
 - [ ] Verify large file handling and chunked reads over BLE.
+- [ ] Add SD init retry/recovery so logging is not permanently disabled on a transient failure.
 
 ## Phase 5: BLE and file transfer
 - [x] Mirror BLE UART service/characteristics (UUIDs/handles) used today.
@@ -80,6 +84,8 @@ Rust/Embassy firmware in `firmware/`, targeting nRF52840 with no LoRa support.
 - [x] Port `file_transfer_protocol.*` with identical framing and responses:
   - list dir, open/read/close/delete, sysinfo, AGNSS upload, GPS wakeup
 - [ ] Validate with existing frontend expectations (payload format).
+- [ ] Add RX backpressure/queue sizing to avoid dropped packets under load.
+- [ ] Handle oversize payloads by draining/resync to avoid protocol lockup.
 
 ## Phase 6: Sensors, display, and UI
 - [x] LIS3DH accel via `lis3dh` crate; confirm range/ODR settings.
@@ -109,3 +115,7 @@ Rust/Embassy firmware in `firmware/`, targeting nRF52840 with no LoRa support.
 - [ ] SD card filesystem performance and async safety.
 - [ ] SoftDevice RAM/flash sizing conflicts.
 - [ ] CASIC + NMEA parsing correctness under mixed streams.
+- [ ] BLE RX queue pressure can drop frames; decide on backpressure strategy.
+- [ ] AGNSS timeout assumptions vs. real ACK latency.
+- [ ] AGNSS buffering RAM footprint vs. SoftDevice budget.
+- [ ] SD init failures leave logging disabled until reboot.
