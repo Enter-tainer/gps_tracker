@@ -8,8 +8,8 @@ use embassy_sync::mutex::Mutex;
 use embassy_time::{Delay, Instant};
 use embedded_hal::spi::{Operation, SpiBus, SpiDevice};
 use embedded_sdmmc::{
-    DirEntry, Mode, RawDirectory, RawFile, RawVolume, SdCard, ShortFileName, TimeSource,
-    Timestamp, VolumeIdx, VolumeManager,
+    DirEntry, Mode, RawDirectory, RawFile, SdCard, ShortFileName, TimeSource, Timestamp,
+    VolumeIdx, VolumeManager,
 };
 use libm::{round, roundf};
 
@@ -125,7 +125,7 @@ fn send_idle_clocks(mut spi: Spim<'static>, mut cs: Output<'static>) -> bool {
         Err(_) => return false,
     };
 
-    let logger = SdLogger::new(volume_mgr, volume, root_dir);
+    let logger = SdLogger::new(volume_mgr, root_dir);
     if let Ok(mut guard) = SD_LOGGER.try_lock() {
         *guard = Some(logger);
         return true;
@@ -155,7 +155,6 @@ impl TransferState {
 
 struct SdLogger {
     volume_mgr: VolumeManager<SdCard<SdSpiDevice, Delay>, FixedTimeSource, 4, 4, 1>,
-    volume: RawVolume,
     root_dir: RawDirectory,
     current_file: Option<RawFile>,
     current_date: u32,
@@ -171,12 +170,10 @@ struct SdLogger {
 impl SdLogger {
     fn new(
         volume_mgr: VolumeManager<SdCard<SdSpiDevice, Delay>, FixedTimeSource, 4, 4, 1>,
-        volume: RawVolume,
         root_dir: RawDirectory,
     ) -> Self {
         Self {
             volume_mgr,
-            volume,
             root_dir,
             current_file: None,
             current_date: 0,

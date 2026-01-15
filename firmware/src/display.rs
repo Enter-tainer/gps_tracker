@@ -2,6 +2,7 @@ use core::fmt::Write;
 
 use embassy_embedded_hal::shared_bus::blocking::i2c::I2cDevice;
 use embassy_executor::task;
+use embassy_futures::select::{select, Either};
 use embassy_nrf::twim;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
@@ -54,47 +55,115 @@ pub async fn display_task(i2c: SharedI2c) {
         return;
     }
 
-    let _ = display.set_display_on(true);
-
-    let mut display_on = true;
+    let mut display_on = false;
     let mut last_activity = Instant::now();
 
     let text_style = MonoTextStyle::new(&FONT_5X7, BinaryColor::On);
     let text_settings = TextStyleBuilder::new().baseline(Baseline::Top).build();
 
+    handle_command(
+        DisplayCommand::TurnOn,
+        &mut display,
+        &mut display_on,
+        &mut last_activity,
+        &text_style,
+        text_settings,
+    )
+    .await;
+
     loop {
-        while let Ok(cmd) = DISPLAY_COMMANDS.try_receive() {
-            match cmd {
-                DisplayCommand::Toggle => {
-                    if display_on {
-                        turn_display_off(&mut display, &mut display_on);
-                    } else {
-                        turn_display_on(&mut display, &mut display_on, &mut last_activity);
+        if display_on {
+            match select(
+                DISPLAY_COMMANDS.receive(),
+                Timer::after_millis(DISPLAY_UPDATE_INTERVAL_MS),
+            )
+            .await
+            {
+                Either::First(cmd) => {
+                    handle_command(
+                        cmd,
+                        &mut display,
+                        &mut display_on,
+                        &mut last_activity,
+                        &text_style,
+                        text_settings,
+                    )
+                    .await;
+                }
+                Either::Second(()) => {
+                    let now_ms = Instant::now().as_millis();
+                    if now_ms.wrapping_sub(last_activity.as_millis()) > DISPLAY_TIMEOUT_MS {
+                        handle_command(
+                            DisplayCommand::TurnOff,
+                            &mut display,
+                            &mut display_on,
+                            &mut last_activity,
+                            &text_style,
+                            text_settings,
+                        )
+                        .await;
+                        continue;
                     }
-                }
-                DisplayCommand::TurnOn => {
-                    turn_display_on(&mut display, &mut display_on, &mut last_activity);
-                }
-                DisplayCommand::TurnOff => {
-                    turn_display_off(&mut display, &mut display_on);
-                }
-                DisplayCommand::ResetTimeout => {
-                    last_activity = Instant::now();
+                    let info = *SYSTEM_INFO.lock().await;
+                    render_frame(&mut display, &text_style, text_settings, &info);
                 }
             }
+        } else {
+            let cmd = DISPLAY_COMMANDS.receive().await;
+            handle_command(
+                cmd,
+                &mut display,
+                &mut display_on,
+                &mut last_activity,
+                &text_style,
+                text_settings,
+            )
+            .await;
         }
 
-        let now_ms = Instant::now().as_millis();
-        if display_on && now_ms.wrapping_sub(last_activity.as_millis()) > DISPLAY_TIMEOUT_MS {
-            turn_display_off(&mut display, &mut display_on);
+        while let Ok(cmd) = DISPLAY_COMMANDS.try_receive() {
+            handle_command(
+                cmd,
+                &mut display,
+                &mut display_on,
+                &mut last_activity,
+                &text_style,
+                text_settings,
+            )
+            .await;
         }
+    }
+}
 
-        if display_on {
+async fn handle_command(
+    cmd: DisplayCommand,
+    display: &mut Display,
+    display_on: &mut bool,
+    last_activity: &mut Instant,
+    text_style: &MonoTextStyle<'_, BinaryColor>,
+    text_settings: embedded_graphics::text::TextStyle,
+) {
+    match cmd {
+        DisplayCommand::Toggle => {
+            if *display_on {
+                turn_display_off(display, display_on);
+            } else {
+                turn_display_on(display, display_on, last_activity);
+                let info = *SYSTEM_INFO.lock().await;
+                render_frame(display, text_style, text_settings, &info);
+            }
+        }
+        DisplayCommand::TurnOn => {
+            turn_display_on(display, display_on, last_activity);
             let info = *SYSTEM_INFO.lock().await;
-            render_frame(&mut display, &text_style, text_settings, &info);
+            render_frame(display, text_style, text_settings, &info);
         }
-
-        Timer::after_millis(DISPLAY_UPDATE_INTERVAL_MS).await;
+        DisplayCommand::TurnOff => {
+            turn_display_off(display, display_on);
+        }
+        DisplayCommand::ResetTimeout => {
+            *last_activity = Instant::now();
+        }
     }
 }
 

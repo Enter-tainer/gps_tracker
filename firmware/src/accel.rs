@@ -43,10 +43,6 @@ impl<const N: usize> RingBuffer<N> {
         self.head = (self.head + 1) % N;
     }
 
-    fn len(&self) -> usize {
-        self.len
-    }
-
     fn last(&self) -> Option<f32> {
         if self.len == 0 {
             return None;

@@ -33,7 +33,7 @@ static SCAN_DATA: LegacyAdvertisementPayload = LegacyAdvertisementBuilder::new()
     .build();
 
 #[nrf_softdevice::gatt_service(uuid = "6e400001-b5a3-f393-e0a9-e50e24dcca9e")]
-struct NusService {
+pub(crate) struct NusService {
     #[characteristic(
         uuid = "6e400002-b5a3-f393-e0a9-e50e24dcca9e",
         write,

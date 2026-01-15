@@ -25,7 +25,7 @@ const T_GPS_SLEEP_PERIODIC_WAKE_INTERVAL_MS: u64 = 15 * 60_000;
 const MAX_CONSECUTIVE_FIX_FAILURES: u8 = 16;
 const STATE_TICK_INTERVAL_MS: u64 = 200;
 const AGNSS_TRIGGER_DELAY_MS: u64 = 10_000;
-const T_AGNSS_MESSAGE_SEND_TIMEOUT_MS: u64 = 1_000;
+const T_AGNSS_MESSAGE_SEND_TIMEOUT_MS: u64 = 1;
 const T_AGNSS_TOTAL_TIMEOUT_MS: u64 = 600_000;
 const MAX_AGNSS_MESSAGE_RETRY: u8 = 3;
 const MAX_AGNSS_MESSAGES: usize = 64;
@@ -149,7 +149,6 @@ pub enum AgnssQueueError {
 
 #[derive(Clone, Copy)]
 enum AgnssOutcome {
-    None,
     Send(AgnssMessage),
     Complete,
 }
@@ -776,7 +775,6 @@ impl GpsStateMachine {
                             AgnssOutcome::Complete => {
                                 self.transition_back_from_agnss(now_ms, gps_en).await;
                             }
-                            AgnssOutcome::None => {}
                         }
                         return;
                     }
@@ -790,7 +788,6 @@ impl GpsStateMachine {
                             AgnssOutcome::Complete => {
                                 self.transition_back_from_agnss(now_ms, gps_en).await;
                             }
-                            AgnssOutcome::None => {}
                         }
                         return;
                     }
@@ -809,7 +806,6 @@ impl GpsStateMachine {
                             defmt::info!("S5: AGNSS retries exhausted");
                             self.transition_back_from_agnss(now_ms, gps_en).await;
                         }
-                        AgnssOutcome::None => {}
                     }
                     return;
                 }
@@ -943,15 +939,6 @@ pub async fn set_agnss_message_queue(messages: &[&[u8]]) -> Result<(), AgnssQueu
     agnss.request_pending = !agnss.queue.is_empty();
     agnss.force_trigger = false;
     Ok(())
-}
-
-pub async fn trigger_agnss_processing() -> bool {
-    let mut agnss = AGNSS_STATE.lock().await;
-    if agnss.queue.is_empty() {
-        return false;
-    }
-    agnss.force_trigger = true;
-    true
 }
 
 pub async fn trigger_gps_wakeup() {

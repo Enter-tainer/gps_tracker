@@ -89,9 +89,9 @@ Rust/Embassy firmware in `firmware/`, targeting nRF52840 with no LoRa support.
 - [x] Battery ADC setup and scaling.
 
 ## Phase 7: Power and performance
-- [ ] Sleep strategy for MCU + peripherals.
-- [ ] GPS power gating behavior and wake triggers.
-- [ ] Tune task priorities and interrupts with SoftDevice.
+- [x] Sleep strategy for MCU + peripherals (idle main, display refresh stops when off).
+- [x] GPS power gating behavior and wake triggers.
+- [x] Tune task priorities and interrupts with SoftDevice (use defaults; matches legacy).
 
 ## Phase 8: Integration and validation
 - [ ] End-to-end runtime (GPS -> logging -> BLE transfer -> frontend).

@@ -23,7 +23,6 @@ use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
 use embassy_nrf::{bind_interrupts, buffered_uarte, peripherals, saadc, spim, twim, uarte};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
-use embassy_time::Timer;
 use static_cell::StaticCell;
 
 use {defmt_rtt as _, panic_probe as _};
@@ -82,10 +81,10 @@ async fn main(spawner: Spawner) {
         twispi0,
         spi3,
         saadc: saadc_peripheral,
-        timer0,
-        ppi_ch0,
-        ppi_ch1,
-        ppi_group0,
+        timer1,
+        ppi_ch8,
+        ppi_ch9,
+        ppi_group1,
     } = board::Board::new(p);
 
     let device_name = ble::DEVICE_NAME.as_bytes();
@@ -133,7 +132,7 @@ async fn main(spawner: Spawner) {
     spawner.spawn(ble::ble_task(sd, server)).unwrap();
 
     // LED is on P0.15 per promicro_diy variant.
-    let mut led = Output::new(led, Level::Low, OutputDrive::Standard);
+    let _led = Output::new(led, Level::Low, OutputDrive::Standard);
     let _v3v3_en = Output::new(v3v3_en, Level::High, OutputDrive::Standard);
 
     // Phase 2 bring-up: create core drivers.
@@ -144,10 +143,10 @@ async fn main(spawner: Spawner) {
         let tx_buf = &mut *core::ptr::addr_of_mut!(GPS_TX_BUF);
         buffered_uarte::BufferedUarte::new(
             uarte0,
-            timer0,
-            ppi_ch0,
-            ppi_ch1,
-            ppi_group0,
+            timer1,
+            ppi_ch8,
+            ppi_ch9,
+            ppi_group1,
             gps_uart_rx,
             gps_uart_tx,
             Irqs,
@@ -196,12 +195,5 @@ async fn main(spawner: Spawner) {
 
     let _unused = (serial2_rx, serial2_tx);
 
-    loop {
-        led.set_high();
-        defmt::info!("LED ON");
-        Timer::after_millis(100).await;
-        led.set_low();
-        defmt::info!("LED OFF");
-        Timer::after_millis(100).await;
-    }
+    core::future::pending::<()>().await;
 }
