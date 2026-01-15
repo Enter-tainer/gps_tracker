@@ -1,8 +1,9 @@
 use core::cell::Cell;
 use core::cmp::Ordering;
 
+use embassy_embedded_hal::SetConfig;
 use embassy_nrf::gpio::Output;
-use embassy_nrf::spim::Spim;
+use embassy_nrf::spim::{self, Spim};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::mutex::Mutex;
 use embassy_time::{Delay, Instant};
@@ -34,9 +35,14 @@ pub enum ListDirOutcome {
 
 static SD_LOGGER: Mutex<CriticalSectionRawMutex, Option<SdLogger>> = Mutex::new(None);
 
-pub fn init_sd_logger(spi: Spim<'static>, mut cs: Output<'static>) -> bool {
+pub fn init_sd_logger(
+    spi: Spim<'static>,
+    mut cs: Output<'static>,
+    config: spim::Config,
+    run_frequency: spim::Frequency,
+) -> bool {
     cs.set_high();
-    if !send_idle_clocks(spi, cs) {
+    if !send_idle_clocks(spi, cs, config, run_frequency) {
         defmt::warn!("SD idle clock preamble failed");
         return false;
     }
@@ -104,7 +110,12 @@ pub async fn delete_file(path: &[u8]) -> bool {
     logger.delete_transfer_file(path)
 }
 
-fn send_idle_clocks(mut spi: Spim<'static>, mut cs: Output<'static>) -> bool {
+fn send_idle_clocks(
+    mut spi: Spim<'static>,
+    mut cs: Output<'static>,
+    config: spim::Config,
+    run_frequency: spim::Frequency,
+) -> bool {
     cs.set_high();
     let idle = [0xFFu8; 10];
     if SpiBus::write(&mut spi, &idle).is_err() {
@@ -112,7 +123,7 @@ fn send_idle_clocks(mut spi: Spim<'static>, mut cs: Output<'static>) -> bool {
     }
     let _ = SpiBus::flush(&mut spi);
 
-    let sd_spi = SdSpiDevice::new(spi, cs);
+    let sd_spi = SdSpiDevice::new(spi, cs, config);
     let delay = Delay;
     let sd_card = SdCard::new(sd_spi, delay);
     let volume_mgr = VolumeManager::new(sd_card, FixedTimeSource);
@@ -124,6 +135,13 @@ fn send_idle_clocks(mut spi: Spim<'static>, mut cs: Output<'static>) -> bool {
         Ok(dir) => dir,
         Err(_) => return false,
     };
+
+    let _ = volume_mgr.device(|sd| {
+        sd.spi(|spi| {
+            spi.set_frequency(run_frequency);
+        });
+        FixedTimeSource
+    });
 
     let logger = SdLogger::new(volume_mgr, root_dir);
     if let Ok(mut guard) = SD_LOGGER.try_lock() {
@@ -617,12 +635,18 @@ impl TimeSource for FixedTimeSource {
 struct SdSpiDevice {
     spi: Spim<'static>,
     cs: Output<'static>,
+    config: spim::Config,
 }
 
 impl SdSpiDevice {
-    fn new(spi: Spim<'static>, mut cs: Output<'static>) -> Self {
+    fn new(spi: Spim<'static>, mut cs: Output<'static>, config: spim::Config) -> Self {
         cs.set_high();
-        Self { spi, cs }
+        Self { spi, cs, config }
+    }
+
+    fn set_frequency(&mut self, frequency: spim::Frequency) {
+        self.config.frequency = frequency;
+        let _ = self.spi.set_config(&self.config);
     }
 }
 

@@ -42,6 +42,8 @@ static I2C_TX_BUF: StaticCell<[u8; 32]> = StaticCell::new();
 static BLE_SERVER: StaticCell<ble::Server> = StaticCell::new();
 static I2C_BUS: StaticCell<BlockingMutex<NoopRawMutex, RefCell<twim::Twim<'static>>>> =
     StaticCell::new();
+const SD_SPI_INIT_FREQ: spim::Frequency = spim::Frequency::K250;
+const SD_SPI_RUN_FREQ: spim::Frequency = spim::Frequency::M8;
 
 #[embassy_executor::task]
 async fn softdevice_task(sd: &'static Softdevice) {
@@ -166,15 +168,20 @@ async fn main(spawner: Spawner) {
     let i2c_bmp = I2cDevice::new(i2c_bus);
     let i2c_display = I2cDevice::new(i2c_bus);
 
-    let mut _spi = {
-        let mut cfg = spim::Config::default();
-        cfg.frequency = spim::Frequency::K250;
-        cfg.orc = 0xFF;
-        spim::Spim::new(spi3, Irqs, spi_sck, spi_miso, spi_mosi, cfg)
-    };
+    let mut sd_spi_config = spim::Config::default();
+    sd_spi_config.frequency = SD_SPI_INIT_FREQ;
+    sd_spi_config.orc = 0xFF;
+    let sd_spi = spim::Spim::new(
+        spi3,
+        Irqs,
+        spi_sck,
+        spi_miso,
+        spi_mosi,
+        sd_spi_config.clone(),
+    );
 
     let sd_cs = Output::new(spi_cs, Level::High, OutputDrive::Standard);
-    if !storage::init_sd_logger(_spi, sd_cs) {
+    if !storage::init_sd_logger(sd_spi, sd_cs, sd_spi_config, SD_SPI_RUN_FREQ) {
         defmt::warn!("SD logger init failed");
     }
     let gps_en = Output::new(gps_en, Level::Low, OutputDrive::Standard);
