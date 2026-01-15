@@ -1,5 +1,5 @@
 use core::cmp;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicU16, Ordering};
 
 use embassy_executor::task;
 use embassy_futures::select::{select, Either};
@@ -18,10 +18,13 @@ use crate::protocol::FileTransferProtocol;
 pub const DEVICE_NAME: &str = "MGT GPS Tracker";
 const NUS_SERVICE_UUID: u128 = 0x6e400001_b5a3_f393_e0a9_e50e24dcca9e_u128;
 const MAX_GATT_PAYLOAD: usize = 244;
+const ADV_INTERVAL_UNITS: u32 = 32; // 20ms (units of 0.625ms).
+const ADV_TIMEOUT_BOOT_10MS: u16 = 3000; // 30s (units of 10ms).
+const ADV_TIMEOUT_FAST_10MS: u16 = 500; // 5s (units of 10ms).
 
 static RX_CHANNEL: Channel<CriticalSectionRawMutex, Vec<u8, MAX_GATT_PAYLOAD>, 8> = Channel::new();
-static FAST_ADV_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
-static FAST_ADV_REQUESTED: AtomicBool = AtomicBool::new(false);
+static ADV_REQUEST_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+static ADV_REQUEST_TIMEOUT: AtomicU16 = AtomicU16::new(0);
 
 static ADV_DATA: LegacyAdvertisementPayload = LegacyAdvertisementBuilder::new()
     .flags(&[Flag::GeneralDiscovery, Flag::LE_Only])
@@ -59,20 +62,30 @@ pub fn init_server(sd: &mut Softdevice) -> Result<Server, gatt_server::RegisterE
 }
 
 pub fn request_fast_advertising() {
-    FAST_ADV_REQUESTED.store(true, Ordering::Release);
-    FAST_ADV_SIGNAL.signal(());
+    request_advertising(ADV_TIMEOUT_FAST_10MS);
 }
 
 #[task]
 pub async fn ble_task(sd: &'static Softdevice, server: &'static Server) {
+    let mut pending_timeout = Some(ADV_TIMEOUT_BOOT_10MS);
+    let mut last_timeout = ADV_TIMEOUT_BOOT_10MS;
+
     loop {
-        let fast_requested = FAST_ADV_REQUESTED.swap(false, Ordering::AcqRel);
-        if fast_requested {
-            FAST_ADV_SIGNAL.reset();
-        }
+        let timeout = match pending_timeout.take() {
+            Some(timeout) => timeout,
+            None => {
+                ADV_REQUEST_SIGNAL.wait().await;
+                match take_adv_request() {
+                    Some(timeout) => timeout,
+                    None => continue,
+                }
+            }
+        };
+        last_timeout = timeout;
+
         let config = peripheral::Config {
-            interval: 32,
-            timeout: if fast_requested { Some(500) } else { Some(3000) },
+            interval: ADV_INTERVAL_UNITS,
+            timeout: Some(timeout),
             ..Default::default()
         };
         let adv = peripheral::ConnectableAdvertisement::ScannableUndirected {
@@ -80,13 +93,23 @@ pub async fn ble_task(sd: &'static Softdevice, server: &'static Server) {
             scan_data: &SCAN_DATA,
         };
 
-        let conn = match select(peripheral::advertise_connectable(sd, adv, &config), FAST_ADV_SIGNAL.wait()).await {
+        let conn = match select(
+            peripheral::advertise_connectable(sd, adv, &config),
+            ADV_REQUEST_SIGNAL.wait(),
+        )
+        .await
+        {
             Either::First(Ok(conn)) => conn,
+            Either::First(Err(peripheral::AdvertiseError::Timeout)) => {
+                defmt::info!("BLE advertising timeout");
+                continue;
+            }
             Either::First(Err(err)) => {
                 defmt::warn!("BLE advertise error: {:?}", err);
                 continue;
             }
             Either::Second(()) => {
+                pending_timeout = take_adv_request();
                 continue;
             }
         };
@@ -122,6 +145,8 @@ pub async fn ble_task(sd: &'static Softdevice, server: &'static Server) {
             }
             Either::Second(_) => {}
         }
+
+        pending_timeout = take_adv_request().or(Some(last_timeout));
     }
 }
 
@@ -157,5 +182,19 @@ async fn ble_send(conn: &Connection, server: &Server, data: &[u8]) {
             break;
         }
         offset += chunk_len;
+    }
+}
+
+fn request_advertising(timeout_10ms: u16) {
+    ADV_REQUEST_TIMEOUT.store(timeout_10ms, Ordering::Release);
+    ADV_REQUEST_SIGNAL.signal(());
+}
+
+fn take_adv_request() -> Option<u16> {
+    let timeout = ADV_REQUEST_TIMEOUT.swap(0, Ordering::AcqRel);
+    if timeout == 0 {
+        None
+    } else {
+        Some(timeout)
     }
 }
