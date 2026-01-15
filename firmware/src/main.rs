@@ -43,7 +43,7 @@ static BLE_SERVER: StaticCell<ble::Server> = StaticCell::new();
 static I2C_BUS: StaticCell<BlockingMutex<NoopRawMutex, RefCell<twim::Twim<'static>>>> =
     StaticCell::new();
 const SD_SPI_INIT_FREQ: spim::Frequency = spim::Frequency::K250;
-const SD_SPI_RUN_FREQ: spim::Frequency = spim::Frequency::M8;
+const SD_SPI_RUN_FREQ: spim::Frequency = spim::Frequency::M16;
 
 #[embassy_executor::task]
 async fn softdevice_task(sd: &'static Softdevice) {
