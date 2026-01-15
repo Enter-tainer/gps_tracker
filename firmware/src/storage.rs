@@ -112,7 +112,7 @@ fn send_idle_clocks(mut spi: Spim<'static>, mut cs: Output<'static>) -> bool {
     }
     let _ = SpiBus::flush(&mut spi);
 
-    let mut sd_spi = SdSpiDevice::new(spi, cs);
+    let sd_spi = SdSpiDevice::new(spi, cs);
     let delay = Delay;
     let sd_card = SdCard::new(sd_spi, delay);
     let volume_mgr = VolumeManager::new(sd_card, FixedTimeSource);

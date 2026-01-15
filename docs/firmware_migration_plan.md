@@ -82,11 +82,11 @@ Rust/Embassy firmware in `firmware/`, targeting nRF52840 with no LoRa support.
 - [ ] Validate with existing frontend expectations (payload format).
 
 ## Phase 6: Sensors, display, and UI
-- [ ] LIS3DH accel via `lis3dh` crate; confirm range/ODR settings.
-- [ ] BMP280 via `bmp280-rs` crate; map calibration and units.
-- [ ] SSD1306 display via `embedded-graphics` + `ssd1306`.
-- [ ] Button handling and debounce (async GPIO + timer).
-- [ ] Battery ADC setup and scaling.
+- [x] LIS3DH accel via `lis3dh` crate; confirm range/ODR settings.
+- [x] BMP280 via `bmp280-rs` crate; map calibration and units.
+- [x] SSD1306 display via `embedded-graphics` + `ssd1306`.
+- [x] Button handling and debounce (async GPIO + timer).
+- [x] Battery ADC setup and scaling.
 
 ## Phase 7: Power and performance
 - [ ] Sleep strategy for MCU + peripherals.

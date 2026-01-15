@@ -1,9 +1,11 @@
 use core::cmp;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use embassy_executor::task;
 use embassy_futures::select::{select, Either};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
+use embassy_sync::signal::Signal;
 use heapless::Vec;
 use nrf_softdevice::ble::advertisement_builder::{
     Flag, LegacyAdvertisementBuilder, LegacyAdvertisementPayload, ServiceList,
@@ -18,6 +20,8 @@ const NUS_SERVICE_UUID: u128 = 0x6e400001_b5a3_f393_e0a9_e50e24dcca9e_u128;
 const MAX_GATT_PAYLOAD: usize = 244;
 
 static RX_CHANNEL: Channel<CriticalSectionRawMutex, Vec<u8, MAX_GATT_PAYLOAD>, 8> = Channel::new();
+static FAST_ADV_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+static FAST_ADV_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 static ADV_DATA: LegacyAdvertisementPayload = LegacyAdvertisementBuilder::new()
     .flags(&[Flag::GeneralDiscovery, Flag::LE_Only])
@@ -54,12 +58,21 @@ pub fn init_server(sd: &mut Softdevice) -> Result<Server, gatt_server::RegisterE
     Server::new(sd)
 }
 
+pub fn request_fast_advertising() {
+    FAST_ADV_REQUESTED.store(true, Ordering::Release);
+    FAST_ADV_SIGNAL.signal(());
+}
+
 #[task]
 pub async fn ble_task(sd: &'static Softdevice, server: &'static Server) {
     loop {
+        let fast_requested = FAST_ADV_REQUESTED.swap(false, Ordering::AcqRel);
+        if fast_requested {
+            FAST_ADV_SIGNAL.reset();
+        }
         let config = peripheral::Config {
             interval: 32,
-            timeout: Some(3000),
+            timeout: if fast_requested { Some(500) } else { Some(3000) },
             ..Default::default()
         };
         let adv = peripheral::ConnectableAdvertisement::ScannableUndirected {
@@ -67,10 +80,13 @@ pub async fn ble_task(sd: &'static Softdevice, server: &'static Server) {
             scan_data: &SCAN_DATA,
         };
 
-        let conn = match peripheral::advertise_connectable(sd, adv, &config).await {
-            Ok(conn) => conn,
-            Err(err) => {
+        let conn = match select(peripheral::advertise_connectable(sd, adv, &config), FAST_ADV_SIGNAL.wait()).await {
+            Either::First(Ok(conn)) => conn,
+            Either::First(Err(err)) => {
                 defmt::warn!("BLE advertise error: {:?}", err);
+                continue;
+            }
+            Either::Second(()) => {
                 continue;
             }
         };

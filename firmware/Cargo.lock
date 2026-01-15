@@ -696,6 +696,7 @@ dependencies = [
  "cortex-m-rt",
  "defmt 1.0.1",
  "defmt-rtt",
+ "embassy-embedded-hal",
  "embassy-executor",
  "embassy-futures",
  "embassy-nrf",

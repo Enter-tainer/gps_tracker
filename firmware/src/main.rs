@@ -1,21 +1,28 @@
 #![no_std]
 #![no_main]
 
+mod accel;
+mod battery;
 mod ble;
+mod bmp280;
 mod board;
+mod button;
 mod casic;
+mod display;
 mod gps;
 mod protocol;
 mod storage;
 mod system_info;
 
+use core::cell::RefCell;
 use core::mem;
 
+use embassy_embedded_hal::shared_bus::blocking::i2c::I2cDevice;
 use embassy_executor::Spawner;
-use embassy_nrf::gpio::{Level, Output, OutputDrive};
-use embassy_nrf::{bind_interrupts, buffered_uarte, peripherals, spim, twim, uarte};
+use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
+use embassy_nrf::{bind_interrupts, buffered_uarte, peripherals, saadc, spim, twim, uarte};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use embassy_sync::mutex::Mutex;
+use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use embassy_time::Timer;
 use static_cell::StaticCell;
 
@@ -26,6 +33,7 @@ bind_interrupts!(struct Irqs {
     UARTE0 => buffered_uarte::InterruptHandler<peripherals::UARTE0>;
     TWISPI0 => twim::InterruptHandler<peripherals::TWISPI0>;
     SPIM3 => spim::InterruptHandler<peripherals::SPI3>;
+    SAADC => saadc::InterruptHandler;
 });
 
 // DMA buffers must live in RAM for UARTE/TWIM.
@@ -33,6 +41,8 @@ static mut GPS_RX_BUF: [u8; 512] = [0; 512];
 static mut GPS_TX_BUF: [u8; 128] = [0; 128];
 static mut I2C_TX_BUF: [u8; 32] = [0; 32];
 static BLE_SERVER: StaticCell<ble::Server> = StaticCell::new();
+static I2C_BUS: StaticCell<BlockingMutex<NoopRawMutex, RefCell<twim::Twim<'static>>>> =
+    StaticCell::new();
 
 #[embassy_executor::task]
 async fn softdevice_task(sd: &'static Softdevice) {
@@ -54,7 +64,7 @@ async fn main(spawner: Spawner) {
     let p = embassy_nrf::init(config);
     let board::Board {
         led,
-        button,
+        button: button_pin,
         gps_uart_rx,
         gps_uart_tx,
         gps_en,
@@ -71,7 +81,7 @@ async fn main(spawner: Spawner) {
         uarte0,
         twispi0,
         spi3,
-        saadc,
+        saadc: saadc_peripheral,
         timer0,
         ppi_ch0,
         ppi_ch1,
@@ -124,9 +134,10 @@ async fn main(spawner: Spawner) {
 
     // LED is on P0.15 per promicro_diy variant.
     let mut led = Output::new(led, Level::Low, OutputDrive::Standard);
+    let _v3v3_en = Output::new(v3v3_en, Level::High, OutputDrive::Standard);
 
     // Phase 2 bring-up: create core drivers.
-    let mut _gps_uart = unsafe {
+    let gps_uart = unsafe {
         let mut cfg = uarte::Config::default();
         cfg.baudrate = uarte::Baudrate::BAUD115200;
         let rx_buf = &mut *core::ptr::addr_of_mut!(GPS_RX_BUF);
@@ -151,7 +162,10 @@ async fn main(spawner: Spawner) {
         let tx_buf = &mut *core::ptr::addr_of_mut!(I2C_TX_BUF);
         twim::Twim::new(twispi0, Irqs, i2c_sda, i2c_scl, cfg, tx_buf)
     };
-    let _i2c_bus: Mutex<NoopRawMutex, twim::Twim<'static>> = Mutex::new(i2c);
+    let i2c_bus = I2C_BUS.init(BlockingMutex::new(RefCell::new(i2c)));
+    let i2c_accel = I2cDevice::new(i2c_bus);
+    let i2c_bmp = I2cDevice::new(i2c_bus);
+    let i2c_display = I2cDevice::new(i2c_bus);
 
     let mut _spi = {
         let mut cfg = spim::Config::default();
@@ -160,24 +174,27 @@ async fn main(spawner: Spawner) {
         spim::Spim::new(spi3, Irqs, spi_sck, spi_miso, spi_mosi, cfg)
     };
 
-    let _sd_cs = Output::new(spi_cs, Level::High, OutputDrive::Standard);
-    if !storage::init_sd_logger(_spi, _sd_cs) {
+    let sd_cs = Output::new(spi_cs, Level::High, OutputDrive::Standard);
+    if !storage::init_sd_logger(_spi, sd_cs) {
         defmt::warn!("SD logger init failed");
     }
     let gps_en = Output::new(gps_en, Level::Low, OutputDrive::Standard);
-    let (gps_rx, gps_tx) = _gps_uart.split();
+    let (gps_rx, gps_tx) = gps_uart.split();
     spawner.spawn(gps::gps_rx_task(gps_rx)).unwrap();
     spawner.spawn(gps::gps_state_task(gps_tx, gps_en)).unwrap();
 
-    let _unused = (
-        button,
-        battery_adc,
-        v3v3_en,
-        serial2_rx,
-        serial2_tx,
-        saadc,
-        _i2c_bus,
-    );
+    let button = Input::new(button_pin, Pull::Up);
+    let saadc_config = saadc::Config::default();
+    let saadc_channel = saadc::ChannelConfig::single_ended(battery_adc);
+    let saadc = saadc::Saadc::new(saadc_peripheral, Irqs, saadc_config, [saadc_channel]);
+
+    spawner.spawn(battery::battery_task(saadc)).unwrap();
+    spawner.spawn(accel::accel_task(i2c_accel)).unwrap();
+    spawner.spawn(bmp280::bmp280_task(i2c_bmp)).unwrap();
+    spawner.spawn(display::display_task(i2c_display)).unwrap();
+    spawner.spawn(button::button_task(button)).unwrap();
+
+    let _unused = (serial2_rx, serial2_tx);
 
     loop {
         led.set_high();
