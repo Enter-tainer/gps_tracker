@@ -67,3 +67,50 @@ impl SystemInfo {
 
 pub static SYSTEM_INFO: Mutex<CriticalSectionRawMutex, SystemInfo> =
     Mutex::new(SystemInfo::new());
+
+pub const SYSTEM_INFO_SERIALIZED_LEN: usize = 50;
+
+pub fn serialize_system_info(
+    info: &SystemInfo,
+    out: &mut [u8; SYSTEM_INFO_SERIALIZED_LEN],
+) -> usize {
+    let mut offset = 0;
+
+    // Keep packing order identical to legacy processGetSysInfo().
+    out[offset..offset + 8].copy_from_slice(&info.latitude.to_le_bytes());
+    offset += 8;
+    out[offset..offset + 8].copy_from_slice(&info.longitude.to_le_bytes());
+    offset += 8;
+    out[offset..offset + 4].copy_from_slice(&info.altitude.to_le_bytes());
+    offset += 4;
+    out[offset..offset + 4].copy_from_slice(&info.satellites.to_le_bytes());
+    offset += 4;
+    out[offset..offset + 4].copy_from_slice(&info.hdop.to_le_bytes());
+    offset += 4;
+    out[offset..offset + 4].copy_from_slice(&info.speed.to_le_bytes());
+    offset += 4;
+    out[offset..offset + 4].copy_from_slice(&info.course.to_le_bytes());
+    offset += 4;
+    out[offset..offset + 2].copy_from_slice(&info.year.to_le_bytes());
+    offset += 2;
+    out[offset] = info.month;
+    offset += 1;
+    out[offset] = info.day;
+    offset += 1;
+    out[offset] = info.hour;
+    offset += 1;
+    out[offset] = info.minute;
+    offset += 1;
+    out[offset] = info.second;
+    offset += 1;
+    out[offset] = u8::from(info.location_valid);
+    offset += 1;
+    out[offset] = u8::from(info.date_time_valid);
+    offset += 1;
+    out[offset..offset + 4].copy_from_slice(&info.battery_voltage.to_le_bytes());
+    offset += 4;
+    out[offset] = info.gps_state as u8;
+    offset += 1;
+
+    offset
+}

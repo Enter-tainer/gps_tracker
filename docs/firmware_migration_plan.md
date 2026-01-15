@@ -60,13 +60,13 @@ Rust/Embassy firmware in `firmware/`, targeting nRF52840 with no LoRa support.
 - [x] GPS UART task skeleton (read loop + power control).
 - [x] Port CASIC protocol parser (`casic_gps_wrapper.*`) to Rust.
 - [x] Integrate NMEA parsing (`nmea` crate) with CASIC for mixed streams.
-- [ ] Port GPS state machine from `src/gps_handler.cpp`:
+- [x] Port GPS state machine from `src/gps_handler.cpp`:
   - power control
   - fix attempts, sleep/wake intervals
   - stillness/accel integration
-- [ ] AGNSS message queue and send timing.
+- [x] AGNSS message queue and send timing.
 - [x] Define `SystemInfo` model for parity with legacy firmware.
-- [ ] Implement `SystemInfo` serialization for BLE responses.
+- [x] Implement `SystemInfo` serialization for BLE responses.
 
 ## Phase 4: BLE and file transfer
 - [ ] Mirror BLE UART service/characteristics (UUIDs/handles) used today.

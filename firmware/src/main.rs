@@ -112,7 +112,9 @@ async fn main(spawner: Spawner) {
 
     let mut _sd_cs = Output::new(spi_cs, Level::High, OutputDrive::Standard);
     let gps_en = Output::new(gps_en, Level::Low, OutputDrive::Standard);
-    spawner.spawn(gps::gps_task(_gps_uart, gps_en)).unwrap();
+    let (gps_rx, gps_tx) = _gps_uart.split();
+    spawner.spawn(gps::gps_rx_task(gps_rx)).unwrap();
+    spawner.spawn(gps::gps_state_task(gps_tx, gps_en)).unwrap();
 
     let _unused = (
         button,
