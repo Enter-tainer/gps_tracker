@@ -1,4 +1,4 @@
-﻿import type { Logger } from "../hooks/useLogger";
+import type { Logger } from "../hooks/useLogger";
 import type { GpsPoint } from "./gpsDecoder";
 
 export type GpxPreviewer = (gpxString: string, fileName: string) => void;
@@ -25,8 +25,9 @@ export function createGpxConverter(logger: Logger, previewer?: GpxPreviewer) {
     gpx += `    <trkseg>\n`;
 
     for (const point of points) {
-      const lat = point.latitude_scaled_1e5 / 100000.0;
-      const lon = point.longitude_scaled_1e5 / 100000.0;
+      // 使用 1e7 精度转换为实际坐标
+      const lat = point.latitude_scaled_1e7 / 10000000.0;
+      const lon = point.longitude_scaled_1e7 / 10000000.0;
       const ele = point.altitude_m_scaled_1e1 / 10.0;
       const time = new Date(point.timestamp * 1000).toISOString();
 
@@ -35,7 +36,8 @@ export function createGpxConverter(logger: Logger, previewer?: GpxPreviewer) {
         continue;
       }
 
-      gpx += `      <trkpt lat="${lat.toFixed(5)}" lon="${lon.toFixed(5)}">\n`;
+      // 输出 7 位小数精度
+      gpx += `      <trkpt lat="${lat.toFixed(7)}" lon="${lon.toFixed(7)}">\n`;
       gpx += `        <ele>${ele.toFixed(1)}</ele>\n`;
       gpx += `        <time>${time}</time>\n`;
       gpx += `      </trkpt>\n`;

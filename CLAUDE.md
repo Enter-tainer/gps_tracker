@@ -26,15 +26,24 @@ The GPS power management follows a sophisticated 6-state machine defined in `doc
 
 ### Software Architecture
 
-#### Firmware (src/)
+#### Rust Firmware (firmware/) - PRIMARY
+- **Embassy-nrf** async framework for nRF52840
+- **src/main.rs**: System initialization and async tasks
+- **src/gps.rs**: GPS handling
+- **src/storage.rs**: GPS data encoding (V2 format, 1e7 precision)
+- **src/battery.rs**: Battery voltage monitoring via ADC
+- Build with `cargo build --release` in `firmware/`
+
+#### C++ Firmware (src/) - DEPRECATED
 - **main.cpp**: System initialization and main loop
 - **gps_handler.cpp**: GPS state machine implementation
 - **ble_handler.cpp**: Bluetooth Low Energy communication
 - **accel_handler.cpp**: Accelerometer data processing
-- **gpx_logger.cpp**: GPX format trajectory logging
+- **gpx_logger.cpp**: GPX format trajectory logging (V1 format, 1e5 precision)
 - **display_handler.cpp**: OLED display management
 - **battery.cpp**: Battery monitoring
 - **file_transfer_protocol.cpp**: UART-based file transfer
+- Note: C++ firmware is deprecated; use Rust firmware for new development
 
 #### Web Frontend (frontend/)
 - **Vite-based** modern web application

@@ -4,12 +4,18 @@
 
 ## GPS 数据存储协议文档
 
-**版本:** 1.0
-**最后修订日期:** 2025-05-08
+**版本:** 1.1
+**最后修订日期:** 2025-01-16
 
 ### 1. 引言
 
 本文档描述了一种用于在资源受限的单片机 (MCU) 环境中高效存储 GPS 轨迹数据的二进制协议。该协议旨在通过使用固定大小的完整数据点和基于可变长度整数 (Varint) 编码的增量数据点来最小化存储空间。
+
+本协议定义了两个数据格式版本：
+- **V1**: 使用 `1e5` 精度的经纬度 (约 1.1 米精度)
+- **V2**: 使用 `1e7` 精度的经纬度 (约 1.1 厘米精度)
+
+两种版本可以在同一文件中混合使用，解码器通过 Header 字节区分。V2 Delta Block 必须跟在 V2 Full Block 之后，V1 Delta Block 必须跟在 V1 Full Block 之后。
 
 ### 2. 设计目标
 
@@ -46,6 +52,28 @@ typedef struct {
 #pragma pack(pop)
 ```
 
+### 4.1. GPS 数据点原始结构 V2 (`GpxPointInternalV2`)
+
+V2 版本使用更高精度的经纬度 (`1e7`)，精度从约 1.1 米提升到约 1.1 厘米。结构体大小保持 16 字节不变。
+
+```c
+#pragma pack(push, 1)
+typedef struct {
+  uint32_t timestamp;            // Unix 时间戳 (秒)
+  int32_t latitude_scaled_1e7;   // 纬度，单位：度 * 10^7 (例如，34.1234567° 存储为 341234567)
+  int32_t longitude_scaled_1e7;  // 经度，单位：度 * 10^7 (例如，-118.1234567° 存储为 -1181234567)
+  int32_t altitude_m_scaled_1e1; // 海拔高度，单位：米 * 10 (与 V1 相同)
+} GpxPointInternalV2;
+#pragma pack(pop)
+```
+
+**精度对比:**
+
+| 版本 | 缩放因子 | 精度 (赤道) |
+|------|----------|-------------|
+| V1   | 1e5      | ~1.11 米    |
+| V2   | 1e7      | ~1.11 厘米  |
+
 ### 5. 文件结构
 
 GPS 数据文件由一个或多个数据块 (`Data Block`) 序列组成。
@@ -67,12 +95,20 @@ GPS 数据文件由一个或多个数据块 (`Data Block`) 序列组成。
 
 #### 6.1. 头部字节 (`Header`)
 
-头部字节的最高位 (`bit 7`) 用于区分数据块类型：
+头部字节用于区分数据块类型和版本：
 
-* **`bit 7 == 1`**: 表示这是一个**完整数据块 (Full Block)**。此时，头部字节固定为 `0xFF`。
-* **`bit 7 == 0`**: 表示这是一个**增量数据块 (Delta Block)**。此时，头部字节的低 4 位 (`bit 0` 到 `bit 3`) 用于指示哪些字段的增量值存在于 `Payload` 中。高 4 位中的其余 3 位 (`bit 4` 到 `bit 6`) 当前保留，应设置为 `0`。因此，Delta Block 的 Header 格式为 `0000b_ttt b_lll b_ooo b_aaa`，简写为 `0x0F` (其中 `F` 是一个 4 位掩码)。
+| Header 值     | 类型        | 版本 | 描述 |
+|---------------|-------------|------|------|
+| `0xFF`        | Full Block  | V1   | V1 完整数据点 (1e5 精度) |
+| `0x00 - 0x0F` | Delta Block | V1   | V1 增量数据点 |
+| `0xFE`        | Full Block  | V2   | V2 完整数据点 (1e7 精度) |
+| `0x10 - 0x1F` | Delta Block | V2   | V2 增量数据点 |
 
-#### 6.2. 完整数据块 (Full Block)
+**版本判断:**
+- Full Block: `0xFF` = V1, `0xFE` = V2
+- Delta Block: `bit 4 == 0` = V1, `bit 4 == 1` = V2
+
+#### 6.2. V1 完整数据块 (Full Block V1)
 
 * **Header**: `0xFF`
 * **Payload**: 直接存储一个 `GpxPointInternal` 结构体的内容（16 字节）。
@@ -81,7 +117,7 @@ GPS 数据文件由一个或多个数据块 (`Data Block`) 序列组成。
     * `longitude_scaled_1e5` (4 字节, `int32_t`)
     * `altitude_m_scaled_1e1` (4 字节, `int32_t`)
 
-#### 6.3. 增量数据块 (Delta Block)
+#### 6.3. V1 增量数据块 (Delta Block V1)
 
 增量数据块存储当前数据点相对于**前一个已解码/存储的数据点**的变化量。
 
@@ -109,32 +145,63 @@ GPS 数据文件由一个或多个数据块 (`Data Block`) 序列组成。
 
     如果 Header 中某个字段的标志位为 `0`，则表示该字段的 `delta_value` 为 `0`，即 `current_value = previous_value`。
 
+#### 6.4. V2 完整数据块 (Full Block V2)
+
+* **Header**: `0xFE`
+* **Payload**: 直接存储一个 `GpxPointInternalV2` 结构体的内容（16 字节）。
+    * `timestamp` (4 字节, `uint32_t`)
+    * `latitude_scaled_1e7` (4 字节, `int32_t`)
+    * `longitude_scaled_1e7` (4 字节, `int32_t`)
+    * `altitude_m_scaled_1e1` (4 字节, `int32_t`)
+
+#### 6.5. V2 增量数据块 (Delta Block V2)
+
+V2 增量数据块存储当前数据点相对于**前一个 V2 数据点**的变化量。
+
+* **Header**: `0x1F` (其中低 4 位是掩码)
+    * `bit 4`: 固定为 `1`，标识 V2 版本
+    * `bit 3` (`H_TS`): 时间戳增量存在
+    * `bit 2` (`H_LAT`): 纬度增量存在 (`latitude_scaled_1e7`)
+    * `bit 1` (`H_LON`): 经度增量存在 (`longitude_scaled_1e7`)
+    * `bit 0` (`H_ALT`): 海拔增量存在
+
+* **Payload**: 与 V1 相同格式，使用 `varint_s32` 编码的增量值，顺序为 `timestamp`, `latitude`, `longitude`, `altitude`。
+
+* **约束**: V2 Delta Block 必须跟在 V2 Full Block 或 V2 Delta Block 之后，不能跟在 V1 数据块之后。
+
 ### 7. 解码流程概要
 
 1.  **初始化**:
-    * 维护一个 "上一个数据点" (`PreviousPoint`) 的状态，初始为空。
+    * 维护 V1 的 "上一个数据点" (`PrevV1`) 和 V2 的 "上一个数据点" (`PrevV2`)，初始为空。
+    * 维护当前版本状态 `current_version`，初始为未知。
 2.  **读取数据块**:
     * 读取 1 字节的 `Header`。
-3.  **判断块类型**:
-    * 如果 `Header == 0xFF` (Full Block):
+3.  **判断块类型和版本**:
+    * 如果 `Header == 0xFF` (V1 Full Block):
         1.  读取 16 字节的 `Payload`。
-        2.  将 `Payload` 解析为一个 `GpxPointInternal` 结构体，得到 `CurrentPoint`。
-        3.  将 `CurrentPoint` 存储/处理。
-        4.  更新 `PreviousPoint = CurrentPoint`。
-    * 如果 `Header` 的 `bit 7 == 0` (Delta Block, `Header = 0x0F`):
-        1.  如果 `PreviousPoint` 为空（这意味着这是第一个数据块，但它不是 Full Block），则这是一个错误/无效的数据流。
-        2.  从 `PreviousPoint` 初始化 `CurrentPoint` (即 `CurrentPoint = PreviousPoint`)。
-        3.  解析 `Header` 的低 4 位 (`H_TS, H_LAT, H_LON, H_ALT`)。
-        4.  **按顺序**检查标志位：
-            * 如果 `H_TS == 1`: 从 `Payload` 读取一个 `varint_s32` 值作为 `delta_timestamp`，解码 ZigZag，然后 `CurrentPoint.timestamp = PreviousPoint.timestamp + decoded_delta_timestamp`。
-            * 如果 `H_LAT == 1`: 从 `Payload` 读取一个 `varint_s32` 值作为 `delta_latitude`，解码 ZigZag，然后 `CurrentPoint.latitude_scaled_1e5 = PreviousPoint.latitude_scaled_1e5 + decoded_delta_latitude`。
-            * 如果 `H_LON == 1`: 从 `Payload` 读取一个 `varint_s32` 值作为 `delta_longitude`，解码 ZigZag，然后 `CurrentPoint.longitude_scaled_1e5 = PreviousPoint.longitude_scaled_1e5 + decoded_delta_longitude`。
-            * 如果 `H_ALT == 1`: 从 `Payload` 读取一个 `varint_s32` 值作为 `delta_altitude`，解码 ZigZag，然后 `CurrentPoint.altitude_m_scaled_1e1 = PreviousPoint.altitude_m_scaled_1e1 + decoded_delta_altitude`。
-        5.  将 `CurrentPoint` 存储/处理。
-        6.  更新 `PreviousPoint = CurrentPoint`。
+        2.  将 `Payload` 解析为 `GpxPointInternal` 结构体。
+        3.  设置 `current_version = V1`，更新 `PrevV1`。
+        4.  输出数据点。
+    * 如果 `Header == 0xFE` (V2 Full Block):
+        1.  读取 16 字节的 `Payload`。
+        2.  将 `Payload` 解析为 `GpxPointInternalV2` 结构体。
+        3.  设置 `current_version = V2`，更新 `PrevV2`。
+        4.  输出数据点。
+    * 如果 `Header & 0x10 == 0x00` (V1 Delta Block, `Header = 0x0F`):
+        1.  检查 `current_version == V1`，否则报错。
+        2.  从 `PrevV1` 初始化 `CurrentPoint`。
+        3.  解析 Header 的低 4 位，按顺序读取增量值并应用。
+        4.  更新 `PrevV1 = CurrentPoint`。
+        5.  输出数据点。
+    * 如果 `Header & 0x10 == 0x10` (V2 Delta Block, `Header = 0x1F`):
+        1.  检查 `current_version == V2`，否则报错。
+        2.  从 `PrevV2` 初始化 `CurrentPoint`。
+        3.  解析 Header 的低 4 位，按顺序读取增量值并应用。
+        4.  更新 `PrevV2 = CurrentPoint`。
+        5.  输出数据点。
 4.  重复步骤 2-3 直到文件结束。
 
-### 8. 示例
+### 8. V1 示例
 
 假设 `PreviousPoint` (上一个点) 为:
 * `timestamp: 1678886400`
@@ -182,3 +249,40 @@ GPS 数据文件由一个或多个数据块 (`Data Block`) 序列组成。
 `0x0D 0A C8 01 32` (总共 1 + 1 + 2 + 1 = 5 字节)
 
 相比之下，如果作为 Full Block 存储，则需要 1 + 16 = 17 字节。
+
+### 9. V2 示例
+
+假设 `PrevV2` (上一个 V2 点) 为:
+* `timestamp: 1678886400`
+* `latitude_scaled_1e7: 356800000` (35.6800000°)
+* `longitude_scaled_1e7: 1397500000` (139.7500000°)
+* `altitude_m_scaled_1e1: 500` (50.0 米)
+
+**当前点** (`CurrentPoint`) 为:
+* `timestamp: 1678886405`
+* `latitude_scaled_1e7: 356800100` (35.6800100°, 移动约 1.1 厘米)
+* `longitude_scaled_1e7: 1397500000` (未变化)
+* `altitude_m_scaled_1e1: 525`
+
+**计算增量**:
+* `delta_timestamp = 5`
+* `delta_latitude = 100`
+* `delta_longitude = 0`
+* `delta_altitude = 25`
+
+**编码为 V2 Delta Block**:
+
+1.  **Header**:
+    * `bit 4 = 1` (V2 标识)
+    * `delta_timestamp != 0` -> `H_TS = 1`
+    * `delta_latitude != 0` -> `H_LAT = 1`
+    * `delta_longitude == 0` -> `H_LON = 0`
+    * `delta_altitude != 0` -> `H_ALT = 1`
+    * Header: `0001 1101` (二进制) = `0x1D`
+
+2.  **Payload**: (与 V1 编码方式相同)
+    * `delta_timestamp = 5` -> `0x0A`
+    * `delta_latitude = 100` -> `0xC8 0x01`
+    * `delta_altitude = 25` -> `0x32`
+
+**最终 V2 Delta Block**: `0x1D 0A C8 01 32` (5 字节)
