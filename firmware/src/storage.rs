@@ -231,8 +231,8 @@ impl SdLogger {
 
         let entry = GpxPointInternal {
             timestamp,
-            latitude_scaled_1e5: round_f64(latitude * 1e5) as i32,
-            longitude_scaled_1e5: round_f64(longitude * 1e5) as i32,
+            latitude_scaled_1e7: round_f64(latitude * 1e7) as i32,
+            longitude_scaled_1e7: round_f64(longitude * 1e7) as i32,
             altitude_m_scaled_1e1: round_f32(altitude_m * 10.0) as i32,
         };
 
@@ -696,11 +696,13 @@ impl SpiDevice<u8> for SdSpiDevice {
     }
 }
 
+/// GPS 数据点内部表示 (V2 格式)
+/// 使用 1e7 精度的经纬度 (约 1.1 厘米精度)
 #[derive(Clone, Copy, Default)]
 struct GpxPointInternal {
     timestamp: u32,
-    latitude_scaled_1e5: i32,
-    longitude_scaled_1e5: i32,
+    latitude_scaled_1e7: i32,  // 纬度 * 10^7
+    longitude_scaled_1e7: i32, // 经度 * 10^7
     altitude_m_scaled_1e1: i32,
 }
 
@@ -746,23 +748,25 @@ impl GpsDataEncoder {
         }
 
         if use_full {
-            self.write_u8(0xFF);
+            // V2 Full Block: Header = 0xFE
+            self.write_u8(0xFE);
             self.write_u32_le(point.timestamp);
-            self.write_i32_le(point.latitude_scaled_1e5);
-            self.write_i32_le(point.longitude_scaled_1e5);
+            self.write_i32_le(point.latitude_scaled_1e7);
+            self.write_i32_le(point.longitude_scaled_1e7);
             self.write_i32_le(point.altitude_m_scaled_1e1);
             self.points_since_last_full_block = 0;
             self.is_first_point = false;
         } else {
             let delta_timestamp = point.timestamp as i32 - self.previous_point.timestamp as i32;
             let delta_latitude =
-                point.latitude_scaled_1e5 - self.previous_point.latitude_scaled_1e5;
+                point.latitude_scaled_1e7 - self.previous_point.latitude_scaled_1e7;
             let delta_longitude =
-                point.longitude_scaled_1e5 - self.previous_point.longitude_scaled_1e5;
+                point.longitude_scaled_1e7 - self.previous_point.longitude_scaled_1e7;
             let delta_altitude =
                 point.altitude_m_scaled_1e1 - self.previous_point.altitude_m_scaled_1e1;
 
-            let mut header = 0u8;
+            // V2 Delta Block: Header bit 4 = 1 (0x10 基值)
+            let mut header = 0x10u8;
             if delta_timestamp != 0 {
                 header |= 1 << 3;
             }
