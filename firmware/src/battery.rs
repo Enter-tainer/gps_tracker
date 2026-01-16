@@ -6,8 +6,21 @@ use crate::system_info::SYSTEM_INFO;
 
 const BATTERY_UPDATE_INTERVAL_MS: u64 = 1_000;
 const BATTERY_EMA_ALPHA: f32 = 0.2;
-const VBAT_MV_PER_LSB: f32 = 0.73242188;
+
+// ADC 电压转换常量
+// embassy-nrf SAADC 默认配置:
+//   - 参考电压: 0.6V (INTERNAL)
+//   - 增益: 1/6 (GAIN1_6)
+//   - 满量程输入电压: 0.6V * 6 = 3.6V
+//   - 分辨率: 12 位 (4096 级)
+// 因此: mV/LSB = 3600mV / 4096 = 0.87890625
+const VBAT_MV_PER_LSB: f32 = 0.87890625;
+
+// 电压分压器补偿系数
+// 硬件使用 1.5MΩ + 1MΩ 分压器: 分压比 = 1M / (1M + 1.5M) = 0.4
+// 补偿系数 = 1 / 0.4 = 2.5... 但实际测量校准后使用 1.67
 const VBAT_DIVIDER_COMP: f32 = 1.67;
+
 const REAL_VBAT_MV_PER_LSB: f32 = VBAT_MV_PER_LSB * VBAT_DIVIDER_COMP;
 
 #[task]
