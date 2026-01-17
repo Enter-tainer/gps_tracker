@@ -114,6 +114,7 @@ const USB_ICON: [u8; 128] = [
 
 use crate::battery::estimate_battery_level;
 use crate::system_info::{GpsState, SystemInfo, SYSTEM_INFO};
+use crate::timezone::TzCache;
 
 const DISPLAY_UPDATE_INTERVAL_MS: u64 = 100;
 const DISPLAY_TIMEOUT_MS: u64 = 30_000;
@@ -124,6 +125,7 @@ type SharedI2c = I2cDevice<'static, NoopRawMutex, twim::Twim<'static>>;
 type Display = Ssd1306<I2CInterface<SharedI2c>, DisplaySize128x64, BufferedGraphicsMode<DisplaySize128x64>>;
 
 #[derive(Clone, Copy, Debug)]
+#[allow(dead_code)]
 pub enum DisplayCommand {
     Toggle,
     TurnOn,
@@ -157,13 +159,14 @@ pub async fn display_task(i2c: SharedI2c) {
     let mut display_on = true;
     let mut last_activity = Instant::now();
     let mut usb_mode = false;
+    let mut tz_cache = TzCache::new();
 
     let text_style = MonoTextStyle::new(&FONT_6X9, BinaryColor::On);
     let text_settings = TextStyleBuilder::new().baseline(Baseline::Top).build();
 
     // Render first frame after logo
     let info = *SYSTEM_INFO.lock().await;
-    render_frame(&mut display, &text_style, text_settings, &info);
+    render_frame(&mut display, &text_style, text_settings, &info, &mut tz_cache);
 
     loop {
         if display_on {
@@ -180,6 +183,7 @@ pub async fn display_task(i2c: SharedI2c) {
                         &mut display_on,
                         &mut last_activity,
                         &mut usb_mode,
+                        &mut tz_cache,
                         &text_style,
                         text_settings,
                     )
@@ -194,6 +198,7 @@ pub async fn display_task(i2c: SharedI2c) {
                             &mut display_on,
                             &mut last_activity,
                             &mut usb_mode,
+                            &mut tz_cache,
                             &text_style,
                             text_settings,
                         )
@@ -204,7 +209,7 @@ pub async fn display_task(i2c: SharedI2c) {
                         render_usb_mode(&mut display, &text_style, text_settings);
                     } else {
                         let info = *SYSTEM_INFO.lock().await;
-                        render_frame(&mut display, &text_style, text_settings, &info);
+                        render_frame(&mut display, &text_style, text_settings, &info, &mut tz_cache);
                     }
                 }
             }
@@ -216,6 +221,7 @@ pub async fn display_task(i2c: SharedI2c) {
                 &mut display_on,
                 &mut last_activity,
                 &mut usb_mode,
+                &mut tz_cache,
                 &text_style,
                 text_settings,
             )
@@ -229,6 +235,7 @@ pub async fn display_task(i2c: SharedI2c) {
                 &mut display_on,
                 &mut last_activity,
                 &mut usb_mode,
+                &mut tz_cache,
                 &text_style,
                 text_settings,
             )
@@ -243,6 +250,7 @@ async fn handle_command(
     display_on: &mut bool,
     last_activity: &mut Instant,
     usb_mode: &mut bool,
+    tz_cache: &mut TzCache,
     text_style: &MonoTextStyle<'_, BinaryColor>,
     text_settings: embedded_graphics::text::TextStyle,
 ) {
@@ -256,7 +264,7 @@ async fn handle_command(
                     render_usb_mode(display, text_style, text_settings);
                 } else {
                     let info = *SYSTEM_INFO.lock().await;
-                    render_frame(display, text_style, text_settings, &info);
+                    render_frame(display, text_style, text_settings, &info, tz_cache);
                 }
             }
         }
@@ -266,7 +274,7 @@ async fn handle_command(
                 render_usb_mode(display, text_style, text_settings);
             } else {
                 let info = *SYSTEM_INFO.lock().await;
-                render_frame(display, text_style, text_settings, &info);
+                render_frame(display, text_style, text_settings, &info, tz_cache);
             }
         }
         DisplayCommand::TurnOff => {
@@ -347,12 +355,13 @@ fn render_frame(
     text_style: &MonoTextStyle<'_, BinaryColor>,
     text_settings: embedded_graphics::text::TextStyle,
     info: &SystemInfo,
+    tz_cache: &mut TzCache,
 ) {
     let _ = display.clear(BinaryColor::Off);
 
     // Line 0: Speed (left) + Battery (right)
     let mut speed_str = String::<32>::new();
-    speed_str.push_str("Spd:").ok();
+    speed_str.push_str("Spd: ").ok();
     if info.speed >= 0.0 {
         let _ = write!(speed_str, "{:.1}", info.speed);
     } else {
@@ -387,20 +396,23 @@ fn render_frame(
         "Date: ",
         format_date(info),
     );
+
+    // Time line with local time and UTC offset
+    let time_str = format_local_time(info, tz_cache);
     draw_line(
         display,
         text_style,
         text_settings,
         2,
-        "Time: ",
-        format_time(info),
+        "",
+        time_str,
     );
     draw_line(
         display,
         text_style,
         text_settings,
         3,
-        "Lat:",
+        "Lat: ",
         format_lat(info),
     );
     draw_line(
@@ -408,7 +420,7 @@ fn render_frame(
         text_style,
         text_settings,
         4,
-        "Lng:",
+        "Lng: ",
         format_lng(info),
     );
 
@@ -528,6 +540,7 @@ fn format_date(info: &SystemInfo) -> String<32> {
     out
 }
 
+#[allow(dead_code)]
 fn format_time(info: &SystemInfo) -> String<32> {
     let mut out = String::<32>::new();
     if info.date_time_valid {
@@ -538,10 +551,63 @@ fn format_time(info: &SystemInfo) -> String<32> {
     out
 }
 
+/// Format local time with UTC offset, e.g. "Time: 14:30:00 +8"
+fn format_local_time(info: &SystemInfo, tz_cache: &mut TzCache) -> String<32> {
+    let mut out = String::<32>::new();
+    out.push_str("Time: ").ok();
+    
+    if !info.date_time_valid {
+        out.push_str("N/A").ok();
+        return out;
+    }
+    
+    // Get UTC offset if we have valid location
+    let offset = if info.location_valid {
+        tz_cache.get_offset(info.latitude as f32, info.longitude as f32)
+    } else {
+        crate::timezone::UtcOffset::from_minutes(0)
+    };
+    
+    // Convert UTC time to local time
+    let utc_minutes = info.hour as i32 * 60 + info.minute as i32;
+    let local_minutes = utc_minutes + offset.total_minutes as i32;
+    
+    // Handle day wraparound
+    let (local_hour, local_minute) = if local_minutes < 0 {
+        let adjusted = local_minutes + 24 * 60;
+        ((adjusted / 60) as u8, (adjusted % 60) as u8)
+    } else if local_minutes >= 24 * 60 {
+        let adjusted = local_minutes - 24 * 60;
+        ((adjusted / 60) as u8, (adjusted % 60) as u8)
+    } else {
+        ((local_minutes / 60) as u8, (local_minutes % 60) as u8)
+    };
+    
+    // Format time
+    let _ = write!(out, "{:02}:{:02}:{:02}", local_hour, local_minute, info.second);
+    
+    // Add UTC offset
+    if info.location_valid {
+        let sign = if offset.is_positive() { '+' } else { '-' };
+        let hours = offset.hours().unsigned_abs();
+        let mins = offset.minutes();
+        
+        if mins == 0 {
+            let _ = write!(out, " {}{}", sign, hours);
+        } else {
+            let _ = write!(out, " {}{}:{:02}", sign, hours, mins);
+        }
+    } else {
+        out.push_str(" UTC").ok();
+    }
+    
+    out
+}
+
 fn format_lat(info: &SystemInfo) -> String<32> {
     let mut out = String::<32>::new();
     if info.location_valid {
-        let _ = write!(out, "{:.6}", info.latitude);
+        let _ = write!(out, "{:.7}", info.latitude);
     } else {
         out.push_str("N/A").ok();
     }
@@ -551,7 +617,7 @@ fn format_lat(info: &SystemInfo) -> String<32> {
 fn format_lng(info: &SystemInfo) -> String<32> {
     let mut out = String::<32>::new();
     if info.location_valid {
-        let _ = write!(out, "{:.6}", info.longitude);
+        let _ = write!(out, "{:.7}", info.longitude);
     } else {
         out.push_str("N/A").ok();
     }

@@ -13,6 +13,7 @@ mod gps;
 mod protocol;
 mod storage;
 mod system_info;
+mod timezone;
 mod usb_msc;
 
 use core::cell::RefCell;
