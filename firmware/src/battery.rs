@@ -55,10 +55,12 @@ pub async fn battery_task(mut saadc: Saadc<'static, 1>) {
 }
 
 pub fn estimate_battery_level(voltage_mv: f32) -> f32 {
-    const VOLTAGE_POINTS: [f32; 9] = [
-        2500.0, 3050.0, 3600.0, 3700.0, 3780.0, 3900.0, 3980.0, 4080.0, 4200.0,
+    const VOLTAGE_POINTS: [f32; 11] = [
+        3000.0, 3300.0, 3500.0, 3600.0, 3700.0, 3800.0, 3850.0, 3900.0, 3950.0, 4100.0, 4200.0,
     ];
-    const SOC_POINTS: [f32; 9] = [0.0, 13.0, 25.0, 38.0, 50.0, 63.0, 75.0, 88.0, 100.0];
+    const SOC_POINTS: [f32; 11] = [
+        0.0, 5.0, 10.0, 20.0, 35.0, 50.0, 60.0, 70.0, 80.0, 95.0, 100.0,
+    ];
 
     if voltage_mv <= VOLTAGE_POINTS[0] {
         return SOC_POINTS[0];
