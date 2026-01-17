@@ -28,7 +28,7 @@ const AGNSS_TRIGGER_DELAY_MS: u64 = 10_000;
 const T_AGNSS_MESSAGE_SEND_TIMEOUT_MS: u64 = 1;
 const T_AGNSS_TOTAL_TIMEOUT_MS: u64 = 600_000;
 const MAX_AGNSS_MESSAGE_RETRY: u8 = 3;
-const MAX_AGNSS_MESSAGES: usize = 64;
+const MAX_AGNSS_MESSAGES: usize = 70;
 const MAX_AGNSS_MESSAGE_SIZE: usize = 568;
 
 const EMPTY_CASIC_PACKET: CasicPacket = CasicPacket {

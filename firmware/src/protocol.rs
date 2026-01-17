@@ -18,7 +18,7 @@ const MAX_RESPONSE_PAYLOAD: usize = 256;
 const MAX_RESPONSE_LEN: usize = 2 + MAX_RESPONSE_PAYLOAD;
 const READ_CHUNK_MAX_DATA: usize = 254;
 const LIST_DIR_RESPONSE_MAX: usize = 128;
-const MAX_AGNSS_MESSAGES: usize = 64;
+const MAX_AGNSS_MESSAGES: usize = 70;
 const MAX_AGNSS_MESSAGE_SIZE: usize = 568;
 
 #[derive(Clone, Copy)]
@@ -255,22 +255,35 @@ impl FileTransferProtocol {
     fn handle_start_agnss_write(&mut self) -> Option<usize> {
         self.agnss_len = 0;
         self.agnss_write_in_progress = true;
+        defmt::info!("AGNSS write start");
         Some(self.encode_empty_response())
     }
 
     fn handle_write_agnss_chunk(&mut self, payload: &[u8]) -> Option<usize> {
         if !self.agnss_write_in_progress {
+            defmt::warn!("AGNSS write chunk ignored: not in progress");
             return Some(self.encode_empty_response());
         }
         if payload.len() < 2 {
+            defmt::warn!("AGNSS write chunk ignored: payload too short");
             return Some(self.encode_empty_response());
         }
 
         let chunk_size = u16::from_le_bytes([payload[0], payload[1]]) as usize;
         if chunk_size == 0 || chunk_size > payload.len().saturating_sub(2) {
+            defmt::warn!(
+                "AGNSS write chunk ignored: invalid size {} payload {}",
+                chunk_size,
+                payload.len()
+            );
             return Some(self.encode_empty_response());
         }
         if chunk_size > MAX_AGNSS_MESSAGE_SIZE || self.agnss_len >= self.agnss_messages.len() {
+            defmt::warn!(
+                "AGNSS write chunk ignored: size {} count {}",
+                chunk_size,
+                self.agnss_len
+            );
             return Some(self.encode_empty_response());
         }
 
@@ -279,12 +292,19 @@ impl FileTransferProtocol {
         msg.data[..chunk_size].copy_from_slice(&payload[2..2 + chunk_size]);
         self.agnss_messages[self.agnss_len] = msg;
         self.agnss_len += 1;
+        defmt::debug!(
+            "AGNSS chunk stored: {} bytes (count {}/{})",
+            chunk_size,
+            self.agnss_len,
+            self.agnss_messages.len()
+        );
 
         Some(self.encode_empty_response())
     }
 
     async fn handle_end_agnss_write(&mut self) -> Option<usize> {
         if !self.agnss_write_in_progress {
+            defmt::warn!("AGNSS write end ignored: not in progress");
             return Some(self.encode_empty_response());
         }
         self.agnss_write_in_progress = false;
@@ -300,7 +320,19 @@ impl FileTransferProtocol {
             count += 1;
         }
 
-        let _ = gps::set_agnss_message_queue(&ready[..count]).await;
+        defmt::info!("AGNSS write end: {} messages", count);
+        match gps::set_agnss_message_queue(&ready[..count]).await {
+            Ok(()) => {
+                defmt::info!("AGNSS queue set");
+            }
+            Err(err) => {
+                let err_tag = match err {
+                    gps::AgnssQueueError::TooManyMessages => "TooManyMessages",
+                    gps::AgnssQueueError::MessageTooLarge => "MessageTooLarge",
+                };
+                defmt::warn!("AGNSS queue set failed: {}", err_tag);
+            }
+        }
         Some(self.encode_empty_response())
     }
 
