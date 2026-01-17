@@ -563,7 +563,16 @@ fn format_local_time(info: &SystemInfo, tz_cache: &mut TzCache) -> String<32> {
     
     // Get UTC offset if we have valid location
     let offset = if info.location_valid {
-        tz_cache.get_offset(info.latitude as f32, info.longitude as f32)
+        tz_cache.get_offset(
+            info.latitude as f32,
+            info.longitude as f32,
+            info.year,
+            info.month,
+            info.day,
+            info.hour,
+            info.minute,
+            info.second,
+        )
     } else {
         crate::timezone::UtcOffset::from_minutes(0)
     };

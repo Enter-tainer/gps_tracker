@@ -1078,20 +1078,28 @@ fn date_time_to_unix_timestamp(
     minute: u8,
     second: u8,
 ) -> u32 {
-    if year < 1970 || year > 2038 {
+    if year < 1970 || year > 2100 {
         return 0;
     }
-    let mut days = (year as u32 - 1970) * 365;
-    let mut y = 1972;
-    while y < year {
-        days += 1;
-        y += 4;
+    if month == 0 || month > 12 || hour >= 24 || minute >= 60 || second >= 60 {
+        return 0;
     }
-    let is_leap = year % 4 == 0;
-    if is_leap && month > 2 {
-        days += 1;
+
+    let year_minus_one = (year - 1) as u32;
+    let leap_years = year_minus_one / 4 - year_minus_one / 100 + year_minus_one / 400;
+    let base_year_minus_one = 1969u32;
+    let base_leaps =
+        base_year_minus_one / 4 - base_year_minus_one / 100 + base_year_minus_one / 400;
+    let mut days = (year as u32 - 1970) * 365 + (leap_years - base_leaps);
+
+    let is_leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+    let mut days_in_month = [0u8, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    if is_leap {
+        days_in_month[2] = 29;
     }
-    let days_in_month = [0u8, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    if day == 0 || day > days_in_month[month as usize] {
+        return 0;
+    }
     for m in 1..month {
         days += days_in_month[m as usize] as u32;
     }
