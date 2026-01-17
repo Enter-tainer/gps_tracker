@@ -8,7 +8,8 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_time::{Instant, Timer};
-use embedded_graphics::mono_font::ascii::FONT_5X7;
+use embedded_graphics::image::{Image, ImageRaw};
+use embedded_graphics::mono_font::ascii::FONT_6X9;
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;
@@ -19,13 +20,105 @@ use ssd1306::{I2CDisplayInterface, Ssd1306};
 use ssd1306::mode::BufferedGraphicsMode;
 use ssd1306::prelude::{DisplayConfig, DisplayRotation, DisplaySize128x64, I2CInterface};
 
+// Ferris logo bitmap: 64x42 pixels, 1-bit per pixel (MSB first)
+// Each row is 8 bytes (64 bits), 42 rows total = 336 bytes
+const FERRIS_WIDTH: u32 = 64;
+#[allow(dead_code)]
+const FERRIS_HEIGHT: u32 = 42;
+const FERRIS_LOGO: [u8; 336] = [
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Row 0
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Row 1
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Row 2
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Row 3
+    0x00, 0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, // Row 4
+    0x00, 0x00, 0x00, 0x19, 0xCC, 0x00, 0x00, 0x00, // Row 5
+    0x00, 0x00, 0x03, 0x3F, 0xDC, 0xC0, 0x00, 0x00, // Row 6
+    0x00, 0x00, 0x03, 0xFF, 0xFF, 0xE0, 0x00, 0x00, // Row 7
+    0x00, 0x00, 0x13, 0xFF, 0xFF, 0xE4, 0x00, 0x00, // Row 8
+    0x00, 0x00, 0x3F, 0xFF, 0xFF, 0xFE, 0x00, 0x00, // Row 9
+    0x00, 0x00, 0x3F, 0xFF, 0xFF, 0xFE, 0x00, 0x30, // Row 10
+    0x04, 0x01, 0xBF, 0xFF, 0xFF, 0xFC, 0xC0, 0xE2, // Row 11
+    0x06, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xC1, 0xE6, // Row 12
+    0x67, 0x81, 0xFF, 0xFF, 0xFF, 0xFF, 0xC3, 0xE7, // Row 13
+    0x77, 0x81, 0xFF, 0xFF, 0xFF, 0xFF, 0xC3, 0xEF, // Row 14
+    0xF7, 0xCF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFB, 0xEF, // Row 15
+    0xFF, 0xCF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFB, 0xFE, // Row 16
+    0xFF, 0xCF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFB, 0xFE, // Row 17
+    0x7F, 0xC7, 0xFF, 0xFF, 0xFF, 0xFF, 0xF3, 0xFC, // Row 18
+    0x3F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xF8, // Row 19
+    0x1F, 0xBF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xF0, // Row 20
+    0x0F, 0xBF, 0xFF, 0xEF, 0xFF, 0xFF, 0xFF, 0xE0, // Row 21
+    0x03, 0xDF, 0xFF, 0xE7, 0xFB, 0xFF, 0xFF, 0xC0, // Row 22
+    0x03, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x80, // Row 23
+    0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, // Row 24
+    0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x80, // Row 25
+    0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0, // Row 26
+    0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0, // Row 27
+    0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xDB, 0xC0, // Row 28
+    0x00, 0xF7, 0x7F, 0xFF, 0xFF, 0xFF, 0x3F, 0x80, // Row 29
+    0x00, 0x7B, 0x0F, 0xFF, 0xFF, 0xF8, 0x37, 0x00, // Row 30
+    0x00, 0x3D, 0x80, 0x3F, 0xFF, 0x00, 0x67, 0x00, // Row 31
+    0x00, 0x1D, 0xC0, 0x00, 0x00, 0x00, 0x6E, 0x00, // Row 32
+    0x00, 0x0E, 0xC0, 0x00, 0x00, 0x00, 0x4C, 0x00, // Row 33
+    0x00, 0x07, 0x00, 0x00, 0x00, 0x00, 0x18, 0x00, // Row 34
+    0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x18, 0x00, // Row 35
+    0x00, 0x01, 0x80, 0x00, 0x00, 0x00, 0x10, 0x00, // Row 36
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Row 37
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Row 38
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Row 39
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Row 40
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Row 41
+];
+
+const LOGO_DISPLAY_MS: u64 = 2000;
+
+// USB_ICON bitmap: 32x32 pixels, 1-bit per pixel (MSB first)
+// Each row is 4 bytes (32 bits), 32 rows total = 128 bytes
+const USB_ICON_WIDTH: u32 = 32;
+#[allow(dead_code)]
+const USB_ICON_HEIGHT: u32 = 32;
+const USB_ICON: [u8; 128] = [
+    0xFF, 0xFF, 0xFF, 0xFF, // Row 0
+    0xFF, 0xFF, 0xFF, 0xFF, // Row 1
+    0xFF, 0xFF, 0xFF, 0xFF, // Row 2
+    0xFF, 0xFF, 0xFF, 0xFF, // Row 3
+    0xFF, 0xFF, 0xFF, 0xFF, // Row 4
+    0xFF, 0xFF, 0xFF, 0xFF, // Row 5
+    0xFF, 0x80, 0x00, 0x0F, // Row 6
+    0xFE, 0x00, 0x00, 0x0F, // Row 7
+    0xF8, 0x00, 0x00, 0x1F, // Row 8
+    0xF0, 0x00, 0x00, 0x01, // Row 9
+    0xE0, 0x00, 0x00, 0x00, // Row 10
+    0xE0, 0x00, 0x60, 0x00, // Row 11
+    0xE3, 0x09, 0x99, 0xFC, // Row 12
+    0x83, 0x09, 0x81, 0x0C, // Row 13
+    0x03, 0x19, 0x81, 0x18, // Row 14
+    0x03, 0x18, 0x71, 0xF8, // Row 15
+    0x02, 0x18, 0x19, 0x18, // Row 16
+    0x03, 0x33, 0x1B, 0x18, // Row 17
+    0xC3, 0xF1, 0xF3, 0xF8, // Row 18
+    0xC0, 0x00, 0x00, 0x01, // Row 19
+    0xE0, 0x00, 0x00, 0x01, // Row 20
+    0xE0, 0x00, 0x00, 0x07, // Row 21
+    0xF0, 0x00, 0x00, 0x7F, // Row 22
+    0xF8, 0x00, 0x00, 0x7F, // Row 23
+    0xFF, 0x80, 0x00, 0xFF, // Row 24
+    0xFF, 0xFF, 0xFF, 0xFF, // Row 25
+    0xFF, 0xFF, 0xFF, 0xFF, // Row 26
+    0xFF, 0xFF, 0xFF, 0xFF, // Row 27
+    0xFF, 0xFF, 0xFF, 0xFF, // Row 28
+    0xFF, 0xFF, 0xFF, 0xFF, // Row 29
+    0xFF, 0xFF, 0xFF, 0xFF, // Row 30
+    0xFF, 0xFF, 0xFF, 0xFF, // Row 31
+];
+
 use crate::battery::estimate_battery_level;
 use crate::system_info::{GpsState, SystemInfo, SYSTEM_INFO};
 
 const DISPLAY_UPDATE_INTERVAL_MS: u64 = 100;
 const DISPLAY_TIMEOUT_MS: u64 = 30_000;
 const SCREEN_WIDTH: i32 = 128;
-const LINE_HEIGHT: i32 = 8;
+const LINE_HEIGHT: i32 = 9;
 
 type SharedI2c = I2cDevice<'static, NoopRawMutex, twim::Twim<'static>>;
 type Display = Ssd1306<I2CInterface<SharedI2c>, DisplaySize128x64, BufferedGraphicsMode<DisplaySize128x64>>;
@@ -56,23 +149,21 @@ pub async fn display_task(i2c: SharedI2c) {
         return;
     }
 
-    let mut display_on = false;
+    // Show startup logo
+    let _ = display.set_display_on(true);
+    render_logo(&mut display);
+    Timer::after_millis(LOGO_DISPLAY_MS).await;
+
+    let mut display_on = true;
     let mut last_activity = Instant::now();
     let mut usb_mode = false;
 
-    let text_style = MonoTextStyle::new(&FONT_5X7, BinaryColor::On);
+    let text_style = MonoTextStyle::new(&FONT_6X9, BinaryColor::On);
     let text_settings = TextStyleBuilder::new().baseline(Baseline::Top).build();
 
-    handle_command(
-        DisplayCommand::TurnOn,
-        &mut display,
-        &mut display_on,
-        &mut last_activity,
-        &mut usb_mode,
-        &text_style,
-        text_settings,
-    )
-    .await;
+    // Render first frame after logo
+    let info = *SYSTEM_INFO.lock().await;
+    render_frame(&mut display, &text_style, text_settings, &info);
 
     loop {
         if display_on {
@@ -216,6 +307,41 @@ fn turn_display_off(display: &mut Display, display_on: &mut bool) {
     *display_on = false;
 }
 
+fn render_logo(display: &mut Display) {
+    let _ = display.clear(BinaryColor::Off);
+
+    let text_style = MonoTextStyle::new(&FONT_6X9, BinaryColor::On);
+    let text_settings = TextStyleBuilder::new().baseline(Baseline::Top).build();
+
+    // Top text: "MGT GPS Tracker"
+    let title = "MGT GPS Tracker";
+    let title_width = title.len() as i32 * 6; // FONT_6X9 is 6 pixels wide
+    let title_x = (128 - title_width) / 2;
+    Text::with_text_style(title, Point::new(title_x, 0), text_style, text_settings)
+        .draw(display)
+        .ok();
+
+    // Create raw image from bitmap data (MSB first format)
+    let raw_image: ImageRaw<BinaryColor> = ImageRaw::new(&FERRIS_LOGO, FERRIS_WIDTH);
+
+    // Center the logo vertically (offset down a bit for title)
+    let x = (128 - FERRIS_WIDTH as i32) / 2;
+    let y = 10; // Start below title
+
+    let image = Image::new(&raw_image, Point::new(x, y));
+    let _ = image.draw(display);
+
+    // Bottom text: "Powered by Rust"
+    let bottom = "Powered by Rust";
+    let bottom_width = bottom.len() as i32 * 6;
+    let bottom_x = (128 - bottom_width) / 2;
+    Text::with_text_style(bottom, Point::new(bottom_x, 55), text_style, text_settings)
+        .draw(display)
+        .ok();
+
+    let _ = display.flush();
+}
+
 fn render_frame(
     display: &mut Display,
     text_style: &MonoTextStyle<'_, BinaryColor>,
@@ -224,38 +350,32 @@ fn render_frame(
 ) {
     let _ = display.clear(BinaryColor::Off);
 
-    let mut line = String::<32>::new();
-    line.push_str("Spd:").ok();
+    // Line 0: Speed (left) + Battery (right)
+    let mut speed_str = String::<32>::new();
+    speed_str.push_str("Spd:").ok();
     if info.speed >= 0.0 {
-        let _ = write!(line, "{:.1}", info.speed);
+        let _ = write!(speed_str, "{:.1}", info.speed);
     } else {
-        line.push_str("N/A").ok();
+        speed_str.push_str("N/A").ok();
     }
     if info.is_stationary {
-        line.push_str(" S").ok();
+        speed_str.push_str(" S").ok();
     }
-    Text::with_text_style(&line, Point::new(0, 0), *text_style, text_settings)
+    Text::with_text_style(&speed_str, Point::new(0, 0), *text_style, text_settings)
         .draw(display)
         .ok();
 
-    let mut course = String::<16>::new();
-    course.push_str("Crs:").ok();
-    if info.course >= 0.0 {
-        let _ = write!(course, "{:.0}", info.course);
+    // Battery on right side of line 0
+    let mut battery = String::<16>::new();
+    if info.battery_voltage >= 0.0 {
+        let percent = estimate_battery_level(info.battery_voltage * 1000.0);
+        let _ = write!(battery, "{:.0}%", percent);
     } else {
-        course.push_str("N/A").ok();
+        battery.push_str("N/A").ok();
     }
-    let speed_width = text_width(text_style, &line);
-    let course_width = text_width(text_style, &course);
-    let mut course_x = SCREEN_WIDTH - 1 - course_width;
-    let min_x = speed_width + 5;
-    if course_x < min_x {
-        course_x = min_x;
-    }
-    if course_x < 0 {
-        course_x = 0;
-    }
-    Text::with_text_style(&course, Point::new(course_x, 0), *text_style, text_settings)
+    let battery_width = text_width(text_style, &battery);
+    let battery_x = SCREEN_WIDTH - 1 - battery_width;
+    Text::with_text_style(&battery, Point::new(battery_x, 0), *text_style, text_settings)
         .draw(display)
         .ok();
 
@@ -328,55 +448,49 @@ fn render_frame(
     .draw(display)
     .ok();
 
-    let mut battery = String::<32>::new();
-    battery.push_str("Bat:").ok();
-    if info.battery_voltage >= 0.0 {
-        let _ = write!(battery, "{:.2}V/", info.battery_voltage);
-        let percent = estimate_battery_level(info.battery_voltage * 1000.0);
-        let _ = write!(battery, "{:.0}%", percent);
-    } else {
-        battery.push_str("N/A").ok();
-    }
-    let battery_width = text_width(text_style, &battery);
-    let mut battery_x = SCREEN_WIDTH - 1 - battery_width;
-    if battery_x < 0 {
-        battery_x = 0;
-    }
-    Text::with_text_style(
-        &battery,
-        Point::new(battery_x, LINE_HEIGHT * 7),
-        *text_style,
-        text_settings,
-    )
-    .draw(display)
-    .ok();
-
     let _ = display.flush();
 }
 
 fn render_usb_mode(
     display: &mut Display,
-    text_style: &MonoTextStyle<'_, BinaryColor>,
-    text_settings: embedded_graphics::text::TextStyle,
+    _text_style: &MonoTextStyle<'_, BinaryColor>,
+    _text_settings: embedded_graphics::text::TextStyle,
 ) {
     let _ = display.clear(BinaryColor::Off);
 
-    Text::with_text_style(
-        "USB MODE",
-        Point::new(0, LINE_HEIGHT * 2),
-        *text_style,
-        text_settings,
-    )
-    .draw(display)
-    .ok();
-    Text::with_text_style(
-        "Transferring...",
-        Point::new(0, LINE_HEIGHT * 4),
-        *text_style,
-        text_settings,
-    )
-    .draw(display)
-    .ok();
+    let text_style = MonoTextStyle::new(&FONT_6X9, BinaryColor::On);
+    let text_settings = TextStyleBuilder::new().baseline(Baseline::Top).build();
+
+    // Top text: "USB Mass Storage"
+    let title = "USB Mass Storage";
+    let title_width = title.len() as i32 * 6;
+    let title_x = (128 - title_width) / 2;
+    Text::with_text_style(title, Point::new(title_x, 2), text_style, text_settings)
+        .draw(display)
+        .ok();
+
+    // Draw USB icon from bitmap (centered)
+    let raw_image: ImageRaw<BinaryColor> = ImageRaw::new(&USB_ICON, USB_ICON_WIDTH);
+    let icon_x = (128 - USB_ICON_WIDTH as i32) / 2;
+    let icon_y = 14;
+    let image = Image::new(&raw_image, Point::new(icon_x, icon_y));
+    let _ = image.draw(display);
+
+    // Status text
+    let status = "Connected";
+    let status_width = status.len() as i32 * 6;
+    let status_x = (128 - status_width) / 2;
+    Text::with_text_style(status, Point::new(status_x, 48), text_style, text_settings)
+        .draw(display)
+        .ok();
+
+    // Bottom hint
+    let hint = "Safe to transfer";
+    let hint_width = hint.len() as i32 * 6;
+    let hint_x = (128 - hint_width) / 2;
+    Text::with_text_style(hint, Point::new(hint_x, 57), text_style, text_settings)
+        .draw(display)
+        .ok();
 
     let _ = display.flush();
 }
