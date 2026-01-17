@@ -10,3 +10,5 @@ full: 40ma, 192mW
 full + no screen: 33ma, 159mW
 
 full 40ma = screen(7ma) + gps(26ma) + idle(6.9ma)
+
+rust ver: idle 1.6ma
