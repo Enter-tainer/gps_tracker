@@ -1,16 +1,17 @@
-use core::cell::Cell;
+use core::cell::{Cell, RefCell};
 use core::cmp::Ordering;
 
 use embassy_embedded_hal::SetConfig;
 use embassy_nrf::gpio::Output;
 use embassy_nrf::spim::{self, Spim};
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, ThreadModeRawMutex};
+use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use embassy_sync::mutex::Mutex;
 use embassy_time::{Delay, Instant};
 use embedded_hal::spi::{Operation, SpiBus, SpiDevice};
 use embedded_sdmmc::{
-    DirEntry, Mode, RawDirectory, RawFile, SdCard, ShortFileName, TimeSource, Timestamp,
-    VolumeIdx, VolumeManager,
+    DirEntry, Mode, RawDirectory, RawFile, RawVolume, SdCard, ShortFileName, TimeSource,
+    Timestamp, VolumeIdx, VolumeManager,
 };
 use libm::{round, roundf};
 
@@ -34,6 +35,28 @@ pub enum ListDirOutcome {
 }
 
 static SD_LOGGER: Mutex<CriticalSectionRawMutex, Option<SdLogger>> = Mutex::new(None);
+static USB_CARD: BlockingMutex<ThreadModeRawMutex, RefCell<Option<UsbSdCard>>> =
+    BlockingMutex::new(RefCell::new(None));
+
+struct UsbSdCard {
+    card: SdCard<SdSpiDevice, Delay>,
+    init_frequency: spim::Frequency,
+    run_frequency: spim::Frequency,
+}
+
+impl UsbSdCard {
+    fn new(
+        card: SdCard<SdSpiDevice, Delay>,
+        init_frequency: spim::Frequency,
+        run_frequency: spim::Frequency,
+    ) -> Self {
+        Self {
+            card,
+            init_frequency,
+            run_frequency,
+        }
+    }
+}
 
 pub fn init_sd_logger(
     spi: Spim<'static>,
@@ -42,11 +65,78 @@ pub fn init_sd_logger(
     run_frequency: spim::Frequency,
 ) -> bool {
     cs.set_high();
-    if !send_idle_clocks(spi, cs, config, run_frequency) {
+    let init_frequency = config.frequency;
+    let Some(logger) = create_logger(spi, cs, config, init_frequency, run_frequency) else {
         defmt::warn!("SD idle clock preamble failed");
         return false;
+    };
+    if let Ok(mut guard) = SD_LOGGER.try_lock() {
+        *guard = Some(logger);
+        defmt::info!("SD logger initialized");
+        return true;
     }
+    defmt::warn!("SD logger init lock failed");
+    false
+}
+
+pub async fn enter_usb_mode() -> bool {
+    let logger = {
+        let mut guard = SD_LOGGER.lock().await;
+        guard.take()
+    };
+
+    if let Some(logger) = logger {
+        let usb_card = logger.into_usb_card();
+        USB_CARD.lock(|card| {
+            *card.borrow_mut() = Some(usb_card);
+        });
+        defmt::info!("enter_usb_mode: logger -> usb card");
+        return true;
+    }
+
+    let has_usb = USB_CARD.lock(|card| card.borrow().is_some());
+    if has_usb {
+        defmt::info!("enter_usb_mode: already in usb mode");
+    } else {
+        defmt::warn!("enter_usb_mode: no logger or usb card");
+    }
+    has_usb
+}
+
+pub async fn exit_usb_mode() -> bool {
+    let usb_card = USB_CARD.lock(|card| card.borrow_mut().take());
+    let Some(usb_card) = usb_card else {
+        let guard = SD_LOGGER.lock().await;
+        let has_logger = guard.is_some();
+        if has_logger {
+            defmt::info!("exit_usb_mode: logger already active");
+        } else {
+            defmt::warn!("exit_usb_mode: no usb card or logger");
+        }
+        return has_logger;
+    };
+
+    let Some(logger) = rebuild_logger(usb_card) else {
+        defmt::warn!("exit_usb_mode: rebuild logger failed");
+        return false;
+    };
+    let mut guard = SD_LOGGER.lock().await;
+    *guard = Some(logger);
+    defmt::info!("exit_usb_mode: logger restored");
     true
+}
+
+pub fn with_usb_card<F, R>(f: F) -> Option<R>
+where
+    F: FnOnce(&mut SdCard<SdSpiDevice, Delay>) -> R,
+{
+    USB_CARD.lock(|card| {
+        let mut card = card.borrow_mut();
+        match card.as_mut() {
+            Some(usb_card) => Some(f(&mut usb_card.card)),
+            None => None,
+        }
+    })
 }
 
 pub async fn append_gpx_point(
@@ -110,31 +200,24 @@ pub async fn delete_file(path: &[u8]) -> bool {
     logger.delete_transfer_file(path)
 }
 
-fn send_idle_clocks(
+fn create_logger(
     mut spi: Spim<'static>,
     mut cs: Output<'static>,
     config: spim::Config,
+    init_frequency: spim::Frequency,
     run_frequency: spim::Frequency,
-) -> bool {
+) -> Option<SdLogger> {
     cs.set_high();
     let idle = [0xFFu8; 10];
-    if SpiBus::write(&mut spi, &idle).is_err() {
-        return false;
-    }
+    SpiBus::write(&mut spi, &idle).ok()?;
     let _ = SpiBus::flush(&mut spi);
 
     let sd_spi = SdSpiDevice::new(spi, cs, config);
     let delay = Delay;
     let sd_card = SdCard::new(sd_spi, delay);
     let volume_mgr = VolumeManager::new(sd_card, FixedTimeSource);
-    let volume = match volume_mgr.open_raw_volume(VolumeIdx(0)) {
-        Ok(volume) => volume,
-        Err(_) => return false,
-    };
-    let root_dir = match volume_mgr.open_root_dir(volume) {
-        Ok(dir) => dir,
-        Err(_) => return false,
-    };
+    let volume = volume_mgr.open_raw_volume(VolumeIdx(0)).ok()?;
+    let root_dir = volume_mgr.open_root_dir(volume).ok()?;
 
     let _ = volume_mgr.device(|sd| {
         sd.spi(|spi| {
@@ -143,12 +226,40 @@ fn send_idle_clocks(
         FixedTimeSource
     });
 
-    let logger = SdLogger::new(volume_mgr, root_dir);
-    if let Ok(mut guard) = SD_LOGGER.try_lock() {
-        *guard = Some(logger);
-        return true;
-    }
-    false
+    Some(SdLogger::new(
+        volume_mgr,
+        volume,
+        root_dir,
+        init_frequency,
+        run_frequency,
+    ))
+}
+
+fn rebuild_logger(usb_card: UsbSdCard) -> Option<SdLogger> {
+    usb_card.card.spi(|spi| {
+        spi.set_frequency(usb_card.init_frequency);
+        let _ = spi.send_idle_clocks();
+    });
+    usb_card.card.mark_card_uninit();
+
+    let volume_mgr = VolumeManager::new(usb_card.card, FixedTimeSource);
+    let volume = volume_mgr.open_raw_volume(VolumeIdx(0)).ok()?;
+    let root_dir = volume_mgr.open_root_dir(volume).ok()?;
+
+    let _ = volume_mgr.device(|sd| {
+        sd.spi(|spi| {
+            spi.set_frequency(usb_card.run_frequency);
+        });
+        FixedTimeSource
+    });
+
+    Some(SdLogger::new(
+        volume_mgr,
+        volume,
+        root_dir,
+        usb_card.init_frequency,
+        usb_card.run_frequency,
+    ))
 }
 
 struct TransferState {
@@ -173,6 +284,7 @@ impl TransferState {
 
 struct SdLogger {
     volume_mgr: VolumeManager<SdCard<SdSpiDevice, Delay>, FixedTimeSource, 4, 4, 1>,
+    volume: RawVolume,
     root_dir: RawDirectory,
     current_file: Option<RawFile>,
     current_date: u32,
@@ -183,15 +295,21 @@ struct SdLogger {
     last_timestamp: u32,
     last_nrf_timestamp: u32,
     transfer: TransferState,
+    init_frequency: spim::Frequency,
+    run_frequency: spim::Frequency,
 }
 
 impl SdLogger {
     fn new(
         volume_mgr: VolumeManager<SdCard<SdSpiDevice, Delay>, FixedTimeSource, 4, 4, 1>,
+        volume: RawVolume,
         root_dir: RawDirectory,
+        init_frequency: spim::Frequency,
+        run_frequency: spim::Frequency,
     ) -> Self {
         Self {
             volume_mgr,
+            volume,
             root_dir,
             current_file: None,
             current_date: 0,
@@ -202,7 +320,28 @@ impl SdLogger {
             last_timestamp: 0,
             last_nrf_timestamp: 0,
             transfer: TransferState::new(),
+            init_frequency,
+            run_frequency,
         }
+    }
+
+    fn into_usb_card(mut self) -> UsbSdCard {
+        self.prepare_for_usb();
+        let (card, _time) = self.volume_mgr.free();
+        UsbSdCard::new(card, self.init_frequency, self.run_frequency)
+    }
+
+    fn prepare_for_usb(&mut self) {
+        let _ = self.flush_cache();
+        if let Some(file) = self.current_file.take() {
+            let _ = self.volume_mgr.close_file(file);
+        }
+        if let Some(file) = self.transfer.open_file.take() {
+            let _ = self.volume_mgr.close_file(file);
+        }
+        self.finish_listing();
+        let _ = self.volume_mgr.close_dir(self.root_dir);
+        let _ = self.volume_mgr.close_volume(self.volume);
     }
 
     fn append_gpx_point(
@@ -632,7 +771,7 @@ impl TimeSource for FixedTimeSource {
     }
 }
 
-struct SdSpiDevice {
+pub(crate) struct SdSpiDevice {
     spi: Spim<'static>,
     cs: Output<'static>,
     config: spim::Config,
@@ -648,10 +787,18 @@ impl SdSpiDevice {
         self.config.frequency = frequency;
         let _ = self.spi.set_config(&self.config);
     }
+
+    fn send_idle_clocks(&mut self) -> Result<(), embassy_nrf::spim::Error> {
+        self.cs.set_high();
+        let idle = [0xFFu8; 10];
+        SpiBus::write(&mut self.spi, &idle)?;
+        let _ = SpiBus::flush(&mut self.spi);
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum SdSpiError {
+pub(crate) enum SdSpiError {
     Spi(embassy_nrf::spim::Error),
 }
 

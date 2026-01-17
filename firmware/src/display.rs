@@ -36,6 +36,7 @@ pub enum DisplayCommand {
     TurnOn,
     TurnOff,
     ResetTimeout,
+    UsbMode,
 }
 
 static DISPLAY_COMMANDS: Channel<CriticalSectionRawMutex, DisplayCommand, 8> = Channel::new();
@@ -57,6 +58,7 @@ pub async fn display_task(i2c: SharedI2c) {
 
     let mut display_on = false;
     let mut last_activity = Instant::now();
+    let mut usb_mode = false;
 
     let text_style = MonoTextStyle::new(&FONT_5X7, BinaryColor::On);
     let text_settings = TextStyleBuilder::new().baseline(Baseline::Top).build();
@@ -66,6 +68,7 @@ pub async fn display_task(i2c: SharedI2c) {
         &mut display,
         &mut display_on,
         &mut last_activity,
+        &mut usb_mode,
         &text_style,
         text_settings,
     )
@@ -85,6 +88,7 @@ pub async fn display_task(i2c: SharedI2c) {
                         &mut display,
                         &mut display_on,
                         &mut last_activity,
+                        &mut usb_mode,
                         &text_style,
                         text_settings,
                     )
@@ -98,14 +102,19 @@ pub async fn display_task(i2c: SharedI2c) {
                             &mut display,
                             &mut display_on,
                             &mut last_activity,
+                            &mut usb_mode,
                             &text_style,
                             text_settings,
                         )
                         .await;
                         continue;
                     }
-                    let info = *SYSTEM_INFO.lock().await;
-                    render_frame(&mut display, &text_style, text_settings, &info);
+                    if usb_mode {
+                        render_usb_mode(&mut display, &text_style, text_settings);
+                    } else {
+                        let info = *SYSTEM_INFO.lock().await;
+                        render_frame(&mut display, &text_style, text_settings, &info);
+                    }
                 }
             }
         } else {
@@ -115,6 +124,7 @@ pub async fn display_task(i2c: SharedI2c) {
                 &mut display,
                 &mut display_on,
                 &mut last_activity,
+                &mut usb_mode,
                 &text_style,
                 text_settings,
             )
@@ -127,6 +137,7 @@ pub async fn display_task(i2c: SharedI2c) {
                 &mut display,
                 &mut display_on,
                 &mut last_activity,
+                &mut usb_mode,
                 &text_style,
                 text_settings,
             )
@@ -140,6 +151,7 @@ async fn handle_command(
     display: &mut Display,
     display_on: &mut bool,
     last_activity: &mut Instant,
+    usb_mode: &mut bool,
     text_style: &MonoTextStyle<'_, BinaryColor>,
     text_settings: embedded_graphics::text::TextStyle,
 ) {
@@ -149,20 +161,33 @@ async fn handle_command(
                 turn_display_off(display, display_on);
             } else {
                 turn_display_on(display, display_on, last_activity);
-                let info = *SYSTEM_INFO.lock().await;
-                render_frame(display, text_style, text_settings, &info);
+                if *usb_mode {
+                    render_usb_mode(display, text_style, text_settings);
+                } else {
+                    let info = *SYSTEM_INFO.lock().await;
+                    render_frame(display, text_style, text_settings, &info);
+                }
             }
         }
         DisplayCommand::TurnOn => {
             turn_display_on(display, display_on, last_activity);
-            let info = *SYSTEM_INFO.lock().await;
-            render_frame(display, text_style, text_settings, &info);
+            if *usb_mode {
+                render_usb_mode(display, text_style, text_settings);
+            } else {
+                let info = *SYSTEM_INFO.lock().await;
+                render_frame(display, text_style, text_settings, &info);
+            }
         }
         DisplayCommand::TurnOff => {
             turn_display_off(display, display_on);
         }
         DisplayCommand::ResetTimeout => {
             *last_activity = Instant::now();
+        }
+        DisplayCommand::UsbMode => {
+            *usb_mode = true;
+            turn_display_on(display, display_on, last_activity);
+            render_usb_mode(display, text_style, text_settings);
         }
     }
 }
@@ -320,6 +345,33 @@ fn render_frame(
     Text::with_text_style(
         &battery,
         Point::new(battery_x, LINE_HEIGHT * 7),
+        *text_style,
+        text_settings,
+    )
+    .draw(display)
+    .ok();
+
+    let _ = display.flush();
+}
+
+fn render_usb_mode(
+    display: &mut Display,
+    text_style: &MonoTextStyle<'_, BinaryColor>,
+    text_settings: embedded_graphics::text::TextStyle,
+) {
+    let _ = display.clear(BinaryColor::Off);
+
+    Text::with_text_style(
+        "USB MODE",
+        Point::new(0, LINE_HEIGHT * 2),
+        *text_style,
+        text_settings,
+    )
+    .draw(display)
+    .ok();
+    Text::with_text_style(
+        "Transferring...",
+        Point::new(0, LINE_HEIGHT * 4),
         *text_style,
         text_settings,
     )
