@@ -10,7 +10,7 @@ use embassy_sync::mutex::Mutex;
 use embassy_time::{Delay, Instant};
 use embedded_hal::spi::{Operation, SpiBus, SpiDevice};
 use embedded_sdmmc::{
-    DirEntry, Mode, RawDirectory, RawFile, RawVolume, SdCard, ShortFileName, TimeSource,
+    DirEntry, Error, Mode, RawDirectory, RawFile, RawVolume, SdCard, ShortFileName, TimeSource,
     Timestamp, VolumeIdx, VolumeManager,
 };
 use libm::{round, roundf};
@@ -20,7 +20,7 @@ const ENCODER_BUFFER_SIZE: usize = 64;
 const FULL_BLOCK_INTERVAL: usize = 64;
 const MAX_FILE_SIZE_BYTES: u64 = 1024 * 1024 * 1024;
 const MAX_GPX_FILES: usize = 64;
-const LOG_EXTENSION: &[u8] = b"GPX";
+const LOG_EXTENSION: &[u8] = b"gpz";
 pub const MAX_PATH_LENGTH: usize = 64;
 
 pub enum ListDirOutcome {
@@ -576,9 +576,28 @@ impl SdLogger {
             .open_file_in_dir(dir, file_name, Mode::ReadOnly)
         {
             Ok(file) => file,
-            Err(_) => {
-                self.close_dir_if_needed(dir, is_root);
-                return None;
+            Err(err) => {
+                let should_retry =
+                    matches!(err, Error::TooManyOpenFiles | Error::FileAlreadyOpen);
+                if should_retry {
+                    let _ = self.flush_cache();
+                    if let Some(file) = self.current_file.take() {
+                        let _ = self.volume_mgr.close_file(file);
+                    }
+                    match self
+                        .volume_mgr
+                        .open_file_in_dir(dir, file_name, Mode::ReadOnly)
+                    {
+                        Ok(file) => file,
+                        Err(_) => {
+                            self.close_dir_if_needed(dir, is_root);
+                            return None;
+                        }
+                    }
+                } else {
+                    self.close_dir_if_needed(dir, is_root);
+                    return None;
+                }
             }
         };
 

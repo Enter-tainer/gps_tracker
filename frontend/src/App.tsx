@@ -3,6 +3,7 @@ import {
   Activity,
   AlertTriangle,
   Bluetooth,
+  Download,
   Eye,
   FileDown,
   Folder,
@@ -12,7 +13,8 @@ import {
   RefreshCw,
   Satellite,
   Terminal,
-  Trash2
+  Trash2,
+  Upload
 } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "./components/ui/alert";
@@ -36,6 +38,8 @@ import { useLogger } from "./hooks/useLogger";
 import { processAGNSSData } from "./modules/agnss/CasicAgnssProcessor";
 import { createBleService } from "./services/bleService";
 import { createFileService } from "./services/fileService";
+import { createGpsDecoder } from "./services/gpsDecoder";
+import { createGpxConverter } from "./services/gpxConverter";
 import type { FileEntry, SysInfo } from "./types/ble";
 import { formatFileSize } from "./utils/helpers";
 
@@ -123,6 +127,9 @@ export default function App() {
   const [isListing, setIsListing] = useState(false);
   const [activeFileAction, setActiveFileAction] = useState<string | null>(null);
   const [gpxFileName, setGpxFileName] = useState<string | null>(null);
+  const [localGpxString, setLocalGpxString] = useState<string | null>(null);
+  const [localFileName, setLocalFileName] = useState<string | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
 
   const getReadyStatus = useCallback(() => {
     const connected = bleServiceRef.current?.isConnected() ?? false;
@@ -159,6 +166,103 @@ export default function App() {
     },
     [logger]
   );
+
+  const handleLocalFile = useCallback(
+    async (file: File) => {
+      if (!file.name.toLowerCase().endsWith(".gpz")) {
+        logger.error("Only .gpz files are supported.");
+        return;
+      }
+
+      logger.log(`Processing local file: ${file.name}`);
+      setStatusMessage(`Converting ${file.name}...`);
+
+      try {
+        const arrayBuffer = await file.arrayBuffer();
+        const decoder = createGpsDecoder();
+        const points = decoder.decode(arrayBuffer);
+
+        if (points.length === 0) {
+          logger.error("No GPS points found in file.");
+          setStatusMessage("No GPS points found.");
+          return;
+        }
+
+        const converter = createGpxConverter(logger, handlePreview);
+        const gpxString = converter.pointsToGpxString(points, file.name);
+
+        if (!gpxString) {
+          logger.error("Failed to convert to GPX.");
+          setStatusMessage("Conversion failed.");
+          return;
+        }
+
+        setLocalGpxString(gpxString);
+        setLocalFileName(file.name.replace(/\.gpz$/i, ".gpx"));
+
+        // Preview immediately
+        handlePreview(gpxString, file.name);
+        logger.success(`Converted ${points.length} points from ${file.name}`);
+        setStatusMessage(`Converted ${points.length} points.`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error(`Failed to process file: ${message}`);
+        setStatusMessage("File processing failed.");
+      }
+    },
+    [logger, handlePreview]
+  );
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      setIsDragOver(false);
+
+      const files = e.dataTransfer.files;
+      if (files.length > 0) {
+        handleLocalFile(files[0]);
+      }
+    },
+    [handleLocalFile]
+  );
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(false);
+  }, []);
+
+  const handleFileInput = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = e.target.files;
+      if (files && files.length > 0) {
+        handleLocalFile(files[0]);
+      }
+      e.target.value = "";
+    },
+    [handleLocalFile]
+  );
+
+  const handleDownloadLocalGpx = useCallback(() => {
+    if (!localGpxString || !localFileName) return;
+
+    const blob = new Blob([localGpxString], { type: "application/gpx+xml" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = localFileName;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 100);
+    logger.success(`Downloaded: ${localFileName}`);
+  }, [localGpxString, localFileName, logger]);
 
   useEffect(() => {
     const supported = typeof navigator !== "undefined" && !!navigator.bluetooth;
@@ -703,6 +807,55 @@ export default function App() {
                 </CardContent>
               </Card>
             </div>
+
+            <Card className="animate-fade-up">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Upload className="h-5 w-5 text-primary" />
+                  Local GPZ Converter
+                </CardTitle>
+                <CardDescription>
+                  Drop a .gpz file to convert and preview. Works offline.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div
+                  onDrop={handleDrop}
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  className={`flex flex-col items-center justify-center rounded-lg border-2 border-dashed p-8 transition-colors ${
+                    isDragOver
+                      ? "border-primary bg-primary/5"
+                      : "border-border/70 bg-white/60 hover:border-primary/50"
+                  }`}
+                >
+                  <Upload className="mb-3 h-8 w-8 text-muted-foreground" />
+                  <p className="mb-2 text-sm text-muted-foreground">
+                    Drag & drop a .gpz file here
+                  </p>
+                  <label className="cursor-pointer">
+                    <span className="text-sm font-medium text-primary hover:underline">
+                      or click to browse
+                    </span>
+                    <input
+                      type="file"
+                      accept=".gpz"
+                      onChange={handleFileInput}
+                      className="hidden"
+                    />
+                  </label>
+                </div>
+                {localGpxString && localFileName && (
+                  <div className="flex items-center justify-between rounded-md border border-border/70 bg-white/70 p-3">
+                    <span className="text-sm font-medium">{localFileName}</span>
+                    <Button variant="outline" size="sm" onClick={handleDownloadLocalGpx}>
+                      <Download className="h-4 w-4" />
+                      Download GPX
+                    </Button>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
 
             <Card className="animate-fade-up">
               <CardHeader>
