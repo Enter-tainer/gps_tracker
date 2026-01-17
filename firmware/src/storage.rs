@@ -333,15 +333,45 @@ impl SdLogger {
 
     fn prepare_for_usb(&mut self) {
         let _ = self.flush_cache();
-        if let Some(file) = self.current_file.take() {
-            let _ = self.volume_mgr.close_file(file);
-        }
+        self.close_current_file();
         if let Some(file) = self.transfer.open_file.take() {
             let _ = self.volume_mgr.close_file(file);
         }
         self.finish_listing();
         let _ = self.volume_mgr.close_dir(self.root_dir);
         let _ = self.volume_mgr.close_volume(self.volume);
+    }
+
+    fn close_current_file(&mut self) {
+        if let Some(file) = self.current_file.take() {
+            let _ = self.volume_mgr.close_file(file);
+        }
+    }
+
+    fn current_date_parts(&self) -> Option<(u16, u8, u8)> {
+        if self.current_date == 0 {
+            return None;
+        }
+        let year = (self.current_date / 10000) as u16;
+        let month = ((self.current_date / 100) % 100) as u8;
+        let day = (self.current_date % 100) as u8;
+        Some((year, month, day))
+    }
+
+    fn open_log_file_for_current_date(&mut self) -> Option<RawFile> {
+        let (year, month, day) = self.current_date_parts()?;
+        let filename = build_log_filename(year, month, day);
+        self.volume_mgr
+            .open_file_in_dir(self.root_dir, filename.as_str(), Mode::ReadWriteCreateOrAppend)
+            .ok()
+    }
+
+    fn is_current_log_file(&self, file_name: &str) -> bool {
+        let Some((year, month, day)) = self.current_date_parts() else {
+            return false;
+        };
+        let filename = build_log_filename(year, month, day);
+        filename.as_str().eq_ignore_ascii_case(file_name)
     }
 
     fn append_gpx_point(
@@ -405,18 +435,25 @@ impl SdLogger {
             return true;
         }
 
-        let Some(file) = self.current_file else {
-            return false;
+        let file = match self.current_file {
+            Some(file) => file,
+            None => {
+                let Some(file) = self.open_log_file_for_current_date() else {
+                    return false;
+                };
+                self.current_file = Some(file);
+                file
+            }
         };
 
-        if self
+        let write_ok = self
             .volume_mgr
             .write(file, &self.cache[..self.cache_len])
-            .is_err()
-        {
-            return false;
-        }
-        if self.volume_mgr.flush_file(file).is_err() {
+            .is_ok();
+        let flush_ok = write_ok && self.volume_mgr.flush_file(file).is_ok();
+        self.close_current_file();
+
+        if !flush_ok {
             return false;
         }
 
@@ -431,31 +468,17 @@ impl SdLogger {
         };
         let new_date = (year as u32) * 10000 + (month as u32) * 100 + (day as u32);
 
-        if new_date == self.current_date && self.current_file.is_some() {
+        if new_date == self.current_date && self.current_date != 0 {
             return true;
         }
 
-        if self.current_file.is_some() {
-            let _ = self.flush_cache();
-            if let Some(file) = self.current_file.take() {
-                let _ = self.volume_mgr.close_file(file);
-            }
+        if self.current_date != 0 && !self.flush_cache() {
+            return false;
         }
 
+        self.close_current_file();
+
         self.manage_old_files();
-
-        let filename = build_log_filename(year, month, day);
-        let file = match self
-            .volume_mgr
-            .open_file_in_dir(self.root_dir, filename.as_str(), Mode::ReadWriteCreateOrAppend)
-        {
-            Ok(file) => file,
-            Err(_) => {
-                return false;
-            }
-        };
-
-        self.current_file = Some(file);
         self.current_date = new_date;
         self.encoder.clear();
         true
@@ -581,9 +604,7 @@ impl SdLogger {
                     matches!(err, Error::TooManyOpenFiles | Error::FileAlreadyOpen);
                 if should_retry {
                     let _ = self.flush_cache();
-                    if let Some(file) = self.current_file.take() {
-                        let _ = self.volume_mgr.close_file(file);
-                    }
+                    self.close_current_file();
                     match self
                         .volume_mgr
                         .open_file_in_dir(dir, file_name, Mode::ReadOnly)
@@ -648,6 +669,9 @@ impl SdLogger {
             return false;
         }
 
+        let deleting_current = dir_path.is_empty() && self.is_current_log_file(file_name);
+        self.close_current_file();
+
         let (dir, is_root) = match self.open_dir_from_path(dir_path.as_bytes()) {
             Ok(result) => result,
             Err(_) => return false,
@@ -656,6 +680,11 @@ impl SdLogger {
         let entry = match self.volume_mgr.find_directory_entry(dir, file_name) {
             Ok(entry) => entry,
             Err(_) => {
+                if deleting_current {
+                    self.cache_len = 0;
+                    self.cache_dirty = false;
+                    self.encoder.clear();
+                }
                 self.close_dir_if_needed(dir, is_root);
                 return false;
             }
@@ -670,6 +699,11 @@ impl SdLogger {
             .volume_mgr
             .delete_file_in_dir(dir, file_name)
             .is_ok();
+        if ok && deleting_current {
+            self.cache_len = 0;
+            self.cache_dirty = false;
+            self.encoder.clear();
+        }
         self.close_dir_if_needed(dir, is_root);
         ok
     }
@@ -768,6 +802,11 @@ fn short_name_to_buf(name: &ShortFileName, out: &mut [u8; MAX_PATH_LENGTH]) -> u
         len += 1;
         let ext_len = core::cmp::min(ext.len(), out.len() - len);
         out[len..len + ext_len].copy_from_slice(&ext[..ext_len]);
+        if ext.eq_ignore_ascii_case(LOG_EXTENSION) {
+            for byte in &mut out[len..len + ext_len] {
+                *byte = byte.to_ascii_lowercase();
+            }
+        }
         len += ext_len;
     }
 
@@ -779,7 +818,7 @@ fn should_skip_entry(entry: &DirEntry) -> bool {
 }
 
 fn is_gpx_entry(entry: &DirEntry) -> bool {
-    entry.name.extension() == LOG_EXTENSION
+    entry.name.extension().eq_ignore_ascii_case(LOG_EXTENSION)
 }
 
 struct FixedTimeSource;
@@ -1009,9 +1048,9 @@ fn build_log_filename(year: u16, month: u8, day: u8) -> Filename {
     buf[6] = day_digits[0];
     buf[7] = day_digits[1];
     buf[8] = b'.';
-    buf[9] = b'G';
-    buf[10] = b'P';
-    buf[11] = b'X';
+    buf[9] = LOG_EXTENSION[0];
+    buf[10] = LOG_EXTENSION[1];
+    buf[11] = LOG_EXTENSION[2];
     Filename { buf, len: 12 }
 }
 
@@ -1022,7 +1061,7 @@ struct Filename {
 
 impl Filename {
     fn as_str(&self) -> &str {
-        core::str::from_utf8(&self.buf[..self.len]).unwrap_or("00000000.GPX")
+        core::str::from_utf8(&self.buf[..self.len]).unwrap_or("00000000.gpz")
     }
 }
 
