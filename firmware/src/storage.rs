@@ -358,20 +358,72 @@ impl SdLogger {
         Some((year, month, day))
     }
 
+    fn ensure_log_directory(&mut self, year: u16, month: u8) -> Result<RawDirectory, ()> {
+        let year_digits = year_to_digits(year);
+        let month_digits = two_digits(month);
+        let year_str = bytes_to_str(&year_digits);
+        let month_str = bytes_to_str(&month_digits);
+
+        let year_dir = match self.volume_mgr.open_dir(self.root_dir, year_str) {
+            Ok(dir) => dir,
+            Err(_) => {
+                if self.volume_mgr.make_dir_in_dir(self.root_dir, year_str).is_err() {
+                    return Err(());
+                }
+                match self.volume_mgr.open_dir(self.root_dir, year_str) {
+                    Ok(dir) => dir,
+                    Err(_) => return Err(()),
+                }
+            }
+        };
+
+        let month_dir = match self.volume_mgr.open_dir(year_dir, month_str) {
+            Ok(month_dir) => month_dir,
+            Err(_) => {
+                if self.volume_mgr.make_dir_in_dir(year_dir, month_str).is_err() {
+                    let _ = self.volume_mgr.close_dir(year_dir);
+                    return Err(());
+                }
+                match self.volume_mgr.open_dir(year_dir, month_str) {
+                    Ok(month_dir) => month_dir,
+                    Err(_) => {
+                        let _ = self.volume_mgr.close_dir(year_dir);
+                        return Err(());
+                    }
+                }
+            }
+        };
+
+        let _ = self.volume_mgr.close_dir(year_dir);
+        Ok(month_dir)
+    }
+
     fn open_log_file_for_current_date(&mut self) -> Option<RawFile> {
         let (year, month, day) = self.current_date_parts()?;
-        let filename = build_log_filename(year, month, day);
-        self.volume_mgr
-            .open_file_in_dir(self.root_dir, filename.as_str(), Mode::ReadWriteCreateOrAppend)
-            .ok()
+        
+        // 确保日志目录存在
+        let log_dir = self.ensure_log_directory(year, month).ok()?;
+        
+        // 构建文件名（不包含路径）
+        let filename = build_bare_filename(year, month, day);
+        
+        // 在日志目录中打开文件
+        let file = self.volume_mgr
+            .open_file_in_dir(log_dir, filename.as_str(), Mode::ReadWriteCreateOrAppend)
+            .ok()?;
+        
+        // 关闭目录（文件打开后会保持目录打开状态）
+        let _ = self.volume_mgr.close_dir(log_dir);
+        
+        Some(file)
     }
 
     fn is_current_log_file(&self, file_name: &str) -> bool {
         let Some((year, month, day)) = self.current_date_parts() else {
             return false;
         };
-        let filename = build_log_filename(year, month, day);
-        filename.as_str().eq_ignore_ascii_case(file_name)
+        let current_path = build_log_filename(year, month, day);
+        current_path.as_str().eq_ignore_ascii_case(file_name)
     }
 
     fn append_gpx_point(
@@ -485,6 +537,8 @@ impl SdLogger {
     }
 
     fn manage_old_files(&mut self) {
+        // TODO: 更新此函数以递归扫描子目录中的 GPX 文件
+        // 目前只扫描根目录，新文件存储在 YYYY/MM/ 子目录中不会被管理
         let mut files: heapless::Vec<GpxFileInfo, MAX_GPX_FILES> = heapless::Vec::new();
         let total = Cell::new(0u64);
 
@@ -1031,27 +1085,75 @@ impl GpsDataEncoder {
 }
 
 fn build_log_filename(year: u16, month: u8, day: u8) -> Filename {
-    let mut buf = [0u8; 12];
+    let mut buf = [0u8; 32];
+    let mut pos = 0;
+    
+    // 构建路径: YYYY/MM/YYYYMMDD.gpz
     let year_digits = year_to_digits(year);
-    buf[0] = year_digits[0];
-    buf[1] = year_digits[1];
-    buf[2] = year_digits[2];
-    buf[3] = year_digits[3];
     let month_digits = two_digits(month);
-    buf[4] = month_digits[0];
-    buf[5] = month_digits[1];
     let day_digits = two_digits(day);
-    buf[6] = day_digits[0];
-    buf[7] = day_digits[1];
-    buf[8] = b'.';
-    buf[9] = LOG_EXTENSION[0];
-    buf[10] = LOG_EXTENSION[1];
-    buf[11] = LOG_EXTENSION[2];
-    Filename { buf, len: 12 }
+    
+    // 年份目录 (YYYY)
+    buf[pos] = year_digits[0]; pos += 1;
+    buf[pos] = year_digits[1]; pos += 1;
+    buf[pos] = year_digits[2]; pos += 1;
+    buf[pos] = year_digits[3]; pos += 1;
+    buf[pos] = b'/'; pos += 1;
+    
+    // 月份目录 (MM)
+    buf[pos] = month_digits[0]; pos += 1;
+    buf[pos] = month_digits[1]; pos += 1;
+    buf[pos] = b'/'; pos += 1;
+    
+    // 文件名: YYYYMMDD
+    buf[pos] = year_digits[0]; pos += 1;
+    buf[pos] = year_digits[1]; pos += 1;
+    buf[pos] = year_digits[2]; pos += 1;
+    buf[pos] = year_digits[3]; pos += 1;
+    buf[pos] = month_digits[0]; pos += 1;
+    buf[pos] = month_digits[1]; pos += 1;
+    buf[pos] = day_digits[0]; pos += 1;
+    buf[pos] = day_digits[1]; pos += 1;
+    
+    // 扩展名 .gpz
+    buf[pos] = b'.'; pos += 1;
+    buf[pos] = LOG_EXTENSION[0]; pos += 1;
+    buf[pos] = LOG_EXTENSION[1]; pos += 1;
+    buf[pos] = LOG_EXTENSION[2]; pos += 1;
+    
+    Filename { buf, len: pos }
+}
+
+fn build_bare_filename(year: u16, month: u8, day: u8) -> Filename {
+    let mut buf = [0u8; 32];
+    let mut pos = 0;
+    
+    // 构建文件名: YYYYMMDD.gpz (无路径)
+    let year_digits = year_to_digits(year);
+    let month_digits = two_digits(month);
+    let day_digits = two_digits(day);
+    
+    // 文件名: YYYYMMDD
+    buf[pos] = year_digits[0]; pos += 1;
+    buf[pos] = year_digits[1]; pos += 1;
+    buf[pos] = year_digits[2]; pos += 1;
+    buf[pos] = year_digits[3]; pos += 1;
+    buf[pos] = month_digits[0]; pos += 1;
+    buf[pos] = month_digits[1]; pos += 1;
+    buf[pos] = day_digits[0]; pos += 1;
+    buf[pos] = day_digits[1]; pos += 1;
+    
+    // 扩展名 .gpz
+    buf[pos] = b'.'; pos += 1;
+    buf[pos] = LOG_EXTENSION[0]; pos += 1;
+    buf[pos] = LOG_EXTENSION[1]; pos += 1;
+    buf[pos] = LOG_EXTENSION[2]; pos += 1;
+    
+    Filename { buf, len: pos }
 }
 
 struct Filename {
-    buf: [u8; 12],
+    buf: [u8; 32],
     len: usize,
 }
 
@@ -1074,6 +1176,10 @@ fn year_to_digits(year: u16) -> [u8; 4] {
 fn two_digits(value: u8) -> [u8; 2] {
     let v = value as u32;
     [b'0' + ((v / 10) % 10) as u8, b'0' + (v % 10) as u8]
+}
+
+fn bytes_to_str(bytes: &[u8]) -> &str {
+    core::str::from_utf8(bytes).unwrap_or("")
 }
 
 fn unix_to_date(timestamp: u32) -> Option<(u16, u8, u8)> {
