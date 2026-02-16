@@ -1,0 +1,114 @@
+name: Build Firmware UF2
+
+on:
+  push:
+    branches:
+      - master
+      - main
+    paths:
+      - "firmware/**"
+      - "tools/build_uf2.py"
+      - "uf2conv.py"
+      - ".github/workflows/build-firmware-uf2.yml"
+  pull_request:
+    paths:
+      - "firmware/**"
+      - "tools/build_uf2.py"
+      - "uf2conv.py"
+      - ".github/workflows/build-firmware-uf2.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-uf2:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv7em-none-eabihf
+          components: llvm-tools-preview
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            firmware -> firmware/target
+
+      - name: Install cargo tools
+        run: cargo install --locked flip-link cargo-binutils
+
+      - name: Restore SoftDevice cache
+        id: softdevice-cache
+        uses: actions/cache@v4
+        with:
+          path: s140_nrf52_7.3.0_softdevice.hex
+          key: softdevice-s140-v7.3.0-1
+
+      - name: Ensure SoftDevice S140 v7.3.0
+        run: |
+          set -euo pipefail
+          output="s140_nrf52_7.3.0_softdevice.hex"
+
+          is_valid_hex() {
+            [ -f "$1" ] && head -n 1 "$1" | grep -q '^:'
+          }
+
+          if is_valid_hex "${output}"; then
+            echo "SoftDevice ready from checkout/cache (cache-hit=${{ steps.softdevice-cache.outputs.cache-hit }})"
+            echo "SoftDevice size: $(wc -c < "${output}") bytes"
+            exit 0
+          fi
+
+          echo "SoftDevice missing or invalid, downloading..."
+          urls=(
+            "https://raw.githubusercontent.com/tinygo-org/bluetooth/release/s140_nrf52_7.3.0/s140_nrf52_7.3.0_softdevice.hex"
+            "https://raw.githubusercontent.com/embassy-rs/nrf-softdevice/5949a5b1445cc907745c6449a35577e4544cd255/s140_nrf52_7.3.0_softdevice.hex"
+            "https://raw.githubusercontent.com/embassy-rs/nrf-softdevice/5949a5b1445cc907745c6449a35577e4544cd255/nrf-softdevice-s140/s140_nrf52_7.3.0_softdevice.hex"
+          )
+
+          ok=0
+          for url in "${urls[@]}"; do
+            echo "Trying ${url}"
+            if curl -fL --retry 3 --retry-delay 2 --retry-connrefused -o "${output}" "${url}"; then
+              ok=1
+              break
+            fi
+          done
+
+          if [ "${ok}" -ne 1 ]; then
+            echo "Failed to download ${output} from all configured URLs."
+            exit 1
+          fi
+
+          if ! is_valid_hex "${output}"; then
+            echo "Downloaded file is not a valid Intel HEX file."
+            exit 1
+          fi
+
+          echo "SoftDevice downloaded: ${output} ($(wc -c < "${output}") bytes)"
+
+      - name: Build combined UF2
+        run: python3 tools/build_uf2.py
+
+      - name: Show artifacts
+        run: |
+          ls -lh firmware/target/thumbv7em-none-eabihf/release/gps-tracker-combined.hex
+          ls -lh firmware/target/thumbv7em-none-eabihf/release/gps-tracker-combined.uf2
+          sha256sum firmware/target/thumbv7em-none-eabihf/release/gps-tracker-combined.uf2
+
+      - name: Upload UF2 artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-uf2
+          path: |
+            firmware/target/thumbv7em-none-eabihf/release/gps-tracker-firmware.hex
+            firmware/target/thumbv7em-none-eabihf/release/gps-tracker-combined.hex
+            firmware/target/thumbv7em-none-eabihf/release/gps-tracker-combined.uf2
+          if-no-files-found: error
