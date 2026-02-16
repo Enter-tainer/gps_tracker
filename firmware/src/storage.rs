@@ -1,5 +1,6 @@
 use core::cell::{Cell, RefCell};
 use core::cmp::Ordering;
+use core::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
 use embassy_embedded_hal::SetConfig;
 use embassy_nrf::gpio::Output;
@@ -14,6 +15,25 @@ use embedded_sdmmc::{
     Timestamp, VolumeIdx, VolumeManager,
 };
 use libm::{round, roundf};
+
+// Global GPS time storage (bit-packed FAT timestamp)
+// Format: bits 31-25: year-1980, bits 24-21: month, bits 20-16: day,
+//         bits 15-11: hour, bits 10-5: minute, bits 4-0: second/2
+static GPS_TIME: AtomicU32 = AtomicU32::new(0);
+
+/// Set the GPS time for file timestamps.
+/// Call this when GPS time becomes valid (after NMEA parsing).
+pub fn set_gps_time(year: u16, month: u8, day: u8, hour: u8, minute: u8, second: u8) {
+    // FAT timestamp format (2-second resolution)
+    let fat_year = if year >= 1980 { year - 1980 } else { 0 };
+    let packed: u32 = ((fat_year as u32 & 0x7F) << 25)
+        | ((month as u32 & 0x0F) << 21)
+        | ((day as u32 & 0x1F) << 16)
+        | ((hour as u32 & 0x1F) << 11)
+        | ((minute as u32 & 0x3F) << 5)
+        | ((second as u32 / 2) & 0x1F);
+    GPS_TIME.store(packed, AtomicOrdering::Relaxed);
+}
 
 const CACHE_SIZE: usize = 4096;
 const ENCODER_BUFFER_SIZE: usize = 64;
@@ -215,7 +235,7 @@ fn create_logger(
     let sd_spi = SdSpiDevice::new(spi, cs, config);
     let delay = Delay;
     let sd_card = SdCard::new(sd_spi, delay);
-    let volume_mgr = VolumeManager::new(sd_card, FixedTimeSource);
+    let volume_mgr = VolumeManager::new(sd_card, GpsTimeSource);
     let volume = volume_mgr.open_raw_volume(VolumeIdx(0)).ok()?;
     let root_dir = volume_mgr.open_root_dir(volume).ok()?;
 
@@ -223,7 +243,7 @@ fn create_logger(
         sd.spi(|spi| {
             spi.set_frequency(run_frequency);
         });
-        FixedTimeSource
+        GpsTimeSource
     });
 
     Some(SdLogger::new(
@@ -242,7 +262,7 @@ fn rebuild_logger(usb_card: UsbSdCard) -> Option<SdLogger> {
     });
     usb_card.card.mark_card_uninit();
 
-    let volume_mgr = VolumeManager::new(usb_card.card, FixedTimeSource);
+    let volume_mgr = VolumeManager::new(usb_card.card, GpsTimeSource);
     let volume = volume_mgr.open_raw_volume(VolumeIdx(0)).ok()?;
     let root_dir = volume_mgr.open_root_dir(volume).ok()?;
 
@@ -250,7 +270,7 @@ fn rebuild_logger(usb_card: UsbSdCard) -> Option<SdLogger> {
         sd.spi(|spi| {
             spi.set_frequency(usb_card.run_frequency);
         });
-        FixedTimeSource
+        GpsTimeSource
     });
 
     Some(SdLogger::new(
@@ -283,7 +303,7 @@ impl TransferState {
 }
 
 struct SdLogger {
-    volume_mgr: VolumeManager<SdCard<SdSpiDevice, Delay>, FixedTimeSource, 4, 4, 1>,
+    volume_mgr: VolumeManager<SdCard<SdSpiDevice, Delay>, GpsTimeSource, 4, 4, 1>,
     volume: RawVolume,
     root_dir: RawDirectory,
     current_file: Option<RawFile>,
@@ -301,7 +321,7 @@ struct SdLogger {
 
 impl SdLogger {
     fn new(
-        volume_mgr: VolumeManager<SdCard<SdSpiDevice, Delay>, FixedTimeSource, 4, 4, 1>,
+        volume_mgr: VolumeManager<SdCard<SdSpiDevice, Delay>, GpsTimeSource, 4, 4, 1>,
         volume: RawVolume,
         root_dir: RawDirectory,
         init_frequency: spim::Frequency,
@@ -875,11 +895,23 @@ fn is_gpx_entry(entry: &DirEntry) -> bool {
     entry.name.extension().eq_ignore_ascii_case(LOG_EXTENSION)
 }
 
-struct FixedTimeSource;
+struct GpsTimeSource;
 
-impl TimeSource for FixedTimeSource {
+impl TimeSource for GpsTimeSource {
     fn get_timestamp(&self) -> Timestamp {
-        Timestamp::from_calendar(2025, 1, 1, 0, 0, 0).unwrap()
+        let packed = GPS_TIME.load(AtomicOrdering::Relaxed);
+        if packed == 0 {
+            // Fallback when GPS time not yet available
+            return Timestamp::from_calendar(2025, 1, 1, 0, 0, 0).unwrap();
+        }
+        let year = ((packed >> 25) & 0x7F) as u16 + 1980;
+        let month = ((packed >> 21) & 0x0F) as u8;
+        let day = ((packed >> 16) & 0x1F) as u8;
+        let hour = ((packed >> 11) & 0x1F) as u8;
+        let minute = ((packed >> 5) & 0x3F) as u8;
+        let second = ((packed & 0x1F) * 2) as u8;
+        Timestamp::from_calendar(year, month, day, hour, minute, second)
+            .unwrap_or_else(|_| Timestamp::from_calendar(2025, 1, 1, 0, 0, 0).unwrap())
     }
 }
 
