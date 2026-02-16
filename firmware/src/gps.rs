@@ -966,6 +966,8 @@ fn update_system_info_from_nmea(info: &mut SystemInfo, nmea: &Nmea, speed_avg: &
                 info.hour = time.hour() as u8;
                 info.minute = time.minute() as u8;
                 info.second = time.second() as u8;
+                // Sync GPS time to file system for accurate file timestamps
+                storage::set_gps_time(year, info.month, info.day, info.hour, info.minute, info.second);
                 true
             } else {
                 false
