@@ -40,6 +40,7 @@ type PromiseMap = {
   writeAgnssChunk: VoidPromise | null;
   endAgnssWrite: VoidPromise | null;
   gpsWakeup: VoidPromise | null;
+  gpsKeepAlive: VoidPromise | null;
 };
 
 export function createBleService(logger: Logger) {
@@ -63,7 +64,8 @@ export function createBleService(logger: Logger) {
     startAgnssWrite: null,
     writeAgnssChunk: null,
     endAgnssWrite: null,
-    gpsWakeup: null
+    gpsWakeup: null,
+    gpsKeepAlive: null
   };
 
   async function connect() {
@@ -208,9 +210,9 @@ export function createBleService(logger: Logger) {
     const payload = new DataView(value.buffer, 2, payloadLen);
     logger.log(`Parsed RX payload length: ${payloadLen}`);
 
-    if (currentPromises.getSysInfo && payloadLen === CONSTANTS.SYSINFO_PAYLOAD_LEN) {
+    if (currentPromises.getSysInfo && (payloadLen === CONSTANTS.SYSINFO_V1_LEN || payloadLen === CONSTANTS.SYSINFO_V2_LEN)) {
       try {
-        const info = parseSysInfoPayload(payload);
+        const info = parseSysInfoPayload(payload, payloadLen);
         currentPromises.getSysInfo.resolve(info);
       } catch (error) {
         const message = error instanceof Error ? error : new Error(String(error));
@@ -357,6 +359,20 @@ export function createBleService(logger: Logger) {
       return;
     }
 
+    if (currentPromises.gpsKeepAlive) {
+      const promise = currentPromises.gpsKeepAlive;
+      currentPromises.gpsKeepAlive = null;
+
+      if (payloadLen === 0) {
+        logger.log("GPS_KEEP_ALIVE_RSP: keep-alive set successfully.");
+        promise.resolve();
+      } else {
+        logger.error(`GPS_KEEP_ALIVE_RSP: unexpected payload length ${payloadLen}.`);
+        promise.reject(new Error("GPS keep-alive failed"));
+      }
+      return;
+    }
+
     logger.error("Received data but no matching command promise was found.");
   }
 
@@ -470,7 +486,7 @@ export function createBleService(logger: Logger) {
     return sendBleData(buffer);
   }
 
-  function parseSysInfoPayload(payload: DataView): SysInfo {
+  function parseSysInfoPayload(payload: DataView, payloadLen: number): SysInfo {
     let offset = 0;
 
     const getFloat32 = () => {
@@ -503,7 +519,16 @@ export function createBleService(logger: Logger) {
       return value;
     };
 
-    return {
+    // Check version: 50 = V1 (master), 63 = V2 (with version byte)
+    const isV2 = payloadLen === CONSTANTS.SYSINFO_V2_LEN;
+    let version: number | undefined;
+
+    if (isV2) {
+      version = getUint8();  // Read version byte (should be 2)
+    }
+
+    // Parse 50 legacy bytes (same for V1 and V2)
+    const baseInfo: SysInfo = {
       latitude: getFloat64(),
       longitude: getFloat64(),
       altitude: getFloat32(),
@@ -522,6 +547,22 @@ export function createBleService(logger: Logger) {
       batteryVoltage: getFloat32(),
       gpsState: getUint8()
     };
+
+    // V2 additional fields
+    if (isV2) {
+      return {
+        ...baseInfo,
+        version,
+        keepAliveRemainingS: getUint16(),
+        batteryPercent: getUint8(),
+        isStationary: getUint8(),
+        temperatureC: getFloat32(),
+        pressurePa: getFloat32()
+      };
+    }
+
+    // V1 (no additional fields)
+    return baseInfo;
   }
 
   async function getSysInfo() {
@@ -966,6 +1007,48 @@ export function createBleService(logger: Logger) {
     });
   }
 
+  async function setGpsKeepAlive(durationMinutes: number) {
+    if (!isConnected) {
+      return Promise.reject(new Error("Not connected"));
+    }
+
+    logger.log(`Setting GPS keep-alive for ${durationMinutes} minutes...`);
+
+    return new Promise<void>((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        if (currentPromises.gpsKeepAlive) {
+          currentPromises.gpsKeepAlive = null;
+          reject(new Error("Timeout waiting for GPS keep-alive response"));
+        }
+      }, 5000);
+
+      currentPromises.gpsKeepAlive = {
+        resolve: () => {
+          clearTimeout(timeoutId);
+          resolve();
+        },
+        reject: (error) => {
+          clearTimeout(timeoutId);
+          reject(error);
+        }
+      };
+
+      const payloadLength = 2;
+      const buffer = new ArrayBuffer(1 + 2 + payloadLength);
+      const view = new DataView(buffer);
+
+      view.setUint8(0, CONSTANTS.CMD_ID.GPS_KEEP_ALIVE);
+      view.setUint16(1, payloadLength, true);
+      view.setUint16(3, durationMinutes, true);
+
+      sendBleData(buffer).catch((error) => {
+        clearTimeout(timeoutId);
+        currentPromises.gpsKeepAlive = null;
+        reject(error as Error);
+      });
+    });
+  }
+
   return {
     connect,
     disconnect,
@@ -981,7 +1064,8 @@ export function createBleService(logger: Logger) {
     startAgnssWrite,
     writeAgnssChunk,
     endAgnssWrite,
-    triggerGpsWakeup
+    triggerGpsWakeup,
+    setGpsKeepAlive
   };
 }
 

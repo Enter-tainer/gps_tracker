@@ -21,6 +21,7 @@ Source of truth is the C++ code; docs are secondary.
 - `0x08` WRITE_AGNSS_CHUNK
 - `0x09` END_AGNSS_WRITE
 - `0x0A` GPS_WAKEUP
+- `0x0B` GPS_KEEP_ALIVE
 
 ## Common limits
 - `MAX_PATH_LENGTH = 64` bytes.
@@ -71,24 +72,20 @@ Source of truth is the C++ code; docs are secondary.
 
 ### GET_SYS_INFO (0x06)
 - Payload: empty.
-- Response payload length: 50 bytes, fields in order:
-  - `latitude (f64, 8)`
-  - `longitude (f64, 8)`
-  - `altitude (f32, 4)`
-  - `satellites (u32, 4)`
-  - `hdop (f32, 4)`
-  - `speed (f32, 4)`
-  - `course (f32, 4)`
-  - `year (u16, 2)`
-  - `month (u8, 1)`
-  - `day (u8, 1)`
-  - `hour (u8, 1)`
-  - `minute (u8, 1)`
-  - `second (u8, 1)`
-  - `locationValid (u8, 1)` (0 or 1)
-  - `dateTimeValid (u8, 1)` (0 or 1)
-  - `batteryVoltage (f32, 4)`
-  - `gpsState (u8, 1)`
+- Response payload length: **50 bytes (V1, legacy)** or **63 bytes (V2, current)**
+- V1 format (50 bytes, master branch):
+  - No version field
+  - `latitude (f64, 8)` through `gpsState (u8, 1)` — 50 bytes total
+- V2 format (63 bytes, current):
+  - `version (u8, 1)` = 2
+  - `latitude (f64, 8)` through `gpsState (u8, 1)` — 50 legacy bytes
+  - `keepAliveRemainingS (u16, 2)` (0 = inactive)
+  - `batteryPercent (u8, 1)` (0-100)
+  - `isStationary (u8, 1)` (0 or 1)
+  - `temperatureC (f32, 4)` (Celsius)
+  - `pressurePa (f32, 4)` (Pascals)
+
+Version detection: Frontend checks payload length (50 = V1, 63 = V2).
 
 ### START_AGNSS_WRITE (0x07)
 - Payload: ignored (length can be 0 or non-zero).
@@ -105,6 +102,10 @@ Source of truth is the C++ code; docs are secondary.
 
 ### GPS_WAKEUP (0x0A)
 - Payload: empty.
+- Response payload: empty.
+
+### GPS_KEEP_ALIVE (0x0B)
+- Payload: `Duration (2 LE)` in minutes. `0` = cancel.
 - Response payload: empty.
 
 ## Known doc mismatches (vs docs/uart_file_proto.md)

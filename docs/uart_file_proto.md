@@ -59,6 +59,7 @@
 | `WRITE_AGNSS_CHUNK`   | `0x08` | 写入 AGNSS 数据块        |
 | `END_AGNSS_WRITE`     | `0x09` | 结束 AGNSS 数据写入      |
 | `GPS_WAKEUP`          | `0x0A` | 手动触发 GPS 唤醒        |
+| `GPS_KEEP_ALIVE`      | `0x0B` | 设置 GPS 持续开启时长    |
 
 ## 4. 详细命令规范
 
@@ -238,7 +239,9 @@
 
 #### 4.6.2. 响应包 (`GET_SYS_INFO_RSP`)
 
-*   **Payload**:
+*   **版本说明**: 支持 V1 (50 字节) 和 V2 (63 字节) 两种格式，主机通过 payload 长度区分。
+
+*   **V1 格式 (50 字节, master 分支)**:
     ```
     +--------------------------+
     | latitude (8B, double)    |
@@ -276,13 +279,37 @@
     | gpsState (1B, uint8)     |
     +--------------------------+
     ```
-    *   字段顺序和类型与 SystemInfo 结构体一致，均为小端字节序。
-    *   `locationValid`、`dateTimeValid` 用 0/1 表示。
-    *   `gpsState`：0=GPS_OFF，1=GPS_WAITING_FIX，2=GPS_FIX_ACQUIRED
+
+*   **V2 格式 (63 字节, 当前版本)**:
+    ```
+    +--------------------------+
+    | version (1B, uint8) = 2  |
+    +--------------------------+
+    | [上述 50 字节 legacy]    |
+    +--------------------------+
+    | keepAliveRemainingS      |
+    | (2B, uint16)             |
+    +--------------------------+
+    | batteryPercent (1B, u8)  |
+    +--------------------------+
+    | isStationary (1B, u8)    |
+    +--------------------------+
+    | temperatureC (4B, float) |
+    +--------------------------+
+    | pressurePa (4B, float)   |
+    +--------------------------+
+    ```
+    *   `version`: 版本号，V2 = 2
+    *   `batteryPercent`: 电池百分比 (0-100)
+    *   `isStationary`: 设备是否静止 (0/1)
+    *   `temperatureC`: BMP280 温度（摄氏度）
+    *   `pressurePa`: BMP280 气压（帕斯卡）
+    *   `keepAliveRemainingS`：GPS keep-alive 剩余秒数，0 表示未激活
 
 *   **行为**:
     *   主机发送 `GET_SYS_INFO` 命令，设备立即返回当前系统信息。
-    *   响应包长度固定为 50 字节，主机可直接解析。
+    *   响应包长度：V1 = 50 字节，V2 = 63 字节。
+    *   字段均为小端字节序。
 
 ### 4.7. `START_AGNSS_WRITE`
 
@@ -356,6 +383,28 @@
     *   如果 GPS 当前处于关闭状态 (`S2_IDLE_GPS_OFF`)，会立即启动 GPS 并开始搜索定位。
     *   如果 GPS 已经在工作状态，会记录运动检测但不改变当前状态。
     *   收到响应包即表示唤醒命令已执行。
+
+### 4.11. `GPS_KEEP_ALIVE`
+
+*   **目的**: 设置 GPS 持续开启时长，在指定时间内阻止 GPS 因静止而关闭。
+*   **CMD ID**: `0x0B`
+
+#### 4.11.1. 命令包 (`GPS_KEEP_ALIVE_CMD`)
+
+*   **Payload** (`2` 字节):
+    | 字段              | 大小 (字节) | 类型       | 描述                                              |
+    | :---------------- | :---------- | :--------- | :------------------------------------------------ |
+    | `Duration`        | 2           | uint16\_LE | 持续开启时长（分钟）。`0` = 取消当前的 Keep-Alive。 |
+
+#### 4.11.2. 响应包 (`GPS_KEEP_ALIVE_RSP`)
+
+*   **Payload**: 无（`Payload Len` 为 `0`）
+*   **行为**:
+    *   设备收到此命令后，GPS 将在指定时间内保持开启，不因静止检测而进入 S2 休眠状态。
+    *   如果 GPS 当前处于关闭状态 (`S2_IDLE_GPS_OFF`)，会立即启动 GPS 并开始搜索定位。
+    *   在 Keep-Alive 期间，S1 搜星超时后不会进入 S2，而是继续重试。
+    *   发送 `Duration = 0` 可立即取消 Keep-Alive，恢复正常功耗管理。
+    *   Keep-Alive 到期后自动恢复正常状态机行为。
 
 ## 5. 流程示例
 

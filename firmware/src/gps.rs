@@ -21,7 +21,6 @@ const T_STILLNESS_CONFIRM_DURATION_MS: u64 = 60_000;
 const T_GPS_QUERY_TIMEOUT_FOR_STILLNESS_MS: u64 = 5_000;
 const T_GPS_COLD_START_FIX_TIMEOUT_MS: u64 = 90_000;
 const T_GPS_REACQUIRE_FIX_TIMEOUT_MS: u64 = 30_000;
-const T_GPS_SLEEP_PERIODIC_WAKE_INTERVAL_MS: u64 = 15 * 60_000;
 const MAX_CONSECUTIVE_FIX_FAILURES: u8 = 16;
 const STATE_TICK_INTERVAL_MS: u64 = 200;
 const AGNSS_TRIGGER_DELAY_MS: u64 = 10_000;
@@ -67,6 +66,7 @@ impl GpsEvents {
 
 static GPS_EVENTS: Mutex<CriticalSectionRawMutex, GpsEvents> = Mutex::new(GpsEvents::new());
 static GPS_WAKEUP: Mutex<CriticalSectionRawMutex, bool> = Mutex::new(false);
+static GPS_KEEP_ALIVE_DEADLINE: Mutex<CriticalSectionRawMutex, Option<u64>> = Mutex::new(None);
 
 #[derive(Clone, Copy)]
 struct AgnssMessage {
@@ -398,7 +398,6 @@ struct GpsStateMachine {
     stillness_confirm_start: Option<u64>,
     active_sampling_start: Option<u64>,
     fix_attempt_start: Option<u64>,
-    periodic_wake_start: Option<u64>,
     gps_query_timeout_start: Option<u64>,
     consecutive_fix_failures: u8,
     is_gps_powered_on: bool,
@@ -412,7 +411,6 @@ impl GpsStateMachine {
             stillness_confirm_start: None,
             active_sampling_start: None,
             fix_attempt_start: None,
-            periodic_wake_start: None,
             gps_query_timeout_start: None,
             consecutive_fix_failures: 0,
             is_gps_powered_on: false,
@@ -425,14 +423,12 @@ impl GpsStateMachine {
         self.stillness_confirm_start = None;
         self.active_sampling_start = None;
         self.fix_attempt_start = None;
-        self.periodic_wake_start = None;
         self.gps_query_timeout_start = None;
     }
 
     async fn initialize(&mut self, gps_en: &mut Output<'static>) {
         self.power_off_gps(gps_en).await;
         self.reset_state_timers();
-        self.periodic_wake_start = Some(Instant::now().as_millis());
         self.is_first_fix_attempt_cycle = true;
         set_gps_state(GpsState::S2IdleGpsOff).await;
         defmt::info!("GPS State: S0 -> S2_IDLE_GPS_OFF (init)");
@@ -519,7 +515,6 @@ impl GpsStateMachine {
             }
             GpsState::S2IdleGpsOff => {
                 self.power_off_gps(gps_en).await;
-                self.periodic_wake_start = Some(now_ms);
                 set_gps_state(GpsState::S2IdleGpsOff).await;
                 defmt::info!("GPS State: S5 -> S2_IDLE_GPS_OFF (AGNSS)");
             }
@@ -535,7 +530,6 @@ impl GpsStateMachine {
             }
             GpsState::S5AgnssProcessing | GpsState::S0Initializing => {
                 self.power_off_gps(gps_en).await;
-                self.periodic_wake_start = Some(now_ms);
                 set_gps_state(GpsState::S2IdleGpsOff).await;
                 defmt::info!("GPS State: S5 -> S2_IDLE_GPS_OFF (AGNSS fallback)");
             }
@@ -552,6 +546,7 @@ impl GpsStateMachine {
         if take_gps_wakeup().await {
             is_stationary = false;
         }
+        let keep_alive = is_keep_alive_active(now_ms).await;
 
         if state != GpsState::S5AgnssProcessing {
             drain_non_agnss_events().await;
@@ -562,7 +557,6 @@ impl GpsStateMachine {
                 defmt::warn!("GPS State: S0 initializing in loop, forcing S2");
                 self.power_off_gps(gps_en).await;
                 self.reset_state_timers();
-                self.periodic_wake_start = Some(now_ms);
                 self.is_first_fix_attempt_cycle = true;
                 set_gps_state(GpsState::S2IdleGpsOff).await;
             }
@@ -597,9 +591,13 @@ impl GpsStateMachine {
                         write_all(tx, b"$PCAS10,1*1D\r\n").await;
                         self.consecutive_fix_failures = 0;
                     }
+                    if keep_alive {
+                        self.fix_attempt_start = Some(now_ms);
+                        defmt::info!("GPS State: S1 fix timeout, keep-alive active, retrying");
+                        return;
+                    }
                     self.power_off_gps(gps_en).await;
                     self.reset_state_timers();
-                    self.periodic_wake_start = Some(now_ms);
                     self.is_first_fix_attempt_cycle = true;
                     set_gps_state(GpsState::S2IdleGpsOff).await;
                     defmt::info!("GPS State: S1 -> S2_IDLE_GPS_OFF (timeout)");
@@ -614,33 +612,20 @@ impl GpsStateMachine {
                 }
             }
             GpsState::S2IdleGpsOff => {
-                if self.periodic_wake_start.is_none() {
-                    self.periodic_wake_start = Some(now_ms);
-                }
                 if self.is_gps_powered_on {
                     self.power_off_gps(gps_en).await;
                 }
 
-                if !is_stationary {
+                if !is_stationary || keep_alive {
                     self.power_on_gps(gps_en).await;
                     self.reset_state_timers();
                     self.fix_attempt_start = Some(now_ms);
                     set_gps_state(GpsState::S1GpsSearchingFix).await;
-                    defmt::info!("GPS State: S2 -> S1_GPS_SEARCHING_FIX (motion)");
-                    return;
-                }
-
-                if has_elapsed(
-                    self.periodic_wake_start,
-                    now_ms,
-                    T_GPS_SLEEP_PERIODIC_WAKE_INTERVAL_MS,
-                ) {
-                    self.power_on_gps(gps_en).await;
-                    self.reset_state_timers();
-                    self.fix_attempt_start = Some(now_ms);
-                    self.is_first_fix_attempt_cycle = true;
-                    set_gps_state(GpsState::S1GpsSearchingFix).await;
-                    defmt::info!("GPS State: S2 -> S1_GPS_SEARCHING_FIX (periodic)");
+                    if keep_alive {
+                        defmt::info!("GPS State: S2 -> S1_GPS_SEARCHING_FIX (keep-alive)");
+                    } else {
+                        defmt::info!("GPS State: S2 -> S1_GPS_SEARCHING_FIX (motion)");
+                    }
                     return;
                 }
 
@@ -685,7 +670,7 @@ impl GpsStateMachine {
                     self.active_sampling_start = Some(now_ms);
                 }
 
-                if !is_stationary {
+                if !is_stationary || keep_alive {
                     if self.stillness_confirm_start.is_some() {
                         self.stillness_confirm_start = None;
                     }
@@ -694,6 +679,7 @@ impl GpsStateMachine {
                 }
 
                 if is_stationary
+                    && !keep_alive
                     && has_elapsed(
                         self.stillness_confirm_start,
                         now_ms,
@@ -730,6 +716,14 @@ impl GpsStateMachine {
                     return;
                 }
 
+                if keep_alive {
+                    self.reset_state_timers();
+                    self.active_sampling_start = Some(now_ms);
+                    set_gps_state(GpsState::S3TrackingFixed).await;
+                    defmt::info!("GPS State: S4 -> S3_TRACKING_FIXED (keep-alive)");
+                    return;
+                }
+
                 let s4_timeout = has_elapsed(
                     self.gps_query_timeout_start,
                     now_ms,
@@ -744,7 +738,6 @@ impl GpsStateMachine {
                     } else {
                         self.power_off_gps(gps_en).await;
                         self.reset_state_timers();
-                        self.periodic_wake_start = Some(now_ms);
                         self.is_first_fix_attempt_cycle = true;
                         set_gps_state(GpsState::S2IdleGpsOff).await;
                         defmt::info!("GPS State: S4 -> S2_IDLE_GPS_OFF");
@@ -946,6 +939,54 @@ pub async fn trigger_gps_wakeup() {
     *wake = true;
     let mut info = SYSTEM_INFO.lock().await;
     info.is_stationary = false;
+}
+
+pub async fn set_gps_keep_alive(duration_minutes: u16) {
+    let mut ka = GPS_KEEP_ALIVE_DEADLINE.lock().await;
+    if duration_minutes == 0 {
+        *ka = None;
+        defmt::info!("GPS keep-alive cancelled");
+    } else {
+        let now_ms = Instant::now().as_millis();
+        let deadline = now_ms + (duration_minutes as u64) * 60_000;
+        *ka = Some(deadline);
+        defmt::info!("GPS keep-alive set for {} minutes", duration_minutes);
+    }
+    drop(ka);
+    if duration_minutes > 0 {
+        trigger_gps_wakeup().await;
+    }
+}
+
+async fn is_keep_alive_active(now_ms: u64) -> bool {
+    let mut ka = GPS_KEEP_ALIVE_DEADLINE.lock().await;
+    match *ka {
+        Some(deadline) => {
+            if now_ms >= deadline {
+                *ka = None;
+                defmt::info!("GPS keep-alive expired");
+                false
+            } else {
+                true
+            }
+        }
+        None => false,
+    }
+}
+
+pub async fn get_keep_alive_remaining_s() -> u16 {
+    let ka = GPS_KEEP_ALIVE_DEADLINE.lock().await;
+    match *ka {
+        Some(deadline) => {
+            let now_ms = Instant::now().as_millis();
+            if now_ms >= deadline {
+                0
+            } else {
+                ((deadline - now_ms) / 1000) as u16
+            }
+        }
+        None => 0,
+    }
 }
 
 fn update_system_info_from_nmea(info: &mut SystemInfo, nmea: &Nmea, speed_avg: &mut SpeedAverage) {

@@ -113,6 +113,7 @@ const USB_ICON: [u8; 128] = [
 ];
 
 use crate::battery::estimate_battery_level;
+use crate::gps;
 use crate::system_info::{GpsState, SystemInfo, SYSTEM_INFO};
 use crate::timezone::TzCache;
 
@@ -165,7 +166,8 @@ pub async fn display_task(i2c: SharedI2c) {
     let text_settings = TextStyleBuilder::new().baseline(Baseline::Top).build();
 
     // Render first frame after logo
-    let info = *SYSTEM_INFO.lock().await;
+    let mut info = { *SYSTEM_INFO.lock().await };
+    info.keep_alive_remaining_s = gps::get_keep_alive_remaining_s().await;
     render_frame(&mut display, &text_style, text_settings, &info, &mut tz_cache);
 
     loop {
@@ -208,7 +210,8 @@ pub async fn display_task(i2c: SharedI2c) {
                     if usb_mode {
                         render_usb_mode(&mut display, &text_style, text_settings);
                     } else {
-                        let info = *SYSTEM_INFO.lock().await;
+                        let mut info = { *SYSTEM_INFO.lock().await };
+                        info.keep_alive_remaining_s = gps::get_keep_alive_remaining_s().await;
                         render_frame(&mut display, &text_style, text_settings, &info, &mut tz_cache);
                     }
                 }
@@ -369,6 +372,9 @@ fn render_frame(
     }
     if info.is_stationary {
         speed_str.push_str(" S").ok();
+    }
+    if info.keep_alive_remaining_s > 0 {
+        speed_str.push_str(" K").ok();
     }
     Text::with_text_style(&speed_str, Point::new(0, 0), *text_style, text_settings)
         .draw(display)

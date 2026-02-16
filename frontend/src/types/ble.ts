@@ -25,5 +25,11 @@ export type SysInfo = {
   dateTimeValid: number;
   batteryVoltage: number;
   gpsState: number;
+  keepAliveRemainingS?: number;
+  version?: number;
+  batteryPercent?: number;
+  isStationary?: number;
+  temperatureC?: number;
+  pressurePa?: number;
 };
 

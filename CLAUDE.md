@@ -52,7 +52,7 @@ Embassy-nrf async framework with spawned tasks. `#![no_std]`, no heap — all bu
 Key modules:
 - **gps.rs** — GPS state machine (6 states, see below), NMEA parsing, CASIC command sending
 - **storage.rs** — SD card via SPI, GPZ binary format (V1 1e5 / V2 1e7 precision), delta compression with ZigZag + LEB128
-- **protocol.rs** — BLE UART file transfer protocol (commands 0x01-0x0A), matches `docs/uart_file_proto.md`
+- **protocol.rs** — BLE UART file transfer protocol (commands 0x01-0x0B), matches `docs/uart_file_proto.md`
 - **ble.rs** — BLE GATT server with NUS (Nordic UART Service), advertising, connection management
 - **casic.rs** — CASIC binary protocol parser (frame: `BA CE [len] [class] [id] [payload] [checksum]`)
 - **usb_msc.rs** — USB mass storage class for direct SD card access
@@ -72,7 +72,7 @@ Hardware constraints:
 Defined in `docs/state_spec.md`. States:
 - **S0**: Initializing hardware
 - **S1**: GPS searching for fix (timeout: 90s cold/30s reacquire)
-- **S2**: Idle, GPS powered off (periodic wake every 15min)
+- **S2**: Idle, GPS powered off (wakes on motion or BLE command)
 - **S3**: Tracking with fix (10s sample interval, HDOP < 2.0 required, ignored above 20km/h)
 - **S4**: Analyzing stillness (60s below 0.1g threshold)
 - **S5**: A-GNSS data injection (60s timeout, 5s per message, max 70 messages)
@@ -100,7 +100,7 @@ Key services:
 
 Command-response over NUS (see `docs/uart_file_proto.md`):
 - Format: `[CMD_ID:1B] [LEN:2B LE] [payload]`
-- Commands: LIST_DIR(0x01), OPEN_FILE(0x02), READ_CHUNK(0x03), CLOSE_FILE(0x04), DELETE_FILE(0x05), GET_SYS_INFO(0x06), AGNSS operations(0x07-0x09), GPS_WAKEUP(0x0A)
+- Commands: LIST_DIR(0x01), OPEN_FILE(0x02), READ_CHUNK(0x03), CLOSE_FILE(0x04), DELETE_FILE(0x05), GET_SYS_INFO(0x06), AGNSS operations(0x07-0x09), GPS_WAKEUP(0x0A), GPS_KEEP_ALIVE(0x0B)
 
 ## Important Caveats
 

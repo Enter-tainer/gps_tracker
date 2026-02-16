@@ -38,6 +38,10 @@ pub struct SystemInfo {
     pub battery_voltage: f32,
     pub gps_state: GpsState,
     pub is_stationary: bool,
+    pub keep_alive_remaining_s: u16,
+    pub battery_percent: u8,
+    pub temperature_c: f32,
+    pub pressure_pa: f32,
 }
 
 impl SystemInfo {
@@ -61,6 +65,10 @@ impl SystemInfo {
             battery_voltage: -1.0,
             gps_state: GpsState::S0Initializing,
             is_stationary: false,
+            keep_alive_remaining_s: 0,
+            battery_percent: 0,
+            temperature_c: 0.0,
+            pressure_pa: 0.0,
         }
     }
 }
@@ -68,7 +76,8 @@ impl SystemInfo {
 pub static SYSTEM_INFO: Mutex<CriticalSectionRawMutex, SystemInfo> =
     Mutex::new(SystemInfo::new());
 
-pub const SYSTEM_INFO_SERIALIZED_LEN: usize = 50;
+pub const SYSTEM_INFO_VERSION: u8 = 2;
+pub const SYSTEM_INFO_SERIALIZED_LEN: usize = 63;
 
 pub fn serialize_system_info(
     info: &SystemInfo,
@@ -76,7 +85,11 @@ pub fn serialize_system_info(
 ) -> usize {
     let mut offset = 0;
 
-    // Keep packing order identical to legacy processGetSysInfo().
+    // V2 format: version byte + 50 legacy bytes + keep_alive + new fields
+    out[offset] = SYSTEM_INFO_VERSION;
+    offset += 1;
+
+    // Legacy 50 bytes (master format)
     out[offset..offset + 8].copy_from_slice(&info.latitude.to_le_bytes());
     offset += 8;
     out[offset..offset + 8].copy_from_slice(&info.longitude.to_le_bytes());
@@ -111,6 +124,18 @@ pub fn serialize_system_info(
     offset += 4;
     out[offset] = info.gps_state as u8;
     offset += 1;
+
+    // V2 new fields
+    out[offset..offset + 2].copy_from_slice(&info.keep_alive_remaining_s.to_le_bytes());
+    offset += 2;
+    out[offset] = info.battery_percent;
+    offset += 1;
+    out[offset] = u8::from(info.is_stationary);
+    offset += 1;
+    out[offset..offset + 4].copy_from_slice(&info.temperature_c.to_le_bytes());
+    offset += 4;
+    out[offset..offset + 4].copy_from_slice(&info.pressure_pa.to_le_bytes());
+    offset += 4;
 
     offset
 }

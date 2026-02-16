@@ -78,7 +78,6 @@
 | S4分析静止状态GPS查询超时                 | `T_GPS_QUERY_TIMEOUT_FOR_STILLNESS`      | 5            | 秒      | 在`S4`状态下，等待获取GPS当前速度和状态的超时时间。                    |
 | GPS冷/温启动搜星定位超时                  | `T_GPS_COLD_START_FIX_TIMEOUT`           | 90           | 秒      | 从GPS关闭状态启动后，尝试获取首次定位的最大允许时间。                  |
 | GPS重捕获定位超时                         | `T_GPS_REACQUIRE_FIX_TIMEOUT`            | 30           | 秒      | 在已有定位后信号丢失，尝试重新获取定位的最大允许时间。                 |
-| GPS休眠周期性唤醒间隔                     | `T_GPS_SLEEP_PERIODIC_WAKE_INTERVAL`     | 15           | 分钟    | `S2_IDLE_GPS_OFF`状态下，周期性唤醒GPS尝试定位的间隔。               |
 | 有效定位最小HDOP                          | `MIN_HDOP_FOR_VALID_FIX`                 | 2.0          | (float) | HDOP值小于此值才认为是一次有效的定位（低速场景）。                   |
 | GPS连续搜星失败次数阈值                   | `MAX_CONSECUTIVE_FIX_FAILURES`           | 16            | 次      | 连续搜星失败达到此次数后，可能采取特殊操作（如GPS模块重启）。            |
 | 加速度数据采样/处理频率                   | (非直接状态机定时器，但为前提)             | 20         | Hz      | 加速度传感器采样数据的频率，用于及时检测运动和静止。                   |
@@ -90,7 +89,6 @@
 *   `Stillness_Confirm_Timer`: 用于计时`T_STILLNESS_CONFIRM_DURATION`。
 *   `Active_Sampling_Timer`: 用于计时`T_ACTIVE_SAMPLING_INTERVAL`。
 *   `Fix_Attempt_Timer`: 用于计时当前的搜星超时 (`T_GPS_COLD_START_FIX_TIMEOUT` 或 `T_GPS_REACQUIRE_FIX_TIMEOUT`)。
-*   `Periodic_Wake_Timer`: 用于计时`T_GPS_SLEEP_PERIODIC_WAKE_INTERVAL`。
 *   `GPS_Query_Timeout_Timer_S4`: 用于计时`T_GPS_QUERY_TIMEOUT_FOR_STILLNESS`。
 *   `Consecutive_Fix_Failures_Counter`: 连续搜星失败计数器。
 *   `AGNSS_Message_Timer`: 用于计时`T_AGNSS_MESSAGE_SEND_TIMEOUT`。
@@ -124,7 +122,7 @@
     *   **事件**: `E0.1_Initialization_Complete` (所有初始化任务完成)
         *   **动作**:
             *   如果默认启动后立即尝试定位：启动 `Fix_Attempt_Timer` (使用 `T_GPS_COLD_START_FIX_TIMEOUT` 作为时长)。
-            *   否则 (默认省电，等待运动或周期唤醒)：Power OFF GPS模块 (确保关闭)，启动 `Periodic_Wake_Timer` (使用 `T_GPS_SLEEP_PERIODIC_WAKE_INTERVAL` 作为时长)。
+            *   否则 (默认省电，等待运动触发)：Power OFF GPS模块 (确保关闭)。
         *   **下一状态**:
             *   如果尝试定位: `S1_GPS_SEARCHING_FIX`
             *   否则: `S2_IDLE_GPS_OFF`
@@ -156,7 +154,6 @@
                 *   (可选) 执行GPS模块重启命令 (e.g., `PCAS10,1` 热启动，或更强的冷启动命令)。
                 *   重置 `Consecutive_Fix_Failures_Counter` 为 0。
             3.  Power OFF GPS模块。
-            4.  启动 `Periodic_Wake_Timer` (使用 `T_GPS_SLEEP_PERIODIC_WAKE_INTERVAL` 作为时长)。
         *   **下一状态**: `S2_IDLE_GPS_OFF`
     *   **事件**: `E1.3_Motion_Detected_During_Search` (加速度瞬时值 `> ACCEL_STILL_THRESHOLD`)
         *   **动作**: (通常情况下) 无特殊动作，继续当前搜星过程。搜星过程不应被短期运动打断。
@@ -167,7 +164,6 @@
         *   **动作**: (如果启用此优化)
             1.  停止 `Fix_Attempt_Timer`。
             2.  Power OFF GPS模块。
-            3.  启动 `Periodic_Wake_Timer`。
         *   **下一状态**: `S2_IDLE_GPS_OFF`
     *   **事件**: `E1.5_AGNSS_Request` (外部触发AGNSS数据注入请求)
         *   **动作**:
@@ -179,28 +175,20 @@
 
 ---
 **6.3. S2\_IDLE\_GPS\_OFF (空闲GPS关闭/休眠模式)**
-*   **描述**: GPS模块已关闭电源或进入深度休眠状态，以最大限度节省功耗。加速度传感器持续工作以检测运动，同时存在周期性唤醒GPS的机制。
+*   **描述**: GPS模块已关闭电源或进入深度休眠状态，以最大限度节省功耗。加速度传感器持续工作以检测运动。S2仅通过运动检测、外部BLE唤醒命令或AGNSS请求退出，不再进行周期性唤醒（已移除，因A-GNSS注入已能解决冷启动问题）。
 *   **进入动作**:
     1.  确保GPS模块已 Power OFF 或进入深度休眠。
-    2.  启动 `Periodic_Wake_Timer` (使用 `T_GPS_SLEEP_PERIODIC_WAKE_INTERVAL` 作为时长)。
 *   **事件处理**:
-    *   **事件**: `E2.1_Motion_Detected` (加速度瞬时值 `> ACCEL_STILL_THRESHOLD`)
-        *   **动作**:
-            1.  停止 `Periodic_Wake_Timer`。
-            2.  Power ON GPS模块。
-            3.  启动 `Fix_Attempt_Timer` (使用 `T_GPS_COLD_START_FIX_TIMEOUT` 作为时长)。
-        *   **下一状态**: `S1_GPS_SEARCHING_FIX`
-    *   **事件**: `E2.2_Periodic_Wake_Timer_Expired` (`Periodic_Wake_Timer` 超时)
+    *   **事件**: `E2.1_Motion_Detected` (加速度瞬时值 `> ACCEL_STILL_THRESHOLD`，或外部GPS唤醒/Keep-Alive命令)
         *   **动作**:
             1.  Power ON GPS模块。
             2.  启动 `Fix_Attempt_Timer` (使用 `T_GPS_COLD_START_FIX_TIMEOUT` 作为时长)。
         *   **下一状态**: `S1_GPS_SEARCHING_FIX`
-    *   **事件**: `E2.3_AGNSS_Request` (外部触发AGNSS数据注入请求)
+    *   **事件**: `E2.2_AGNSS_Request` (外部触发AGNSS数据注入请求)
         *   **动作**:
-            1.  停止 `Periodic_Wake_Timer`。
-            2.  记录当前状态为 `AGNSS_Previous_State = S2_IDLE_GPS_OFF`。
-            3.  Power ON GPS模块。
-            4.  初始化AGNSS相关变量。
+            1.  记录当前状态为 `AGNSS_Previous_State = S2_IDLE_GPS_OFF`。
+            2.  Power ON GPS模块。
+            3.  初始化AGNSS相关变量。
         *   **下一状态**: `S5_AGNSS_PROCESSING`
 
 ---
@@ -268,12 +256,11 @@
                     *   **下一状态**: `S3_TRACKING_FIXED` (返回活动追踪模式)
                 *   **Case 2: 室内/信号极差 或 户外低速静止**
                     *   **条件**: GPS数据无效 (`!gps.location.isValid()` 或 HDOP非常差) **或者** (GPS数据有效 且 GPS报告的速度 `gps.speed.kmph() <= GPS_SPEED_VEHICLE_THRESHOLD`)。
-                    *   **后续动作**: Power OFF GPS模块。启动 `Periodic_Wake_Timer`。
+                    *   **后续动作**: Power OFF GPS模块。
                     *   **下一状态**: `S2_IDLE_GPS_OFF` (进入GPS休眠省电模式)
     *   **事件**: `E4.3_GPS_Query_Timeout_Timer_S4_Expired` (`GPS_Query_Timeout_Timer_S4` 超时)
         *   **动作**: (未能及时从GPS模块获取明确数据，采取保守省电策略)
             1.  Power OFF GPS模块。
-            2.  启动 `Periodic_Wake_Timer`。
         *   **下一状态**: `S2_IDLE_GPS_OFF`
     *   **事件**: `E4.4_AGNSS_Request` (外部触发AGNSS数据注入请求)
         *   **动作**:
@@ -306,7 +293,7 @@
                 *   清空 `AGNSS_Message_Queue`。
                 *   根据 `AGNSS_Previous_State` 返回到之前的状态：
                     *   如果是 `S1_GPS_SEARCHING_FIX`: 启动 `Fix_Attempt_Timer`，下一状态为 `S1_GPS_SEARCHING_FIX`
-                    *   如果是 `S2_IDLE_GPS_OFF`: 启动 `Periodic_Wake_Timer`，下一状态为 `S2_IDLE_GPS_OFF`
+                    *   如果是 `S2_IDLE_GPS_OFF`: Power OFF GPS模块，下一状态为 `S2_IDLE_GPS_OFF`
                     *   如果是 `S3_TRACKING_FIXED`: 启动 `Active_Sampling_Timer`，下一状态为 `S3_TRACKING_FIXED`
                     *   如果是 `S4_ANALYZING_STILLNESS`: 启动 `GPS_Query_Timeout_Timer_S4`，下一状态为 `S4_ANALYZING_STILLNESS`
             5.  **否则**:
@@ -340,7 +327,7 @@
             2.  清空 `AGNSS_Message_Queue`。
             3.  根据 `AGNSS_Previous_State` 返回到之前的状态：
                 *   如果是 `S1_GPS_SEARCHING_FIX`: 启动 `Fix_Attempt_Timer`，下一状态为 `S1_GPS_SEARCHING_FIX`
-                *   如果是 `S2_IDLE_GPS_OFF`: Power OFF GPS模块，启动 `Periodic_Wake_Timer`，下一状态为 `S2_IDLE_GPS_OFF`
+                *   如果是 `S2_IDLE_GPS_OFF`: Power OFF GPS模块，下一状态为 `S2_IDLE_GPS_OFF`
                 *   如果是 `S3_TRACKING_FIXED`: 启动 `Active_Sampling_Timer`，下一状态为 `S3_TRACKING_FIXED`
                 *   如果是 `S4_ANALYZING_STILLNESS`: 启动 `GPS_Query_Timeout_Timer_S4`，下一状态为 `S4_ANALYZING_STILLNESS`
         *   **下一状态**: 根据 `AGNSS_Previous_State` 决定

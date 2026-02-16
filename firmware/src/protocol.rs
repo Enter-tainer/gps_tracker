@@ -1,3 +1,5 @@
+use crate::battery;
+use crate::bmp280;
 use crate::gps;
 use crate::storage;
 use crate::system_info::{serialize_system_info, SYSTEM_INFO, SYSTEM_INFO_SERIALIZED_LEN};
@@ -12,6 +14,7 @@ const CMD_START_AGNSS_WRITE: u8 = 0x07;
 const CMD_WRITE_AGNSS_CHUNK: u8 = 0x08;
 const CMD_END_AGNSS_WRITE: u8 = 0x09;
 const CMD_GPS_WAKEUP: u8 = 0x0A;
+const CMD_GPS_KEEP_ALIVE: u8 = 0x0B;
 
 const MAX_CMD_PAYLOAD: usize = 570;
 const MAX_RESPONSE_PAYLOAD: usize = 256;
@@ -142,6 +145,7 @@ impl FileTransferProtocol {
             CMD_WRITE_AGNSS_CHUNK => self.handle_write_agnss_chunk(payload),
             CMD_END_AGNSS_WRITE => self.handle_end_agnss_write().await,
             CMD_GPS_WAKEUP => self.handle_gps_wakeup().await,
+            CMD_GPS_KEEP_ALIVE => self.handle_gps_keep_alive(payload).await,
             _ => Some(self.encode_empty_response()),
         };
 
@@ -245,7 +249,13 @@ impl FileTransferProtocol {
     }
 
     async fn handle_get_sys_info(&mut self) -> Option<usize> {
-        let info = SYSTEM_INFO.lock().await;
+        let mut info = { *SYSTEM_INFO.lock().await };
+        info.keep_alive_remaining_s = gps::get_keep_alive_remaining_s().await;
+        info.battery_percent = battery::estimate_battery_level(info.battery_voltage * 1000.0) as u8;
+        let bmp = bmp280::BMP280_DATA.lock().await;
+        info.temperature_c = bmp.temperature_c;
+        info.pressure_pa = bmp.pressure_pa;
+        drop(bmp);
         let mut payload = [0u8; SYSTEM_INFO_SERIALIZED_LEN];
         let payload_len = serialize_system_info(&info, &mut payload);
         self.response[2..2 + payload_len].copy_from_slice(&payload[..payload_len]);
@@ -338,6 +348,16 @@ impl FileTransferProtocol {
 
     async fn handle_gps_wakeup(&mut self) -> Option<usize> {
         gps::trigger_gps_wakeup().await;
+        Some(self.encode_empty_response())
+    }
+
+    async fn handle_gps_keep_alive(&mut self, payload: &[u8]) -> Option<usize> {
+        let duration_minutes = if payload.len() >= 2 {
+            u16::from_le_bytes([payload[0], payload[1]])
+        } else {
+            0
+        };
+        gps::set_gps_keep_alive(duration_minutes).await;
         Some(self.encode_empty_response())
     }
 

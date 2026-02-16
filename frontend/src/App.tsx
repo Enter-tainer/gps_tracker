@@ -13,6 +13,7 @@ import {
   RefreshCw,
   Satellite,
   Terminal,
+  Timer,
   Trash2,
   Upload
 } from "lucide-react";
@@ -78,8 +79,11 @@ const formatSysInfo = (info: SysInfo | null) => {
       time: "-",
       locationValid: "-",
       dateTimeValid: "-",
-      batteryVoltage: "-",
-      gpsState: "-"
+      battery: "-",
+      gpsState: "-",
+      temperature: "-",
+      pressure: "-",
+      motion: "-"
     };
   }
 
@@ -88,6 +92,19 @@ const formatSysInfo = (info: SysInfo | null) => {
   const time = `${String(info.hour).padStart(2, "0")}:${String(info.minute).padStart(2, "0")}:${String(
     info.second
   ).padStart(2, "0")}`;
+
+  const battery = info.batteryPercent !== undefined
+    ? `${info.batteryPercent}% (${info.batteryVoltage.toFixed(2)}V)`
+    : `${info.batteryVoltage.toFixed(2)} V`;
+  const temperature = info.temperatureC !== undefined
+    ? `${info.temperatureC.toFixed(1)} °C`
+    : "-";
+  const pressure = info.pressurePa !== undefined
+    ? `${(info.pressurePa / 100).toFixed(2)} hPa`
+    : "-";
+  const motion = info.isStationary !== undefined
+    ? (info.isStationary ? "Stationary" : "Moving")
+    : "-";
 
   return {
     latitude: `${info.latitude.toFixed(7)} deg`,
@@ -101,8 +118,11 @@ const formatSysInfo = (info: SysInfo | null) => {
     time,
     locationValid: yesNo(info.locationValid),
     dateTimeValid: yesNo(info.dateTimeValid),
-    batteryVoltage: `${info.batteryVoltage.toFixed(2)} V`,
-    gpsState: gpsStateLabels[info.gpsState] ?? `${info.gpsState}`
+    battery,
+    gpsState: gpsStateLabels[info.gpsState] ?? `${info.gpsState}`,
+    temperature,
+    pressure,
+    motion
   };
 };
 
@@ -130,6 +150,7 @@ export default function App() {
   const [localGpxString, setLocalGpxString] = useState<string | null>(null);
   const [localFileName, setLocalFileName] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [keepAliveMinutes, setKeepAliveMinutes] = useState(30);
 
   const getReadyStatus = useCallback(() => {
     const connected = bleServiceRef.current?.isConnected() ?? false;
@@ -455,6 +476,31 @@ export default function App() {
     }
   }, [logger, resetStatus]);
 
+  const isKeepAliveActive = (sysInfo?.keepAliveRemainingS ?? 0) > 0;
+  const keepAliveRemainingText = isKeepAliveActive
+    ? `${Math.floor(sysInfo!.keepAliveRemainingS / 60)}:${(sysInfo!.keepAliveRemainingS % 60).toString().padStart(2, "0")}`
+    : null;
+
+  const handleKeepAlive = useCallback(async () => {
+    const bleService = bleServiceRef.current;
+    if (!bleService) return;
+
+    const isActive = (sysInfo?.keepAliveRemainingS ?? 0) > 0;
+    const minutes = isActive ? 0 : keepAliveMinutes;
+    setStatusMessage(minutes > 0 ? `Setting GPS keep-alive for ${minutes} min...` : "Cancelling GPS keep-alive...");
+    try {
+      await bleService.setGpsKeepAlive(minutes);
+      setStatusMessage(minutes > 0 ? `GPS keep-alive active (${minutes} min)` : "GPS keep-alive cancelled");
+      logger.success(minutes > 0 ? `GPS keep-alive set for ${minutes} minutes.` : "GPS keep-alive cancelled.");
+      resetStatus(2000);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatusMessage("GPS keep-alive failed.");
+      logger.error(`GPS keep-alive failed: ${message}`);
+      resetStatus(1600);
+    }
+  }, [sysInfo, keepAliveMinutes, logger, resetStatus]);
+
   const handleAgnss = useCallback(async () => {
     const bleService = bleServiceRef.current;
     if (!bleService) return;
@@ -648,8 +694,11 @@ export default function App() {
                       ["Time", info.time],
                       ["Location Valid", info.locationValid],
                       ["Date/Time Valid", info.dateTimeValid],
-                      ["Battery", info.batteryVoltage],
-                      ["GPS State", info.gpsState]
+                      ["Battery", info.battery],
+                      ["GPS State", info.gpsState],
+                      ["Temperature", info.temperature],
+                      ["Pressure", info.pressure],
+                      ["Motion", info.motion]
                     ].map(([label, value]) => (
                       <div key={label} className="rounded-md border border-border/70 bg-white/60 p-3">
                         <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -911,6 +960,34 @@ export default function App() {
                   >
                     <RefreshCw className="h-4 w-4" />
                     GPS Wakeup
+                  </Button>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number"
+                      min={1}
+                      max={720}
+                      value={keepAliveMinutes}
+                      onChange={(e) => {
+                        const v = Math.max(1, Math.min(720, Number(e.target.value) || 1));
+                        setKeepAliveMinutes(v);
+                      }}
+                      disabled={!isConnected || isKeepAliveActive}
+                      className="h-9 w-20 rounded-md border border-border bg-white/70 px-2 text-sm text-center"
+                    />
+                    <span className="text-sm text-muted-foreground">min</span>
+                  </div>
+                  <Button
+                    variant={isKeepAliveActive ? "destructive" : "outline"}
+                    onClick={handleKeepAlive}
+                    disabled={!isConnected}
+                  >
+                    <Timer className="h-4 w-4" />
+                    {isKeepAliveActive
+                      ? `Cancel (${keepAliveRemainingText})`
+                      : "GPS Keep Alive"}
                   </Button>
                 </div>
 
