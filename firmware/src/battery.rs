@@ -16,10 +16,17 @@ const BATTERY_EMA_ALPHA: f32 = 0.2;
 // 因此: mV/LSB = 3600mV / 4096 = 0.87890625
 const VBAT_MV_PER_LSB: f32 = 0.87890625;
 
-// 电压分压器补偿系数
-// 硬件使用 1.5MΩ + 1MΩ 分压器: 分压比 = 1M / (1M + 1.5M) = 0.4
-// 补偿系数 = 1 / 0.4 = 2.5... 但实际测量校准后使用 1.67
-const VBAT_DIVIDER_COMP: f32 = 1.67;
+// 电池分压网络:
+// BAT -> 200kΩ -> ADC -> 300kΩ -> GND
+//
+// 命名上不再使用 top/bottom，直接写 BAT 侧与 GND 侧，避免接线方向歧义。
+// Vadc = Vbat * R_gnd / (R_bat + R_gnd)
+// Vbat = Vadc / ADC_RATIO = Vadc * DIVIDER_COMP
+const VBAT_R_BAT_SIDE_OHM: f32 = 200_000.0;
+const VBAT_R_GND_SIDE_OHM: f32 = 300_000.0;
+const VBAT_ADC_RATIO: f32 =
+    VBAT_R_GND_SIDE_OHM / (VBAT_R_BAT_SIDE_OHM + VBAT_R_GND_SIDE_OHM); // 0.6
+const VBAT_DIVIDER_COMP: f32 = 1.0 / VBAT_ADC_RATIO; // 1.666...
 
 const REAL_VBAT_MV_PER_LSB: f32 = VBAT_MV_PER_LSB * VBAT_DIVIDER_COMP;
 
