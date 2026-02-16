@@ -253,8 +253,13 @@ impl FileTransferProtocol {
         info.keep_alive_remaining_s = gps::get_keep_alive_remaining_s().await;
         info.battery_percent = battery::estimate_battery_level(info.battery_voltage * 1000.0) as u8;
         let bmp = bmp280::BMP280_DATA.lock().await;
-        info.temperature_c = bmp.temperature_c;
-        info.pressure_pa = bmp.pressure_pa;
+        if bmp.ok {
+            info.temperature_c = bmp.temperature_c;
+            info.pressure_pa = bmp.pressure_pa;
+        } else {
+            info.temperature_c = f32::NAN;
+            info.pressure_pa = f32::NAN;
+        }
         drop(bmp);
         let mut payload = [0u8; SYSTEM_INFO_SERIALIZED_LEN];
         let payload_len = serialize_system_info(&info, &mut payload);

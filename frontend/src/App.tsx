@@ -96,10 +96,10 @@ const formatSysInfo = (info: SysInfo | null) => {
   const battery = info.batteryPercent !== undefined
     ? `${info.batteryPercent}% (${info.batteryVoltage.toFixed(2)}V)`
     : `${info.batteryVoltage.toFixed(2)} V`;
-  const temperature = info.temperatureC !== undefined
+  const temperature = info.temperatureC !== undefined && !Number.isNaN(info.temperatureC)
     ? `${info.temperatureC.toFixed(1)} °C`
     : "-";
-  const pressure = info.pressurePa !== undefined
+  const pressure = info.pressurePa !== undefined && !Number.isNaN(info.pressurePa)
     ? `${(info.pressurePa / 100).toFixed(2)} hPa`
     : "-";
   const motion = info.isStationary !== undefined
