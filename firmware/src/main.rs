@@ -277,6 +277,7 @@ async fn main(spawner: Spawner) {
         ..Default::default()
     };
     let sd = Softdevice::enable(&sd_config);
+    unsafe { raw::sd_power_dcdc_mode_set(raw::NRF_POWER_DCDC_MODES_NRF_POWER_DCDC_ENABLE as u8) };
     let vbus = usb_msc::init_vbus();
     let usb_present = init_usb_power_events(vbus);
     USB_CONNECTED.store(usb_present, Ordering::Release);
