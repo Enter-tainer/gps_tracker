@@ -5,7 +5,9 @@ use embassy_time::Timer;
 use crate::system_info::SYSTEM_INFO;
 
 const BATTERY_UPDATE_INTERVAL_MS: u64 = 1_000;
-const BATTERY_EMA_ALPHA: f32 = 0.2;
+const BATTERY_EMA_ALPHA_FAST: f32 = 0.70;
+const BATTERY_EMA_ALPHA_SLOW: f32 = 0.12;
+const BATTERY_FAST_DELTA_MV: f32 = 80.0;
 
 // ADC 电压转换常量
 // embassy-nrf SAADC 默认配置:
@@ -32,6 +34,8 @@ const REAL_VBAT_MV_PER_LSB: f32 = VBAT_MV_PER_LSB * VBAT_DIVIDER_COMP;
 
 #[task]
 pub async fn battery_task(mut saadc: Saadc<'static, 1>) {
+    saadc.calibrate().await;
+
     let mut ema_initialized = false;
     let mut last_filtered_mv = 0.0f32;
     let mut sample = [0i16; 1];
@@ -46,13 +50,19 @@ pub async fn battery_task(mut saadc: Saadc<'static, 1>) {
                 last_filtered_mv = voltage_mv;
                 ema_initialized = true;
             } else {
-                last_filtered_mv =
-                    BATTERY_EMA_ALPHA * voltage_mv + (1.0 - BATTERY_EMA_ALPHA) * last_filtered_mv;
+                let delta_mv = (voltage_mv - last_filtered_mv).abs();
+                let alpha = if delta_mv >= BATTERY_FAST_DELTA_MV {
+                    BATTERY_EMA_ALPHA_FAST
+                } else {
+                    BATTERY_EMA_ALPHA_SLOW
+                };
+                last_filtered_mv = alpha * voltage_mv + (1.0 - alpha) * last_filtered_mv;
             }
 
             let mut info = SYSTEM_INFO.lock().await;
             info.battery_voltage = last_filtered_mv / 1000.0;
         } else {
+            ema_initialized = false;
             let mut info = SYSTEM_INFO.lock().await;
             info.battery_voltage = -1.0;
         }

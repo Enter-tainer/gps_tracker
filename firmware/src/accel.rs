@@ -11,113 +11,154 @@ use lis3dh::accelerometer::Accelerometer;
 use crate::ble;
 use crate::system_info::SYSTEM_INFO;
 
-const ACCEL_HISTORY_SIZE: usize = 256;
-const ACCEL_STILL_THRESHOLD: f32 = 0.1;
-const ACCEL_JUMP_THRESHOLD: f32 = 2.0;
 const ACCEL_UPDATE_INTERVAL_MS: u64 = 50;
+const ALPHA_LP: f32 = 0.05;
+const ALPHA_E: f32 = 0.20;
+const STILL_ENTER_DYN_G: f32 = 0.04;
+const STILL_EXIT_DYN_G: f32 = 0.08;
+const STILL_ENTER_FRAMES: u16 = 120;
+const STILL_EXIT_FRAMES: u16 = 8;
+const NORM_BASE_ALPHA: f32 = 0.02;
+const FREEFALL_SCALE: f32 = 0.22;
+const FREEFALL_MIN_G: f32 = 0.18;
+const FREEFALL_MAX_G: f32 = 0.30;
+const FREEFALL_FRAMES: u8 = 2;
+const BLE_COOLDOWN_FRAMES: u8 = 40;
 
 type SharedI2c = I2cDevice<'static, NoopRawMutex, twim::Twim<'static>>;
 type Lis3dhBus = Lis3dh<Lis3dhI2C<SharedI2c>>;
 
 #[derive(Clone, Copy)]
-struct RingBuffer<const N: usize> {
-    data: [f32; N],
-    len: usize,
-    head: usize,
+struct MotionOutput {
+    stationary: bool,
+    trigger_fast_adv: bool,
 }
 
-impl<const N: usize> RingBuffer<N> {
+struct MotionFilter {
+    initialized: bool,
+    lp_x: f32,
+    lp_y: f32,
+    lp_z: f32,
+    e_ema: f32,
+    norm_base: f32,
+    stationary: bool,
+    still_cnt: u16,
+    move_cnt: u16,
+    ff_cnt: u8,
+    ble_cooldown_cnt: u8,
+}
+
+impl MotionFilter {
     const fn new() -> Self {
         Self {
-            data: [0.0; N],
-            len: 0,
-            head: 0,
+            initialized: false,
+            lp_x: 0.0,
+            lp_y: 0.0,
+            lp_z: 0.0,
+            e_ema: 0.0,
+            norm_base: 1.0,
+            stationary: false,
+            still_cnt: 0,
+            move_cnt: 0,
+            ff_cnt: 0,
+            ble_cooldown_cnt: 0,
         }
     }
 
-    fn push(&mut self, value: f32) {
-        self.data[self.head] = value;
-        if self.len < N {
-            self.len += 1;
-        }
-        self.head = (self.head + 1) % N;
-    }
+    fn update(&mut self, x: f32, y: f32, z: f32) -> MotionOutput {
+        let norm = vec_norm(x, y, z);
 
-    fn last(&self) -> Option<f32> {
-        if self.len == 0 {
-            return None;
+        if !self.initialized {
+            self.initialized = true;
+            self.lp_x = x;
+            self.lp_y = y;
+            self.lp_z = z;
+            self.norm_base = norm;
+            self.e_ema = 0.0;
         }
-        let idx = (self.head + N - 1) % N;
-        Some(self.data[idx])
-    }
 
-    fn second_last(&self) -> Option<f32> {
-        if self.len < 2 {
-            return None;
-        }
-        let idx = (self.head + N - 2) % N;
-        Some(self.data[idx])
-    }
+        self.lp_x += ALPHA_LP * (x - self.lp_x);
+        self.lp_y += ALPHA_LP * (y - self.lp_y);
+        self.lp_z += ALPHA_LP * (z - self.lp_z);
 
-    fn min_max(&self) -> Option<(f32, f32)> {
-        if self.len == 0 {
-            return None;
-        }
-        let mut min_val = self.data[0];
-        let mut max_val = self.data[0];
-        for i in 1..self.len {
-            let value = self.data[i];
-            if value < min_val {
-                min_val = value;
+        let hp_x = x - self.lp_x;
+        let hp_y = y - self.lp_y;
+        let hp_z = z - self.lp_z;
+        let energy = hp_x * hp_x + hp_y * hp_y + hp_z * hp_z;
+        self.e_ema = ALPHA_E * energy + (1.0 - ALPHA_E) * self.e_ema;
+        let dyn_g = sqrtf(self.e_ema.max(0.0));
+
+        if self.stationary {
+            if dyn_g > STILL_EXIT_DYN_G {
+                self.move_cnt = self.move_cnt.saturating_add(1);
+            } else {
+                self.move_cnt = 0;
             }
-            if value > max_val {
-                max_val = value;
+
+            if self.move_cnt >= STILL_EXIT_FRAMES {
+                self.stationary = false;
+                self.move_cnt = 0;
+                self.still_cnt = 0;
+            }
+        } else {
+            if dyn_g < STILL_ENTER_DYN_G {
+                self.still_cnt = self.still_cnt.saturating_add(1);
+            } else {
+                self.still_cnt = 0;
+            }
+
+            if self.still_cnt >= STILL_ENTER_FRAMES {
+                self.stationary = true;
+                self.still_cnt = 0;
+                self.move_cnt = 0;
             }
         }
-        Some((min_val, max_val))
+
+        if self.stationary {
+            self.norm_base += NORM_BASE_ALPHA * (norm - self.norm_base);
+        }
+
+        let ff_thr = clamp_f32(FREEFALL_SCALE * self.norm_base, FREEFALL_MIN_G, FREEFALL_MAX_G);
+        if norm < ff_thr {
+            self.ff_cnt = self.ff_cnt.saturating_add(1);
+        } else {
+            self.ff_cnt = 0;
+        }
+
+        if self.ble_cooldown_cnt > 0 {
+            self.ble_cooldown_cnt -= 1;
+        }
+
+        let mut trigger_fast_adv = false;
+        if self.ff_cnt >= FREEFALL_FRAMES && self.ble_cooldown_cnt == 0 {
+            trigger_fast_adv = true;
+            self.ff_cnt = 0;
+            self.ble_cooldown_cnt = BLE_COOLDOWN_FRAMES;
+        }
+
+        MotionOutput {
+            stationary: self.stationary,
+            trigger_fast_adv,
+        }
     }
 }
 
-struct AccelAnalyzer {
-    history: RingBuffer<ACCEL_HISTORY_SIZE>,
-    still_threshold: f32,
-    jump_threshold: f32,
+fn vec_norm(x: f32, y: f32, z: f32) -> f32 {
+    sqrtf(x * x + y * y + z * z)
 }
 
-impl AccelAnalyzer {
-    fn new() -> Self {
-        Self {
-            history: RingBuffer::new(),
-            still_threshold: ACCEL_STILL_THRESHOLD,
-            jump_threshold: ACCEL_JUMP_THRESHOLD,
-        }
-    }
-
-    fn add_sample(&mut self, total: f32) {
-        self.history.push(total);
-    }
-
-    fn is_still(&self) -> bool {
-        let Some((min_val, max_val)) = self.history.min_max() else {
-            return false;
-        };
-        (max_val - min_val) < self.still_threshold
-    }
-
-    fn has_jump(&self) -> bool {
-        let (Some(last), Some(prev)) = (self.history.last(), self.history.second_last()) else {
-            return false;
-        };
-        let diff = (last - prev).abs();
-        diff > self.jump_threshold || last < 0.2
+fn clamp_f32(value: f32, min: f32, max: f32) -> f32 {
+    if value < min {
+        min
+    } else if value > max {
+        max
+    } else {
+        value
     }
 }
 
 struct AccelHandler {
     ok: bool,
-    last_x: f32,
-    last_y: f32,
-    last_z: f32,
     lis: Option<Lis3dhBus>,
 }
 
@@ -135,9 +176,6 @@ impl AccelHandler {
                 defmt::warn!("LIS3DH init failed");
                 return Self {
                     ok: false,
-                    last_x: 0.0,
-                    last_y: 0.0,
-                    last_z: 0.0,
                     lis: None,
                 };
             }
@@ -150,57 +188,43 @@ impl AccelHandler {
         defmt::info!("LIS3DH initialized");
         Self {
             ok: true,
-            last_x: 0.0,
-            last_y: 0.0,
-            last_z: 0.0,
             lis: Some(lis),
         }
     }
 
-    fn update(&mut self) -> bool {
+    fn read_xyz(&mut self) -> Option<(f32, f32, f32)> {
         if !self.ok {
-            return false;
+            return None;
         }
         let Some(lis) = self.lis.as_mut() else {
-            return false;
+            return None;
         };
 
         match lis.accel_norm() {
-            Ok(vec) => {
-                self.last_x = vec.x;
-                self.last_y = vec.y;
-                self.last_z = vec.z;
-                true
-            }
+            Ok(vec) => Some((vec.x, vec.y, vec.z)),
             Err(_) => {
                 defmt::warn!("LIS3DH read failed");
-                false
+                None
             }
         }
-    }
-
-    fn total(&self) -> f32 {
-        sqrtf(self.last_x * self.last_x + self.last_y * self.last_y + self.last_z * self.last_z)
     }
 }
 
 #[task]
 pub async fn accel_task(i2c: SharedI2c) {
     let mut accel = AccelHandler::new(i2c);
-    let mut analyzer = AccelAnalyzer::new();
+    let mut filter = MotionFilter::new();
 
     loop {
-        if accel.update() {
-            let total = accel.total();
-            analyzer.add_sample(total);
+        if let Some((x, y, z)) = accel.read_xyz() {
+            let output = filter.update(x, y, z);
 
-            let still = analyzer.is_still();
             {
                 let mut info = SYSTEM_INFO.lock().await;
-                info.is_stationary = still;
+                info.is_stationary = output.stationary;
             }
 
-            if analyzer.has_jump() {
+            if output.trigger_fast_adv {
                 ble::request_fast_advertising();
             }
         }

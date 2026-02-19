@@ -364,8 +364,10 @@ async fn main(spawner: Spawner) {
         spawner.spawn(gps::gps_state_task(gps_tx, gps_en)).unwrap();
 
         let button = Input::new(button_pin, Pull::Up);
-        let saadc_config = saadc::Config::default();
-        let saadc_channel = saadc::ChannelConfig::single_ended(battery_adc);
+        let mut saadc_config = saadc::Config::default();
+        saadc_config.oversample = saadc::Oversample::OVER8X;
+        let mut saadc_channel = saadc::ChannelConfig::single_ended(battery_adc);
+        saadc_channel.time = saadc::Time::_40US;
         let saadc = saadc::Saadc::new(saadc_peripheral, Irqs, saadc_config, [saadc_channel]);
 
         spawner.spawn(battery::battery_task(saadc)).unwrap();
