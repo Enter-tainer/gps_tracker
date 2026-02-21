@@ -14,16 +14,20 @@ use crate::system_info::SYSTEM_INFO;
 const ACCEL_UPDATE_INTERVAL_MS: u64 = 50;
 const ALPHA_LP: f32 = 0.05;
 const ALPHA_E: f32 = 0.20;
+const ALPHA_PLANAR: f32 = 0.12;
 const STILL_ENTER_DYN_G: f32 = 0.04;
 const STILL_EXIT_DYN_G: f32 = 0.08;
 const STILL_ENTER_FRAMES: u16 = 120;
 const STILL_EXIT_FRAMES: u16 = 8;
+const PLANAR_MOVE_G: f32 = 0.025;
+const PLANAR_MOVE_FRAMES: u16 = 20;
 const NORM_BASE_ALPHA: f32 = 0.02;
 const FREEFALL_SCALE: f32 = 0.22;
 const FREEFALL_MIN_G: f32 = 0.18;
 const FREEFALL_MAX_G: f32 = 0.30;
 const FREEFALL_FRAMES: u8 = 2;
 const BLE_COOLDOWN_FRAMES: u8 = 40;
+const MIN_GRAVITY_NORM: f32 = 1e-3;
 
 type SharedI2c = I2cDevice<'static, NoopRawMutex, twim::Twim<'static>>;
 type Lis3dhBus = Lis3dh<Lis3dhI2C<SharedI2c>>;
@@ -40,10 +44,12 @@ struct MotionFilter {
     lp_y: f32,
     lp_z: f32,
     e_ema: f32,
+    planar_ema: f32,
     norm_base: f32,
     stationary: bool,
     still_cnt: u16,
     move_cnt: u16,
+    planar_move_cnt: u16,
     ff_cnt: u8,
     ble_cooldown_cnt: u8,
 }
@@ -56,10 +62,12 @@ impl MotionFilter {
             lp_y: 0.0,
             lp_z: 0.0,
             e_ema: 0.0,
+            planar_ema: 0.0,
             norm_base: 1.0,
             stationary: false,
             still_cnt: 0,
             move_cnt: 0,
+            planar_move_cnt: 0,
             ff_cnt: 0,
             ble_cooldown_cnt: 0,
         }
@@ -75,6 +83,7 @@ impl MotionFilter {
             self.lp_z = z;
             self.norm_base = norm;
             self.e_ema = 0.0;
+            self.planar_ema = 0.0;
         }
 
         self.lp_x += ALPHA_LP * (x - self.lp_x);
@@ -86,6 +95,20 @@ impl MotionFilter {
         let hp_z = z - self.lp_z;
         let energy = hp_x * hp_x + hp_y * hp_y + hp_z * hp_z;
         self.e_ema = ALPHA_E * energy + (1.0 - ALPHA_E) * self.e_ema;
+
+        let g_norm = vec_norm(self.lp_x, self.lp_y, self.lp_z);
+        let (g_hat_x, g_hat_y, g_hat_z) = if g_norm > MIN_GRAVITY_NORM {
+            (self.lp_x / g_norm, self.lp_y / g_norm, self.lp_z / g_norm)
+        } else {
+            (0.0, 0.0, 1.0)
+        };
+        let proj = x * g_hat_x + y * g_hat_y + z * g_hat_z;
+        let planar_x = x - proj * g_hat_x;
+        let planar_y = y - proj * g_hat_y;
+        let planar_z = z - proj * g_hat_z;
+        let planar_raw = vec_norm(planar_x, planar_y, planar_z);
+        self.planar_ema = ALPHA_PLANAR * planar_raw + (1.0 - ALPHA_PLANAR) * self.planar_ema;
+
         let dyn_g = sqrtf(self.e_ema.max(0.0));
 
         if self.stationary {
@@ -94,10 +117,16 @@ impl MotionFilter {
             } else {
                 self.move_cnt = 0;
             }
+            if self.planar_ema > PLANAR_MOVE_G {
+                self.planar_move_cnt = self.planar_move_cnt.saturating_add(1);
+            } else {
+                self.planar_move_cnt = 0;
+            }
 
-            if self.move_cnt >= STILL_EXIT_FRAMES {
+            if self.move_cnt >= STILL_EXIT_FRAMES || self.planar_move_cnt >= PLANAR_MOVE_FRAMES {
                 self.stationary = false;
                 self.move_cnt = 0;
+                self.planar_move_cnt = 0;
                 self.still_cnt = 0;
             }
         } else {
@@ -111,6 +140,7 @@ impl MotionFilter {
                 self.stationary = true;
                 self.still_cnt = 0;
                 self.move_cnt = 0;
+                self.planar_move_cnt = 0;
             }
         }
 
