@@ -220,6 +220,27 @@ pub async fn delete_file(path: &[u8]) -> bool {
     logger.delete_transfer_file(path)
 }
 
+/// FindMy key material size: private_key(28) + symmetric_key(32) + epoch(8) = 68 bytes.
+pub const FINDMY_KEY_SIZE: usize = 68;
+
+/// Read FindMy key material from SD card (`/FINDMY.KEY`).
+pub async fn read_findmy_keys() -> Option<[u8; FINDMY_KEY_SIZE]> {
+    let mut logger = SD_LOGGER.lock().await;
+    let Some(logger) = logger.as_mut() else {
+        return None;
+    };
+    logger.read_findmy_keys()
+}
+
+/// Write FindMy key material to SD card (`/FINDMY.KEY`).
+pub async fn write_findmy_keys(data: &[u8; FINDMY_KEY_SIZE]) -> bool {
+    let mut logger = SD_LOGGER.lock().await;
+    let Some(logger) = logger.as_mut() else {
+        return false;
+    };
+    logger.write_findmy_keys(data)
+}
+
 fn create_logger(
     mut spi: Spim<'static>,
     mut cs: Output<'static>,
@@ -780,6 +801,40 @@ impl SdLogger {
         }
         self.close_dir_if_needed(dir, is_root);
         ok
+    }
+
+    fn read_findmy_keys(&mut self) -> Option<[u8; FINDMY_KEY_SIZE]> {
+        let file = self
+            .volume_mgr
+            .open_file_in_dir(self.root_dir, "FINDMY.KEY", Mode::ReadOnly)
+            .ok()?;
+        let mut buf = [0u8; FINDMY_KEY_SIZE];
+        let n = self.volume_mgr.read(file, &mut buf).ok()?;
+        let _ = self.volume_mgr.close_file(file);
+        if n == FINDMY_KEY_SIZE {
+            Some(buf)
+        } else {
+            None
+        }
+    }
+
+    fn write_findmy_keys(&mut self, data: &[u8; FINDMY_KEY_SIZE]) -> bool {
+        // Delete existing file first (ignore error if not found).
+        let _ = self
+            .volume_mgr
+            .delete_file_in_dir(self.root_dir, "FINDMY.KEY");
+        let file = match self.volume_mgr.open_file_in_dir(
+            self.root_dir,
+            "FINDMY.KEY",
+            Mode::ReadWriteCreateOrTruncate,
+        ) {
+            Ok(f) => f,
+            Err(_) => return false,
+        };
+        let ok = self.volume_mgr.write(file, data).is_ok();
+        let flush_ok = ok && self.volume_mgr.flush_file(file).is_ok();
+        let _ = self.volume_mgr.close_file(file);
+        flush_ok
     }
 
     fn open_dir_from_path(&mut self, path: &[u8]) -> Result<(RawDirectory, bool), ()> {

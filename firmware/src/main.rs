@@ -312,10 +312,23 @@ async fn main(spawner: Spawner) {
     }
     #[cfg(feature = "findmy")]
     {
-        // TODO: Load keys from flash storage. For now, use placeholder.
-        // In production, keys are provisioned via BLE during first setup.
-        // findmy::init(&private_key, &symmetric_key, initial_counter);
-        // findmy::set_enabled(true);
+        // Load keys from SD card if previously provisioned.
+        if let Some(keys) = storage::read_findmy_keys().await {
+            let mut pk = [0u8; 28];
+            let mut sk = [0u8; 32];
+            pk.copy_from_slice(&keys[..28]);
+            sk.copy_from_slice(&keys[28..60]);
+            let epoch = u64::from_le_bytes({
+                let mut b = [0u8; 8];
+                b.copy_from_slice(&keys[60..68]);
+                b
+            });
+            findmy::init(&pk, &sk, epoch);
+            findmy::set_enabled(true);
+            defmt::info!("FindMy: loaded keys from SD, epoch={}", epoch);
+        } else {
+            defmt::info!("FindMy: no keys on SD, waiting for provisioning via BLE");
+        }
         spawner.spawn(findmy::findmy_task(sd)).unwrap();
     }
 

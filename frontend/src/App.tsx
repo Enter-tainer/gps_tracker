@@ -8,6 +8,7 @@ import {
   FileDown,
   Folder,
   FolderOpen,
+  Key,
   Map,
   Power,
   RefreshCw,
@@ -41,6 +42,8 @@ import { createBleService } from "./services/bleService";
 import { createFileService } from "./services/fileService";
 import { createGpsDecoder } from "./services/gpsDecoder";
 import { createGpxConverter } from "./services/gpxConverter";
+import { exportKeysAsJson, generateFindMyKeys, unpackKeys } from "./services/findmyKeyGen";
+import type { FindMyKeyBundle } from "./services/findmyKeyGen";
 import type { FileEntry, SysInfo } from "./types/ble";
 import { formatFileSize } from "./utils/helpers";
 
@@ -151,6 +154,9 @@ export default function App() {
   const [localFileName, setLocalFileName] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [keepAliveMinutes, setKeepAliveMinutes] = useState(30);
+  const [findMyKeys, setFindMyKeys] = useState<FindMyKeyBundle | null>(null);
+  const [findMyEnabled, setFindMyEnabled] = useState<boolean | null>(null);
+  const [findMyBusy, setFindMyBusy] = useState(false);
 
   const getReadyStatus = useCallback(() => {
     const connected = bleServiceRef.current?.isConnected() ?? false;
@@ -572,6 +578,96 @@ export default function App() {
     }
   }, [logger, resetStatus]);
 
+  const handleFindMyGenerate = useCallback(() => {
+    const bundle = generateFindMyKeys();
+    setFindMyKeys(bundle);
+    logger.success("FindMy keys generated.");
+  }, [logger]);
+
+  const handleFindMyProvision = useCallback(async () => {
+    const bleService = bleServiceRef.current;
+    if (!bleService || !findMyKeys) return;
+
+    setFindMyBusy(true);
+    setStatusMessage("Provisioning FindMy keys...");
+    try {
+      const result = await bleService.writeFindMyKeys(findMyKeys.packed);
+      if (result.success) {
+        logger.success("FindMy keys written to device.");
+        setFindMyEnabled(true);
+        setStatusMessage("FindMy keys provisioned.");
+      } else {
+        logger.error("Device rejected FindMy keys.");
+        setStatusMessage("FindMy provisioning failed.");
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error(`FindMy provision failed: ${message}`);
+      setStatusMessage("FindMy provisioning failed.");
+    } finally {
+      setFindMyBusy(false);
+      resetStatus(1600);
+    }
+  }, [findMyKeys, logger, resetStatus]);
+
+  const handleFindMyDump = useCallback(async () => {
+    const bleService = bleServiceRef.current;
+    if (!bleService) return;
+
+    setFindMyBusy(true);
+    setStatusMessage("Reading FindMy keys from device...");
+    try {
+      const result = await bleService.readFindMyKeys();
+      if (result.success && result.keys) {
+        const bundle = unpackKeys(result.keys);
+        if (bundle) {
+          setFindMyKeys(bundle);
+          logger.success("FindMy keys read from device.");
+        } else {
+          logger.error("Invalid key data from device.");
+        }
+      } else {
+        logger.log("No FindMy keys on device.");
+      }
+      setStatusMessage("FindMy dump complete.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error(`FindMy dump failed: ${message}`);
+      setStatusMessage("FindMy dump failed.");
+    } finally {
+      setFindMyBusy(false);
+      resetStatus(1600);
+    }
+  }, [logger, resetStatus]);
+
+  const handleFindMyStatus = useCallback(async () => {
+    const bleService = bleServiceRef.current;
+    if (!bleService) return;
+
+    try {
+      const result = await bleService.getFindMyStatus();
+      setFindMyEnabled(result.enabled);
+      logger.log(`FindMy status: ${result.enabled ? "enabled" : "disabled"}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error(`FindMy status query failed: ${message}`);
+    }
+  }, [logger]);
+
+  const handleFindMyExport = useCallback(() => {
+    if (!findMyKeys) return;
+    const json = exportKeysAsJson(findMyKeys);
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `findmy-keys-${findMyKeys.epoch}.json`;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+    logger.success("FindMy keys exported as JSON.");
+  }, [findMyKeys, logger]);
+
   const handleDownloadRaw = useCallback(async (entry: FileEntry) => {
     const fileService = fileServiceRef.current;
     if (!fileService) return;
@@ -923,6 +1019,64 @@ export default function App() {
           </div>
 
           <aside className="order-1 space-y-6 lg:order-2 lg:sticky lg:top-6 self-start">
+            <Card className="animate-fade-up">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Key className="h-5 w-5 text-primary" />
+                  Find My
+                </CardTitle>
+                <CardDescription>Generate, provision, and export Apple Find My keys.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="outline" size="sm" onClick={handleFindMyGenerate} disabled={findMyBusy}>
+                    Generate Keys
+                  </Button>
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={handleFindMyProvision}
+                    disabled={!isConnected || !findMyKeys || findMyBusy}
+                  >
+                    Provision
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleFindMyDump}
+                    disabled={!isConnected || findMyBusy}
+                  >
+                    Dump
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleFindMyStatus}
+                    disabled={!isConnected || findMyBusy}
+                  >
+                    Status
+                  </Button>
+                </div>
+                {findMyKeys && (
+                  <div className="space-y-2">
+                    <div className="rounded-md border border-border/70 bg-white/60 p-3 text-xs font-mono break-all">
+                      <div><span className="text-muted-foreground">Epoch:</span> {new Date(findMyKeys.epoch * 1000).toISOString()}</div>
+                      <div><span className="text-muted-foreground">PubKey (x):</span> {Array.from(findMyKeys.publicKey.slice(1, 29)).map(b => b.toString(16).padStart(2, "0")).join("")}</div>
+                    </div>
+                    <Button variant="outline" size="sm" onClick={handleFindMyExport} className="w-full">
+                      <Download className="h-4 w-4" />
+                      Export JSON
+                    </Button>
+                  </div>
+                )}
+                {findMyEnabled !== null && (
+                  <Badge variant={findMyEnabled ? "default" : "muted"}>
+                    {findMyEnabled ? "FindMy Active" : "FindMy Inactive"}
+                  </Badge>
+                )}
+              </CardContent>
+            </Card>
+
             <Card className="animate-fade-up">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
