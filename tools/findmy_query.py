@@ -43,6 +43,11 @@ P224_ORDER = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFF16A2E0B8F03E13DD29455C5C2A3D
 KEY_ROTATION_SECS = 900  # 15 minutes
 
 
+def counter_at(ts: int, epoch: int) -> int:
+    """Counter index at unix timestamp `ts`, aligned to absolute 15-min slots."""
+    return (ts // KEY_ROTATION_SECS) - (epoch // KEY_ROTATION_SECS)
+
+
 # ---------------------------------------------------------------------------
 # ANSI X9.63 KDF (SHA-256) — matches firmware kdf()
 # ---------------------------------------------------------------------------
@@ -357,8 +362,8 @@ def cmd_keys(args):
     # Compute counter range
     if start < epoch:
         start = epoch
-    counter_start = (start - epoch) // KEY_ROTATION_SECS
-    counter_end = (now - epoch) // KEY_ROTATION_SECS
+    counter_start = counter_at(start, epoch)
+    counter_end = counter_at(now, epoch)
 
     print(f"Epoch: {epoch} ({datetime.datetime.fromtimestamp(epoch, tz=datetime.timezone.utc).isoformat()})")
     print(f"Counter range: {counter_start} - {counter_end}")
@@ -367,7 +372,7 @@ def cmd_keys(args):
 
     for i in range(counter_start, counter_end + 1):
         d_i, x_i = derive_key_at(priv, sk0, i)
-        ts = epoch + i * KEY_ROTATION_SECS
+        ts = (epoch // KEY_ROTATION_SECS + i) * KEY_ROTATION_SECS
         dt = datetime.datetime.fromtimestamp(
             ts, tz=datetime.timezone.utc
         ).strftime("%Y-%m-%d %H:%M UTC")
@@ -398,8 +403,8 @@ def cmd_fetch(args):
     if start < epoch:
         start = epoch
 
-    counter_start = (start - epoch) // KEY_ROTATION_SECS
-    counter_end = (now - epoch) // KEY_ROTATION_SECS
+    counter_start = counter_at(start, epoch)
+    counter_end = counter_at(now, epoch)
 
     print(f"Deriving {counter_end - counter_start + 1} keys (counter {counter_start}-{counter_end})...")
 

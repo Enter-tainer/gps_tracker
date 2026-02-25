@@ -28,6 +28,7 @@ const p224 = createCurve(
 const PRIVATE_KEY_SIZE = 28;
 const SYMMETRIC_KEY_SIZE = 32;
 const EPOCH_SIZE = 8;
+const KEY_ROTATION_SECS = 900;
 export const KEY_MATERIAL_SIZE = PRIVATE_KEY_SIZE + SYMMETRIC_KEY_SIZE + EPOCH_SIZE;
 
 export type FindMyKeyBundle = {
@@ -48,7 +49,8 @@ export function generateFindMyKeys(): FindMyKeyBundle {
   const privateKey = p224.utils.randomPrivateKey();
   const publicKey = p224.getPublicKey(privateKey, false);
   const symmetricKey = crypto.getRandomValues(new Uint8Array(SYMMETRIC_KEY_SIZE));
-  const epoch = Math.floor(Date.now() / 1000);
+  const now = Math.floor(Date.now() / 1000);
+  const epoch = now - (now % KEY_ROTATION_SECS);
 
   const packed = packKeys(privateKey, symmetricKey, epoch);
 
