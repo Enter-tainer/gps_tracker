@@ -9,6 +9,8 @@ mod board;
 mod button;
 mod casic;
 mod display;
+#[cfg(feature = "findmy")]
+mod findmy;
 mod gps;
 mod protocol;
 mod storage;
@@ -256,7 +258,7 @@ async fn main(spawner: Spawner) {
         }),
         common_vs_uuid: Some(raw::ble_common_cfg_vs_uuid_t { vs_uuid_count: 1 }),
         gap_role_count: Some(raw::ble_gap_cfg_role_count_t {
-            adv_set_count: 1,
+            adv_set_count: 2, // 2 sets: connectable BLE + Find My non-connectable
             periph_role_count: 1,
             central_role_count: 0,
             central_sec_count: 0,
@@ -307,6 +309,14 @@ async fn main(spawner: Spawner) {
     }
     if let Some(server) = server {
         spawner.spawn(ble::ble_task(sd, server)).unwrap();
+    }
+    #[cfg(feature = "findmy")]
+    {
+        // TODO: Load keys from flash storage. For now, use placeholder.
+        // In production, keys are provisioned via BLE during first setup.
+        // findmy::init(&private_key, &symmetric_key, initial_counter);
+        // findmy::set_enabled(true);
+        spawner.spawn(findmy::findmy_task(sd)).unwrap();
     }
 
     // LED is on P0.15 per promicro_diy variant.
