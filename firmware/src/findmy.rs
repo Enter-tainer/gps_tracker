@@ -21,7 +21,7 @@ use embassy_executor::task;
 use embassy_time::{Duration, Timer};
 use p224::elliptic_curve::ops::Reduce;
 use p224::elliptic_curve::sec1::ToEncodedPoint;
-use p224::{ProjectivePoint, Scalar, U224};
+use p224::{FieldBytes, ProjectivePoint, Scalar};
 use sha2::{Digest, Sha256};
 
 use nrf_softdevice::{raw, RawError, Softdevice};
@@ -126,27 +126,25 @@ fn derive_key_at(master_private: &[u8; 28], sk0: &[u8; 32], counter: u32) -> Der
     let x_bytes = encoded.x().expect("valid point");
 
     let mut public_key_x = [0u8; 28];
-    public_key_x.copy_from_slice(x_bytes.as_slice());
+    public_key_x.copy_from_slice(x_bytes);
 
     DerivedKey { public_key_x }
 }
 
 /// Convert bytes to a P-224 scalar via reduction mod q.
+///
+/// Takes the first 28 bytes (or fewer, left-padded with zeros),
+/// interprets as big-endian integer, and reduces modulo the curve order.
 fn bytes_to_scalar(bytes: &[u8]) -> Scalar {
-    let mut buf = [0u8; 28];
+    let mut buf = FieldBytes::default();
     let copy_len = if bytes.len() > 28 { 28 } else { bytes.len() };
     buf[28 - copy_len..].copy_from_slice(&bytes[..copy_len]);
-    let uint = U224::from_be_slice(&buf);
-    <Scalar as Reduce<U224>>::reduce(uint)
+    Scalar::reduce_bytes(&buf)
 }
 
 /// Convert bytes to a non-zero P-224 scalar (for diversification).
 fn bytes_to_scalar_nonzero(bytes: &[u8]) -> Scalar {
-    let mut buf = [0u8; 28];
-    let copy_len = if bytes.len() > 28 { 28 } else { bytes.len() };
-    buf[28 - copy_len..].copy_from_slice(&bytes[..copy_len]);
-    let uint = U224::from_be_slice(&buf);
-    let scalar = <Scalar as Reduce<U224>>::reduce(uint);
+    let scalar = bytes_to_scalar(bytes);
     if bool::from(scalar.is_zero()) {
         Scalar::ONE
     } else {
@@ -294,7 +292,7 @@ async fn adv_data_now() -> Option<([u8; 31], [u8; 6], u32)> {
 /// Waits for GPS fix to determine time, then advertises with rolling keys.
 /// Key rotation happens at 15-minute boundaries aligned to the epoch.
 #[task]
-pub async fn findmy_task(sd: &'static Softdevice) {
+pub async fn findmy_task(_sd: &'static Softdevice) {
     defmt::info!("FindMy: task started, waiting for enable + GPS time");
 
     loop {
@@ -304,7 +302,7 @@ pub async fn findmy_task(sd: &'static Softdevice) {
         }
 
         // Wait for GPS time
-        let (adv_payload, ble_addr, counter) = loop {
+        let (_adv_payload, _ble_addr, counter) = loop {
             if !is_enabled() {
                 break (Default::default(), Default::default(), 0);
             }
