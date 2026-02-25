@@ -1,5 +1,5 @@
 use core::cmp;
-use core::sync::atomic::{AtomicU16, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 
 use embassy_executor::task;
 use embassy_futures::select::{select, Either};
@@ -29,6 +29,15 @@ const CONN_SUP_TIMEOUT: u16 = 400; // 4s (units of 10ms).
 static RX_CHANNEL: Channel<CriticalSectionRawMutex, Vec<u8, MAX_GATT_PAYLOAD>, 8> = Channel::new();
 static ADV_REQUEST_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static ADV_REQUEST_TIMEOUT: AtomicU16 = AtomicU16::new(0);
+
+/// True when main BLE is advertising or has an active connection.
+/// Find My advertising should only run when this is false.
+static BLE_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// Check if main BLE is currently active (advertising or connected).
+pub fn is_active() -> bool {
+    BLE_ACTIVE.load(Ordering::Acquire)
+}
 
 static ADV_DATA: LegacyAdvertisementPayload = LegacyAdvertisementBuilder::new()
     .flags(&[Flag::GeneralDiscovery, Flag::LE_Only])
@@ -84,6 +93,7 @@ pub async fn ble_task(sd: &'static Softdevice, server: &'static Server) {
                 }
             }
         };
+        BLE_ACTIVE.store(true, Ordering::Release);
         let config = peripheral::Config {
             interval: ADV_INTERVAL_UNITS,
             timeout: Some(timeout),
@@ -103,13 +113,16 @@ pub async fn ble_task(sd: &'static Softdevice, server: &'static Server) {
             Either::First(Ok(conn)) => conn,
             Either::First(Err(peripheral::AdvertiseError::Timeout)) => {
                 defmt::info!("BLE advertising timeout");
+                BLE_ACTIVE.store(false, Ordering::Release);
                 continue;
             }
             Either::First(Err(err)) => {
                 defmt::warn!("BLE advertise error: {:?}", err);
+                BLE_ACTIVE.store(false, Ordering::Release);
                 continue;
             }
             Either::Second(()) => {
+                BLE_ACTIVE.store(false, Ordering::Release);
                 pending_timeout = take_adv_request();
                 continue;
             }
@@ -154,6 +167,7 @@ pub async fn ble_task(sd: &'static Softdevice, server: &'static Server) {
             }
             Either::Second(_) => {}
         }
+        BLE_ACTIVE.store(false, Ordering::Release);
 
         pending_timeout = take_adv_request().or(Some(timeout));
     }

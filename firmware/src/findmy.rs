@@ -3,7 +3,7 @@
 //! Implements the offline finding protocol:
 //! - P-224 elliptic curve key derivation (rolling keys every 15 minutes)
 //! - BLE advertisement payload construction matching Apple's format
-//! - Non-connectable undirected advertising alongside the main connectable BLE
+//! - Non-connectable undirected advertising when main BLE is idle
 //!
 //! # Key Derivation Algorithm
 //!
@@ -26,6 +26,7 @@ use sha2::{Digest, Sha256};
 
 use nrf_softdevice::{raw, RawError, Softdevice};
 
+use crate::ble;
 use crate::system_info::SYSTEM_INFO;
 
 /// Key rotation interval in seconds (15 minutes).
@@ -41,6 +42,20 @@ static FINDMY_ENABLED: AtomicBool = AtomicBool::new(false);
 /// Master key material. Set once during initialization.
 /// Layout: [private_key: 28 | symmetric_key: 32 | epoch_secs: 8 (LE)]
 static mut MASTER_KEYS: [u8; 68] = [0u8; 68];
+
+/// Cached symmetric key state for incremental KDF advancement.
+/// Avoids re-deriving from SK₀ on every rotation.
+struct SkCache {
+    sk: [u8; 32],
+    counter: u32,
+    valid: bool,
+}
+
+static mut SK_CACHE: SkCache = SkCache {
+    sk: [0u8; 32],
+    counter: 0,
+    valid: false,
+};
 
 // ---------------------------------------------------------------------------
 // ANSI X9.63 KDF (SHA-256 based, matching Apple's implementation)
@@ -94,15 +109,41 @@ impl KdfOutput {
 // P-224 key derivation
 // ---------------------------------------------------------------------------
 
-/// Derive the rolling key pair for time interval `counter`.
-fn derive_key_at(master_private: &[u8; 28], sk0: &[u8; 32], counter: u32) -> DerivedKey {
-    // Step 1: Iteratively derive symmetric key SK_counter
+/// Advance symmetric key from `start_sk` at `start_counter` to `target_counter`.
+///
+/// Returns the SK at `target_counter`. If `target_counter == start_counter`,
+/// returns `start_sk` unchanged.
+fn advance_sk(start_sk: &[u8; 32], start_counter: u32, target_counter: u32) -> [u8; 32] {
     let mut sk = [0u8; 32];
-    sk.copy_from_slice(sk0);
-    for _ in 0..counter {
+    sk.copy_from_slice(start_sk);
+    for _ in start_counter..target_counter {
         let derived = kdf(&sk, b"update", 32);
         sk.copy_from_slice(&derived.as_slice()[..32]);
     }
+    sk
+}
+
+/// Derive the rolling key pair for time interval `counter`.
+///
+/// Uses SK cache when available for incremental advancement.
+/// Falls back to iterating from SK₀ when cache is invalid.
+fn derive_key_at(master_private: &[u8; 28], sk0: &[u8; 32], counter: u32) -> DerivedKey {
+    // Step 1: Get SK at `counter`, using cache if possible
+    let sk = unsafe {
+        if SK_CACHE.valid && SK_CACHE.counter <= counter {
+            let sk = advance_sk(&SK_CACHE.sk, SK_CACHE.counter, counter);
+            SK_CACHE.sk = sk;
+            SK_CACHE.counter = counter;
+            sk
+        } else {
+            // Cold start: iterate from SK₀
+            let sk = advance_sk(sk0, 0, counter);
+            SK_CACHE.sk = sk;
+            SK_CACHE.counter = counter;
+            SK_CACHE.valid = true;
+            sk
+        }
+    };
 
     // Step 2: Diversify to get u_i and v_i (36 bytes each)
     let diversified = kdf(&sk, b"diversify", 72);
@@ -160,6 +201,25 @@ struct DerivedKey {
 // BLE advertisement payload
 // ---------------------------------------------------------------------------
 
+/// Map battery percentage to Apple Find My status byte.
+///
+/// AirTag status byte encoding:
+/// - 0x10 = full (>80%)
+/// - 0x50 = medium (30-80%)
+/// - 0x90 = low (10-30%)
+/// - 0xD0 = very low (<10%)
+fn battery_to_status(battery_percent: u8) -> u8 {
+    if battery_percent > 80 {
+        0x10
+    } else if battery_percent > 30 {
+        0x50
+    } else if battery_percent > 10 {
+        0x90
+    } else {
+        0xD0
+    }
+}
+
 /// Build the 31-byte Find My advertisement payload from a public key.
 fn build_adv_payload(public_key_x: &[u8; 28], status: u8) -> [u8; 31] {
     let mut payload = [0u8; 31];
@@ -172,7 +232,7 @@ fn build_adv_payload(public_key_x: &[u8; 28], status: u8) -> [u8; 31] {
     payload[6] = status;
     payload[7..29].copy_from_slice(&public_key_x[6..28]);
     payload[29] = public_key_x[0] >> 6;
-    payload[30] = public_key_x[5];
+    payload[30] = 0x00; // Hint byte (reserved)
     payload
 }
 
@@ -240,6 +300,11 @@ async fn secs_until_next_rotation() -> Option<u64> {
     Some(KEY_ROTATION_SECS - into_slot)
 }
 
+/// Read current battery percent from SYSTEM_INFO.
+async fn battery_percent() -> u8 {
+    SYSTEM_INFO.lock().await.battery_percent
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -254,6 +319,8 @@ pub fn init(private_key: &[u8; 28], symmetric_key: &[u8; 32], epoch: u64) {
         MASTER_KEYS[..28].copy_from_slice(private_key);
         MASTER_KEYS[28..60].copy_from_slice(symmetric_key);
         MASTER_KEYS[60..68].copy_from_slice(&epoch.to_le_bytes());
+        // Invalidate SK cache when keys change
+        SK_CACHE.valid = false;
     }
 }
 
@@ -278,7 +345,8 @@ async fn adv_data_now() -> Option<([u8; 31], [u8; 6], u32)> {
         (p, s)
     };
     let derived = derive_key_at(&pk, &sk, counter);
-    let payload = build_adv_payload(&derived.public_key_x, 0x00);
+    let status = battery_to_status(battery_percent().await);
+    let payload = build_adv_payload(&derived.public_key_x, status);
     let addr = build_ble_address(&derived.public_key_x);
     Some((payload, addr, counter))
 }
@@ -291,6 +359,7 @@ async fn adv_data_now() -> Option<([u8; 31], [u8; 6], u32)> {
 ///
 /// Waits for GPS fix to determine time, then advertises with rolling keys.
 /// Key rotation happens at 15-minute boundaries aligned to the epoch.
+/// Only advertises when main BLE is idle (not advertising or connected).
 #[task]
 pub async fn findmy_task(_sd: &'static Softdevice) {
     defmt::info!("FindMy: task started, waiting for enable + GPS time");
@@ -326,10 +395,16 @@ pub async fn findmy_task(_sd: &'static Softdevice) {
                 break;
             }
 
+            // Wait for main BLE to become idle
+            if ble::is_active() {
+                Timer::after(Duration::from_secs(2)).await;
+                continue;
+            }
+
             let (adv_payload, ble_addr, new_counter) = match adv_data_now().await {
                 Some(d) => d,
                 None => {
-                    // GPS time lost, keep advertising with last known key
+                    // GPS time lost, retrying
                     defmt::warn!("FindMy: GPS time lost, retrying in 10s");
                     Timer::after(Duration::from_secs(10)).await;
                     continue;
@@ -341,7 +416,11 @@ pub async fn findmy_task(_sd: &'static Softdevice) {
                 current_counter = new_counter;
             }
 
-            // Set BLE address
+            // Save original BLE address before overriding
+            let mut orig_addr: raw::ble_gap_addr_t = unsafe { core::mem::zeroed() };
+            let _ = unsafe { raw::sd_ble_gap_addr_get(&mut orig_addr) };
+
+            // Set Find My BLE address
             let addr = raw::ble_gap_addr_t {
                 _bitfield_1: raw::ble_gap_addr_t::new_bitfield_1(
                     0,
@@ -380,6 +459,8 @@ pub async fn findmy_task(_sd: &'static Softdevice) {
                 raw::sd_ble_gap_adv_set_configure(&mut adv_handle, &adv_data, &adv_params)
             }) {
                 defmt::warn!("FindMy: adv configure failed: {:?}", e);
+                // Restore original address
+                let _ = unsafe { raw::sd_ble_gap_addr_set(&orig_addr) };
                 Timer::after(Duration::from_secs(5)).await;
                 continue;
             }
@@ -388,19 +469,26 @@ pub async fn findmy_task(_sd: &'static Softdevice) {
                 raw::sd_ble_gap_adv_start(adv_handle, raw::BLE_CONN_CFG_TAG_DEFAULT as u8)
             }) {
                 defmt::warn!("FindMy: adv start failed: {:?}", e);
+                // Restore original address
+                let _ = unsafe { raw::sd_ble_gap_addr_set(&orig_addr) };
                 Timer::after(Duration::from_secs(5)).await;
                 continue;
             }
 
             defmt::info!("FindMy: advertising (counter={})", current_counter);
 
-            // Sleep until next rotation boundary
+            // Sleep until next rotation boundary or BLE becomes active
             let sleep_secs = secs_until_next_rotation().await.unwrap_or(KEY_ROTATION_SECS);
-            // Add 1s buffer to ensure we cross the boundary
-            Timer::after(Duration::from_secs(sleep_secs + 1)).await;
+            let mut remaining = sleep_secs + 1;
+            while remaining > 0 && !ble::is_active() && is_enabled() {
+                let step = if remaining > 2 { 2 } else { remaining };
+                Timer::after(Duration::from_secs(step)).await;
+                remaining = remaining.saturating_sub(step);
+            }
 
-            // Stop current advertising before reconfiguring
+            // Stop advertising and restore original address
             let _ = RawError::convert(unsafe { raw::sd_ble_gap_adv_stop(adv_handle) });
+            let _ = unsafe { raw::sd_ble_gap_addr_set(&orig_addr) };
         }
 
         defmt::info!("FindMy: disabled");
