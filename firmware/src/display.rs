@@ -1,5 +1,6 @@
 use core::fmt::Write;
 
+use chrono::{Datelike, Timelike};
 use embassy_embedded_hal::shared_bus::blocking::i2c::I2cDevice;
 use embassy_executor::task;
 use embassy_futures::select::{select, Either};
@@ -131,6 +132,18 @@ enum DisplayPage {
     FindMy,
 }
 
+#[derive(Clone, Copy)]
+struct DisplayTimeAnchor {
+    unix_ts: u64,
+    monotonic_ms: u64,
+}
+
+#[derive(Clone, Copy)]
+struct FindMyDisplayTime {
+    unix_ts: Option<u64>,
+    estimated: bool,
+}
+
 #[derive(Clone, Copy, Debug)]
 #[allow(dead_code)]
 pub enum DisplayCommand {
@@ -170,6 +183,7 @@ pub async fn display_task(i2c: SharedI2c) {
     let mut usb_mode = false;
     let mut findmy_addr: Option<[u8; 6]> = None;
     let mut current_page = DisplayPage::Main;
+    let mut findmy_time_anchor: Option<DisplayTimeAnchor> = None;
     let mut tz_cache = TzCache::new();
 
     let text_style = MonoTextStyle::new(&FONT_6X9, BinaryColor::On);
@@ -186,7 +200,9 @@ pub async fn display_task(i2c: SharedI2c) {
         &mut tz_cache,
         current_page,
         findmy_addr,
-    );
+        &mut findmy_time_anchor,
+    )
+    .await;
 
     loop {
         if display_on {
@@ -205,6 +221,7 @@ pub async fn display_task(i2c: SharedI2c) {
                         &mut usb_mode,
                         &mut findmy_addr,
                         &mut current_page,
+                        &mut findmy_time_anchor,
                         &mut tz_cache,
                         &text_style,
                         text_settings,
@@ -222,6 +239,7 @@ pub async fn display_task(i2c: SharedI2c) {
                             &mut usb_mode,
                             &mut findmy_addr,
                             &mut current_page,
+                            &mut findmy_time_anchor,
                             &mut tz_cache,
                             &text_style,
                             text_settings,
@@ -242,7 +260,9 @@ pub async fn display_task(i2c: SharedI2c) {
                             &mut tz_cache,
                             current_page,
                             findmy_addr,
-                        );
+                            &mut findmy_time_anchor,
+                        )
+                        .await;
                     }
                 }
             }
@@ -256,6 +276,7 @@ pub async fn display_task(i2c: SharedI2c) {
                 &mut usb_mode,
                 &mut findmy_addr,
                 &mut current_page,
+                &mut findmy_time_anchor,
                 &mut tz_cache,
                 &text_style,
                 text_settings,
@@ -272,6 +293,7 @@ pub async fn display_task(i2c: SharedI2c) {
                 &mut usb_mode,
                 &mut findmy_addr,
                 &mut current_page,
+                &mut findmy_time_anchor,
                 &mut tz_cache,
                 &text_style,
                 text_settings,
@@ -289,6 +311,7 @@ async fn handle_command(
     usb_mode: &mut bool,
     findmy_addr: &mut Option<[u8; 6]>,
     current_page: &mut DisplayPage,
+    findmy_time_anchor: &mut Option<DisplayTimeAnchor>,
     tz_cache: &mut TzCache,
     text_style: &MonoTextStyle<'_, BinaryColor>,
     text_settings: embedded_graphics::text::TextStyle,
@@ -311,7 +334,9 @@ async fn handle_command(
                         tz_cache,
                         *current_page,
                         *findmy_addr,
-                    );
+                        findmy_time_anchor,
+                    )
+                    .await;
                 }
                 return;
             }
@@ -335,7 +360,9 @@ async fn handle_command(
                         tz_cache,
                         *current_page,
                         *findmy_addr,
-                    );
+                        findmy_time_anchor,
+                    )
+                    .await;
                     *last_activity = Instant::now();
                 }
                 DisplayPage::FindMy => {
@@ -360,7 +387,9 @@ async fn handle_command(
                     tz_cache,
                     *current_page,
                     *findmy_addr,
-                );
+                    findmy_time_anchor,
+                )
+                .await;
             }
         }
         DisplayCommand::TurnOff => {
@@ -388,7 +417,9 @@ async fn handle_command(
                     tz_cache,
                     *current_page,
                     *findmy_addr,
-                );
+                    findmy_time_anchor,
+                )
+                .await;
             }
         }
         DisplayCommand::ClearFindMyAddress => {
@@ -404,7 +435,9 @@ async fn handle_command(
                     tz_cache,
                     *current_page,
                     *findmy_addr,
-                );
+                    findmy_time_anchor,
+                )
+                .await;
             }
         }
     }
@@ -469,7 +502,7 @@ fn render_logo(display: &mut Display) {
     let _ = display.flush();
 }
 
-fn render_current_page(
+async fn render_current_page(
     display: &mut Display,
     text_style: &MonoTextStyle<'_, BinaryColor>,
     text_settings: embedded_graphics::text::TextStyle,
@@ -477,10 +510,14 @@ fn render_current_page(
     tz_cache: &mut TzCache,
     page: DisplayPage,
     findmy_addr: Option<[u8; 6]>,
+    findmy_time_anchor: &mut Option<DisplayTimeAnchor>,
 ) {
     match page {
         DisplayPage::Main => render_main_page(display, text_style, text_settings, info, tz_cache),
-        DisplayPage::FindMy => render_findmy_page(display, text_style, text_settings, info, findmy_addr),
+        DisplayPage::FindMy => {
+            let findmy_time = resolve_findmy_display_time(info, findmy_time_anchor);
+            render_findmy_page(display, text_style, text_settings, info, findmy_addr, findmy_time)
+        }
     }
 }
 
@@ -606,6 +643,7 @@ fn render_findmy_page(
     text_settings: embedded_graphics::text::TextStyle,
     info: &SystemInfo,
     findmy_addr: Option<[u8; 6]>,
+    findmy_time: FindMyDisplayTime,
 ) {
     let _ = display.clear(BinaryColor::Off);
 
@@ -633,7 +671,31 @@ fn render_findmy_page(
     gps_state.push_str(gps_state_label(info.gps_state)).ok();
     draw_line(display, text_style, text_settings, 3, "GPS: ", gps_state);
 
-    draw_line(display, text_style, text_settings, 4, "Date: ", format_date(info));
+    let (date_text, time_text, estimated_time) = if info.date_time_valid {
+        (format_date(info), format_time(info), false)
+    } else if let Some(unix_ts) = findmy_time.unix_ts {
+        (
+            format_date_from_unix(unix_ts),
+            format_time_from_unix(unix_ts),
+            findmy_time.estimated,
+        )
+    } else {
+        let mut na_date = String::<32>::new();
+        na_date.push_str("N/A").ok();
+        let mut na_time = String::<32>::new();
+        na_time.push_str("N/A").ok();
+        (na_date, na_time, false)
+    };
+
+    draw_line(display, text_style, text_settings, 4, "Date: ", date_text);
+    draw_line(
+        display,
+        text_style,
+        text_settings,
+        5,
+        if estimated_time { "Time*: " } else { "Time: " },
+        time_text,
+    );
 
     let _ = display.flush();
 }
@@ -703,6 +765,56 @@ fn draw_line<D>(
     )
     .draw(display)
     .ok();
+}
+
+fn resolve_findmy_display_time(
+    info: &SystemInfo,
+    anchor: &mut Option<DisplayTimeAnchor>,
+) -> FindMyDisplayTime {
+    if let Some(unix_ts) = info_unix_ts(info) {
+        *anchor = Some(DisplayTimeAnchor {
+            unix_ts,
+            monotonic_ms: Instant::now().as_millis(),
+        });
+        return FindMyDisplayTime {
+            unix_ts: Some(unix_ts),
+            estimated: false,
+        };
+    }
+
+    if let Some(base) = *anchor {
+        let now_ms = Instant::now().as_millis();
+        let elapsed_secs = now_ms.saturating_sub(base.monotonic_ms) / 1000;
+        return FindMyDisplayTime {
+            unix_ts: Some(base.unix_ts.saturating_add(elapsed_secs)),
+            estimated: true,
+        };
+    }
+
+    FindMyDisplayTime {
+        unix_ts: None,
+        estimated: false,
+    }
+}
+
+fn format_date_from_unix(unix_ts: u64) -> String<32> {
+    let mut out = String::<32>::new();
+    if let Some(dt) = chrono::DateTime::from_timestamp(unix_ts as i64, 0) {
+        let _ = write!(out, "{:04}-{:02}-{:02}", dt.year(), dt.month(), dt.day());
+    } else {
+        out.push_str("N/A").ok();
+    }
+    out
+}
+
+fn format_time_from_unix(unix_ts: u64) -> String<32> {
+    let mut out = String::<32>::new();
+    if let Some(dt) = chrono::DateTime::from_timestamp(unix_ts as i64, 0) {
+        let _ = write!(out, "{:02}:{:02}:{:02}", dt.hour(), dt.minute(), dt.second());
+    } else {
+        out.push_str("N/A").ok();
+    }
+    out
 }
 
 fn format_date(info: &SystemInfo) -> String<32> {
