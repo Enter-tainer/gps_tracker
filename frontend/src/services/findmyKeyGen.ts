@@ -1,12 +1,29 @@
 /**
  * FindMy key generation using P-224 elliptic curve.
  *
- * Uses @noble/curves for P-224 support (not available in WebCrypto).
+ * Uses @noble/curves low-level APIs to define P-224 (not available in WebCrypto).
  * Key material layout (68 bytes):
  *   [private_key: 28B][symmetric_key: 32B][epoch_secs: 8B LE]
  */
 
-import { p224 } from "@noble/curves/p224";
+import { createCurve } from "@noble/curves/_shortw_utils";
+import { Field } from "@noble/curves/abstract/modular";
+import { sha256 } from "@noble/hashes/sha2";
+
+const P224_CURVE = {
+  p: BigInt("0xffffffffffffffffffffffffffffffff000000000000000000000001"),
+  n: BigInt("0xffffffffffffffffffffffffffff16a2e0b8f03e13dd29455c5c2a3d"),
+  h: BigInt(1),
+  a: BigInt("0xfffffffffffffffffffffffffffffffefffffffffffffffffffffffe"),
+  b: BigInt("0xb4050a850c04b3abf54132565044b0b7d7bfd8ba270b39432355ffb4"),
+  Gx: BigInt("0xb70e0cbd6bb4bf7f321390b94a03c1d356c21122343280d6115c1d21"),
+  Gy: BigInt("0xbd376388b5f723fb4c22dfe6cd4375a05a07476444d5819985007e34")
+};
+
+const p224 = createCurve(
+  { ...P224_CURVE, Fp: Field(P224_CURVE.p), lowS: false },
+  sha256
+);
 
 const PRIVATE_KEY_SIZE = 28;
 const SYMMETRIC_KEY_SIZE = 32;

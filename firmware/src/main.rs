@@ -258,7 +258,9 @@ async fn main(spawner: Spawner) {
         }),
         common_vs_uuid: Some(raw::ble_common_cfg_vs_uuid_t { vs_uuid_count: 1 }),
         gap_role_count: Some(raw::ble_gap_cfg_role_count_t {
-            adv_set_count: 2, // 2 sets: connectable BLE + Find My non-connectable
+            // S140 7.3.0 supports only one advertising set handle.
+            // Find My and connectable BLE must time-share this single handle.
+            adv_set_count: 1,
             periph_role_count: 1,
             central_role_count: 0,
             central_sec_count: 0,
@@ -310,28 +312,6 @@ async fn main(spawner: Spawner) {
     if let Some(server) = server {
         spawner.spawn(ble::ble_task(sd, server)).unwrap();
     }
-    #[cfg(feature = "findmy")]
-    {
-        // Load keys from SD card if previously provisioned.
-        if let Some(keys) = storage::read_findmy_keys().await {
-            let mut pk = [0u8; 28];
-            let mut sk = [0u8; 32];
-            pk.copy_from_slice(&keys[..28]);
-            sk.copy_from_slice(&keys[28..60]);
-            let epoch = u64::from_le_bytes({
-                let mut b = [0u8; 8];
-                b.copy_from_slice(&keys[60..68]);
-                b
-            });
-            findmy::init(&pk, &sk, epoch);
-            findmy::load_sk_cache().await;
-            findmy::set_enabled(true);
-            defmt::info!("FindMy: loaded keys from SD, epoch={}", epoch);
-        } else {
-            defmt::info!("FindMy: no keys on SD, waiting for provisioning via BLE");
-        }
-        spawner.spawn(findmy::findmy_task(sd)).unwrap();
-    }
 
     // LED is on P0.15 per promicro_diy variant.
     let _led = Output::new(led, Level::Low, OutputDrive::Standard);
@@ -361,6 +341,30 @@ async fn main(spawner: Spawner) {
     {
         defmt::warn!("i2c-spi feature disabled: skipping SD init and sensors/display");
     }
+
+    #[cfg(feature = "findmy")]
+    {
+        // Load keys from SD card only after SD logger is initialized.
+        if let Some(keys) = storage::read_findmy_keys().await {
+            let mut pk = [0u8; 28];
+            let mut sk = [0u8; 32];
+            pk.copy_from_slice(&keys[..28]);
+            sk.copy_from_slice(&keys[28..60]);
+            let epoch = u64::from_le_bytes({
+                let mut b = [0u8; 8];
+                b.copy_from_slice(&keys[60..68]);
+                b
+            });
+            findmy::init(&pk, &sk, epoch);
+            findmy::load_sk_cache().await;
+            findmy::set_enabled(true);
+            defmt::info!("FindMy: loaded keys from SD, epoch={}", epoch);
+        } else {
+            defmt::info!("FindMy: no keys on SD, waiting for provisioning via BLE");
+        }
+        spawner.spawn(findmy::findmy_task(sd)).unwrap();
+    }
+
     let gps_en = Output::new(gps_en_pin, Level::Low, OutputDrive::Standard);
     if !usb_only {
         let gps_uart = {
