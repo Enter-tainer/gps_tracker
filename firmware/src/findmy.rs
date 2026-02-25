@@ -21,7 +21,6 @@ use embassy_executor::task;
 use embassy_time::{Duration, Timer};
 use p224::elliptic_curve::ops::Reduce;
 use p224::elliptic_curve::sec1::ToEncodedPoint;
-use p224::elliptic_curve::Field;
 use p224::{ProjectivePoint, Scalar, U224};
 use sha2::{Digest, Sha256};
 
@@ -195,51 +194,49 @@ fn build_ble_address(public_key_x: &[u8; 28]) -> [u8; 6] {
 // Time-based counter
 // ---------------------------------------------------------------------------
 
+/// Read GPS unix timestamp from SYSTEM_INFO.
+///
+/// Returns `None` if GPS datetime is not yet valid.
+async fn gps_unix_ts() -> Option<u64> {
+    let info = *SYSTEM_INFO.lock().await;
+    if !info.date_time_valid {
+        return None;
+    }
+    let dt = chrono::NaiveDate::from_ymd_opt(info.year as i32, info.month as u32, info.day as u32)?
+        .and_hms_opt(info.hour as u32, info.minute as u32, info.second as u32)?;
+    Some(dt.and_utc().timestamp() as u64)
+}
+
+/// Read the stored epoch from master keys.
+fn stored_epoch() -> u64 {
+    u64::from_le_bytes(unsafe {
+        let mut buf = [0u8; 8];
+        buf.copy_from_slice(&MASTER_KEYS[60..68]);
+        buf
+    })
+}
+
 /// Compute the key counter from GPS unix timestamp and stored epoch.
 ///
 /// `counter = (unix_ts - epoch) / 900`
 ///
 /// Returns `None` if GPS time is not yet available or before epoch.
-fn counter_from_gps() -> Option<u32> {
-    let unix_ts = {
-        let info = SYSTEM_INFO.lock(|c| c.borrow().clone());
-        let dt = info.gps.datetime?;
-        // Convert chrono NaiveDateTime to unix timestamp
-        // chrono's timestamp() returns i64
-        dt.and_utc().timestamp() as u64
-    };
-
-    let epoch = u64::from_le_bytes(unsafe {
-        let mut buf = [0u8; 8];
-        buf.copy_from_slice(&MASTER_KEYS[60..68]);
-        buf
-    });
-
+async fn counter_from_gps() -> Option<u32> {
+    let unix_ts = gps_unix_ts().await?;
+    let epoch = stored_epoch();
     if unix_ts < epoch {
         return None;
     }
-
     Some(((unix_ts - epoch) / KEY_ROTATION_SECS) as u32)
 }
 
 /// Seconds remaining until next key rotation, based on GPS time.
-fn secs_until_next_rotation() -> Option<u64> {
-    let unix_ts = {
-        let info = SYSTEM_INFO.lock(|c| c.borrow().clone());
-        let dt = info.gps.datetime?;
-        dt.and_utc().timestamp() as u64
-    };
-
-    let epoch = u64::from_le_bytes(unsafe {
-        let mut buf = [0u8; 8];
-        buf.copy_from_slice(&MASTER_KEYS[60..68]);
-        buf
-    });
-
+async fn secs_until_next_rotation() -> Option<u64> {
+    let unix_ts = gps_unix_ts().await?;
+    let epoch = stored_epoch();
     if unix_ts < epoch {
         return None;
     }
-
     let elapsed = unix_ts - epoch;
     let into_slot = elapsed % KEY_ROTATION_SECS;
     Some(KEY_ROTATION_SECS - into_slot)
@@ -273,8 +270,8 @@ pub fn is_enabled() -> bool {
 
 /// Derive advertisement data for the current GPS time.
 /// Returns `None` if GPS time is unavailable.
-fn adv_data_now() -> Option<([u8; 31], [u8; 6], u32)> {
-    let counter = counter_from_gps()?;
+async fn adv_data_now() -> Option<([u8; 31], [u8; 6], u32)> {
+    let counter = counter_from_gps().await?;
     let (pk, sk) = unsafe {
         let mut p = [0u8; 28];
         let mut s = [0u8; 32];
@@ -311,7 +308,7 @@ pub async fn findmy_task(sd: &'static Softdevice) {
             if !is_enabled() {
                 break (Default::default(), Default::default(), 0);
             }
-            if let Some(data) = adv_data_now() {
+            if let Some(data) = adv_data_now().await {
                 break data;
             }
             Timer::after(Duration::from_secs(5)).await;
@@ -331,7 +328,7 @@ pub async fn findmy_task(sd: &'static Softdevice) {
                 break;
             }
 
-            let (adv_payload, ble_addr, new_counter) = match adv_data_now() {
+            let (adv_payload, ble_addr, new_counter) = match adv_data_now().await {
                 Some(d) => d,
                 None => {
                     // GPS time lost, keep advertising with last known key
@@ -400,7 +397,7 @@ pub async fn findmy_task(sd: &'static Softdevice) {
             defmt::info!("FindMy: advertising (counter={})", current_counter);
 
             // Sleep until next rotation boundary
-            let sleep_secs = secs_until_next_rotation().unwrap_or(KEY_ROTATION_SECS);
+            let sleep_secs = secs_until_next_rotation().await.unwrap_or(KEY_ROTATION_SECS);
             // Add 1s buffer to ensure we cross the boundary
             Timer::after(Duration::from_secs(sleep_secs + 1)).await;
 
