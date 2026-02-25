@@ -131,7 +131,9 @@ fn derive_key_at(master_private: &[u8; 28], sk0: &[u8; 32], counter: u32) -> Der
     // Step 1: Get SK at `counter`, using cache if possible
     let sk = unsafe {
         if SK_CACHE.valid && SK_CACHE.counter <= counter {
-            let sk = advance_sk(&SK_CACHE.sk, SK_CACHE.counter, counter);
+            let cached_sk = core::ptr::read_volatile(&raw const SK_CACHE.sk);
+            let cached_counter = core::ptr::read_volatile(&raw const SK_CACHE.counter);
+            let sk = advance_sk(&cached_sk, cached_counter, counter);
             SK_CACHE.sk = sk;
             SK_CACHE.counter = counter;
             sk
