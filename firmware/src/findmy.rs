@@ -27,6 +27,7 @@ use sha2::{Digest, Sha256};
 use nrf_softdevice::{raw, RawError, Softdevice};
 
 use crate::ble;
+use crate::storage;
 use crate::system_info::SYSTEM_INFO;
 
 /// Key rotation interval in seconds (15 minutes).
@@ -308,6 +309,47 @@ async fn battery_percent() -> u8 {
 }
 
 // ---------------------------------------------------------------------------
+// SD card SK cache persistence
+// ---------------------------------------------------------------------------
+
+/// Load SK cache from SD card into the static SK_CACHE.
+/// File format: sk(32 bytes) || counter(4 bytes LE) = 36 bytes.
+async fn load_sk_cache_from_sd() {
+    if let Some(buf) = storage::read_findmy_sk_cache().await {
+        let mut sk = [0u8; 32];
+        sk.copy_from_slice(&buf[..32]);
+        let counter = u32::from_le_bytes([buf[32], buf[33], buf[34], buf[35]]);
+        unsafe {
+            SK_CACHE.sk = sk;
+            SK_CACHE.counter = counter;
+            SK_CACHE.valid = true;
+        }
+        defmt::info!("FindMy: SK cache loaded from SD, counter={}", counter);
+    }
+}
+
+/// Save current SK cache to SD card.
+async fn save_sk_cache_to_sd() {
+    let (sk, counter, valid) = unsafe {
+        let sk = core::ptr::read_volatile(&raw const SK_CACHE.sk);
+        let counter = core::ptr::read_volatile(&raw const SK_CACHE.counter);
+        let valid = core::ptr::read_volatile(&raw const SK_CACHE.valid);
+        (sk, counter, valid)
+    };
+    if !valid {
+        return;
+    }
+    let mut buf = [0u8; storage::FINDMY_SK_CACHE_SIZE];
+    buf[..32].copy_from_slice(&sk);
+    buf[32..36].copy_from_slice(&counter.to_le_bytes());
+    if storage::write_findmy_sk_cache(&buf).await {
+        defmt::info!("FindMy: SK cache saved to SD, counter={}", counter);
+    } else {
+        defmt::warn!("FindMy: failed to save SK cache to SD");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -316,14 +358,26 @@ async fn battery_percent() -> u8 {
 /// * `private_key` - 28-byte P-224 private key (from flash)
 /// * `symmetric_key` - 32-byte initial symmetric key SK₀ (from flash)
 /// * `epoch` - Unix timestamp when counter=0 (provisioned with keys)
+///
+/// After setting keys, call `load_sk_cache()` to restore cached SK from SD.
 pub fn init(private_key: &[u8; 28], symmetric_key: &[u8; 32], epoch: u64) {
     unsafe {
         MASTER_KEYS[..28].copy_from_slice(private_key);
         MASTER_KEYS[28..60].copy_from_slice(symmetric_key);
         MASTER_KEYS[60..68].copy_from_slice(&epoch.to_le_bytes());
-        // Invalidate SK cache when keys change
+        // Invalidate SK cache; will be restored from SD by load_sk_cache()
         SK_CACHE.valid = false;
     }
+}
+
+/// Load SK cache from SD card. Call after `init()` to accelerate cold start.
+pub async fn load_sk_cache() {
+    load_sk_cache_from_sd().await;
+}
+
+/// Invalidate SK cache on SD card. Call when keys change (re-provisioning).
+pub async fn invalidate_sk_cache() {
+    storage::delete_findmy_sk_cache().await;
 }
 
 /// Enable or disable Find My advertising.
@@ -388,6 +442,8 @@ pub async fn findmy_task(_sd: &'static Softdevice) {
         }
 
         defmt::info!("FindMy: GPS time acquired, counter={}", counter);
+        // Save SK cache after initial derivation
+        save_sk_cache_to_sd().await;
 
         let mut current_counter = counter;
 
@@ -416,6 +472,8 @@ pub async fn findmy_task(_sd: &'static Softdevice) {
             if new_counter != current_counter {
                 defmt::info!("FindMy: key rotated {} -> {}", current_counter, new_counter);
                 current_counter = new_counter;
+                // Persist SK cache to SD card after rotation
+                save_sk_cache_to_sd().await;
             }
 
             // Save original BLE address before overriding

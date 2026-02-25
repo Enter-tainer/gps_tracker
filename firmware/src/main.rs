@@ -324,6 +324,7 @@ async fn main(spawner: Spawner) {
                 b
             });
             findmy::init(&pk, &sk, epoch);
+            findmy::load_sk_cache().await;
             findmy::set_enabled(true);
             defmt::info!("FindMy: loaded keys from SD, epoch={}", epoch);
         } else {

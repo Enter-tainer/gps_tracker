@@ -407,6 +407,7 @@ impl FileTransferProtocol {
             b
         });
         findmy::init(&pk, &sk, epoch);
+        findmy::invalidate_sk_cache().await;
         findmy::set_enabled(true);
         defmt::info!("WRITE_FINDMY_KEYS: OK, epoch={}", epoch);
         self.response[2] = 0x01; // success flag

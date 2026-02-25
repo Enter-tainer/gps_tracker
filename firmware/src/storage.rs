@@ -223,6 +223,9 @@ pub async fn delete_file(path: &[u8]) -> bool {
 /// FindMy key material size: private_key(28) + symmetric_key(32) + epoch(8) = 68 bytes.
 pub const FINDMY_KEY_SIZE: usize = 68;
 
+/// FindMy SK cache size: sk(32) + counter(4) = 36 bytes.
+pub const FINDMY_SK_CACHE_SIZE: usize = 36;
+
 /// Read FindMy key material from SD card (`/FINDMY.KEY`).
 pub async fn read_findmy_keys() -> Option<[u8; FINDMY_KEY_SIZE]> {
     let mut logger = SD_LOGGER.lock().await;
@@ -239,6 +242,36 @@ pub async fn write_findmy_keys(data: &[u8; FINDMY_KEY_SIZE]) -> bool {
         return false;
     };
     logger.write_findmy_keys(data)
+}
+
+/// Delete FindMy SK cache from SD card (`/FINDMY.SKC`).
+pub async fn delete_findmy_sk_cache() -> bool {
+    let mut logger = SD_LOGGER.lock().await;
+    let Some(logger) = logger.as_mut() else {
+        return false;
+    };
+    let _ = logger
+        .volume_mgr
+        .delete_file_in_dir(logger.root_dir, "FINDMY.SKC");
+    true
+}
+
+/// Read FindMy SK cache from SD card (`/FINDMY.SKC`).
+pub async fn read_findmy_sk_cache() -> Option<[u8; FINDMY_SK_CACHE_SIZE]> {
+    let mut logger = SD_LOGGER.lock().await;
+    let Some(logger) = logger.as_mut() else {
+        return None;
+    };
+    logger.read_findmy_sk_cache()
+}
+
+/// Write FindMy SK cache to SD card (`/FINDMY.SKC`).
+pub async fn write_findmy_sk_cache(data: &[u8; FINDMY_SK_CACHE_SIZE]) -> bool {
+    let mut logger = SD_LOGGER.lock().await;
+    let Some(logger) = logger.as_mut() else {
+        return false;
+    };
+    logger.write_findmy_sk_cache(data)
 }
 
 fn create_logger(
@@ -826,6 +859,39 @@ impl SdLogger {
         let file = match self.volume_mgr.open_file_in_dir(
             self.root_dir,
             "FINDMY.KEY",
+            Mode::ReadWriteCreateOrTruncate,
+        ) {
+            Ok(f) => f,
+            Err(_) => return false,
+        };
+        let ok = self.volume_mgr.write(file, data).is_ok();
+        let flush_ok = ok && self.volume_mgr.flush_file(file).is_ok();
+        let _ = self.volume_mgr.close_file(file);
+        flush_ok
+    }
+
+    fn read_findmy_sk_cache(&mut self) -> Option<[u8; FINDMY_SK_CACHE_SIZE]> {
+        let file = self
+            .volume_mgr
+            .open_file_in_dir(self.root_dir, "FINDMY.SKC", Mode::ReadOnly)
+            .ok()?;
+        let mut buf = [0u8; FINDMY_SK_CACHE_SIZE];
+        let n = self.volume_mgr.read(file, &mut buf).ok()?;
+        let _ = self.volume_mgr.close_file(file);
+        if n == FINDMY_SK_CACHE_SIZE {
+            Some(buf)
+        } else {
+            None
+        }
+    }
+
+    fn write_findmy_sk_cache(&mut self, data: &[u8; FINDMY_SK_CACHE_SIZE]) -> bool {
+        let _ = self
+            .volume_mgr
+            .delete_file_in_dir(self.root_dir, "FINDMY.SKC");
+        let file = match self.volume_mgr.open_file_in_dir(
+            self.root_dir,
+            "FINDMY.SKC",
             Mode::ReadWriteCreateOrTruncate,
         ) {
             Ok(f) => f,
