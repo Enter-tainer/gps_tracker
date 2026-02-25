@@ -60,6 +60,9 @@
 | `END_AGNSS_WRITE`     | `0x09` | 结束 AGNSS 数据写入      |
 | `GPS_WAKEUP`          | `0x0A` | 手动触发 GPS 唤醒        |
 | `GPS_KEEP_ALIVE`      | `0x0B` | 设置 GPS 持续开启时长    |
+| `WRITE_FINDMY_KEYS`   | `0x0C` | 写入 Find My 密钥材料    |
+| `READ_FINDMY_KEYS`    | `0x0D` | 读取 Find My 密钥材料    |
+| `GET_FINDMY_STATUS`   | `0x0E` | 查询 Find My 状态        |
 
 ## 4. 详细命令规范
 
@@ -406,6 +409,78 @@
     *   发送 `Duration = 0` 可立即取消 Keep-Alive，恢复正常功耗管理。
     *   Keep-Alive 到期后自动恢复正常状态机行为。
 
+### 4.12. `WRITE_FINDMY_KEYS` (需要 `findmy` feature)
+
+*   **目的**: 将 Find My 密钥材料写入设备 SD 卡并立即激活离线查找功能。
+*   **CMD ID**: `0x0C`
+
+#### 4.12.1. 命令包 (`WRITE_FINDMY_KEYS_CMD`)
+
+*   **Payload** (`68` 字节):
+    ```
+    +--------------------------+
+    | Private Key (28B)        |
+    +--------------------------+
+    | Symmetric Key (32B)      |
+    +--------------------------+
+    | Epoch (8B, uint64 LE)    |
+    +--------------------------+
+    ```
+    *   **Private Key**: P-224 椭圆曲线私钥（28 字节）。
+    *   **Symmetric Key**: 初始对称密钥 SK₀（32 字节），用于滚动密钥派生。
+    *   **Epoch**: Unix 时间戳（秒），counter=0 的时间基准，小端字节序。
+
+#### 4.12.2. 响应包 (`WRITE_FINDMY_KEYS_RSP`)
+
+*   **Payload** (成功时):
+    *   `Payload Len`: `1`
+    *   `Success (1B)`: `0x01` 表示成功。
+*   **Payload** (失败时):
+    *   `Payload Len`: `0`（payload 大小不匹配或 SD 卡写入失败）
+*   **行为**:
+    *   设备将 68 字节密钥材料写入 SD 卡 `/FINDMY.KEY` 文件。
+    *   写入成功后立即初始化 Find My 模块并开始 BLE 广播。
+    *   密钥每 15 分钟基于 GPS 时间自动轮换。
+
+### 4.13. `READ_FINDMY_KEYS` (需要 `findmy` feature)
+
+*   **目的**: 从设备 SD 卡读取已存储的 Find My 密钥材料。
+*   **CMD ID**: `0x0D`
+
+#### 4.13.1. 命令包 (`READ_FINDMY_KEYS_CMD`)
+
+*   **Payload**: 无（`Payload Len` 为 `0`）
+
+#### 4.13.2. 响应包 (`READ_FINDMY_KEYS_RSP`)
+
+*   **Payload** (已有密钥时):
+    *   `Payload Len`: `68`
+    *   内容格式与 `WRITE_FINDMY_KEYS` 的 payload 相同：`[Private Key: 28B][Symmetric Key: 32B][Epoch: 8B LE]`
+*   **Payload** (无密钥时):
+    *   `Payload Len`: `0`
+*   **行为**:
+    *   设备从 SD 卡 `/FINDMY.KEY` 文件读取密钥材料。
+    *   如果文件不存在或读取失败，返回空响应。
+
+### 4.14. `GET_FINDMY_STATUS` (需要 `findmy` feature)
+
+*   **目的**: 查询 Find My 离线查找功能的当前状态。
+*   **CMD ID**: `0x0E`
+
+#### 4.14.1. 命令包 (`GET_FINDMY_STATUS_CMD`)
+
+*   **Payload**: 无（`Payload Len` 为 `0`）
+
+#### 4.14.2. 响应包 (`GET_FINDMY_STATUS_RSP`)
+
+*   **Payload** (`1` 字节):
+    ```
+    +--------------------------+
+    | Enabled (1B, uint8)      |
+    +--------------------------+
+    ```
+    *   **Enabled**: `0x01` = Find My 已启用且正在广播，`0x00` = 未启用。
+
 ## 5. 流程示例
 
 ### 5.1. 列出根目录并读取文件 "/log.txt"
@@ -521,5 +596,6 @@
 
 ## 7. 协议版本和兼容性
 
-*   当前协议版本: 1.2
-*   新增的 GPS 唤醒功能保持向后兼容，不影响现有的文件读取和 AGNSS 功能。
+*   当前协议版本: 1.3
+*   Find My 命令（0x0C-0x0E）需要固件编译时启用 `findmy` feature flag，未启用时设备不识别这些命令。
+*   新增功能保持向后兼容，不影响现有的文件读取和 AGNSS 功能。

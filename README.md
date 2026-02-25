@@ -12,6 +12,7 @@
 - 📱 **蓝牙连接** - 通过 Web Bluetooth API 与设备通信
 - 💾 **数据记录** - 支持 GPX 格式轨迹导出和文件管理
 - 📊 **多传感器融合** - 集成加速度计、气压计等多种传感器
+- 🔍 **Apple Find My 离线查找** - 兼容 Apple Find My 网络，设备离线时可通过附近 Apple 设备定位
 
 ## 硬件平台
 
@@ -33,6 +34,7 @@
 - GPX 轨迹记录和存储
 - 实时传感器数据采集
 - 电池电量监控
+- Apple Find My 离线查找（P-224 滚动密钥，15 分钟自动轮换）
 
 ### Web 前端功能
 - 设备连接和状态监控
@@ -40,6 +42,7 @@
 - 文件浏览和管理
 - GPX 轨迹可视化
 - A-GNSS 数据获取和注入
+- Find My 密钥生成、写入设备和状态管理
 - 日志查看和分析
 
 ## 目录结构
@@ -117,6 +120,7 @@ gps_tracker/
    - **文件管理**: 通过 Web 界面浏览和下载轨迹文件
    - **A-GNSS 更新**: 定期更新 A-GNSS 数据以提升定位性能
    - **状态监控**: 实时查看设备状态和传感器数据
+   - **Find My 离线查找**: 在 Web 界面生成密钥并写入设备，启用 Apple Find My 网络定位
 
 ## 部署
 
@@ -146,6 +150,7 @@ https://[username].github.io/gps_tracker/
 - [UART 文件传输协议](docs/uart_file_proto.md)
 - [A-GNSS 数据处理](docs/casic_agnss.md)
 - [GPX 增量压缩算法](docs/delta_compress_gpx.md)
+- [BLE 协议命令参考](docs/protocol_parity_spec.md)
 
 ## 开发贡献
 

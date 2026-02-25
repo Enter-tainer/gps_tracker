@@ -59,6 +59,7 @@ Key modules:
 - **accel.rs** — LIS3DH motion detection for GPS power management
 - **display.rs** — SSD1306 OLED rendering with embedded-graphics
 - **timezone.rs** — IANA timezone database for GPS time conversion
+- **findmy.rs** — Apple Find My offline finding: P-224 key derivation (ANSI X9.63 KDF), BLE non-connectable advertising with 15-min rolling keys, GPS-time-based counter. Gated behind `findmy` feature flag.
 - **main.rs** — Peripheral init, interrupt binding, task spawning, USB boot mode detection
 
 Hardware constraints:
@@ -95,12 +96,13 @@ Key services:
 - **gpsDecoder.ts** — GPZ binary format decoder (mirrors firmware storage.rs)
 - **gpxConverter.ts** — GPZ → GPX format conversion for export
 - **modules/agnss/** — A-GNSS ephemeris data fetching and CASIC formatting
+- **findmyKeyGen.ts** — P-224 key generation for Find My provisioning (uses @noble/curves)
 
 ### BLE File Transfer Protocol
 
 Command-response over NUS (see `docs/uart_file_proto.md`):
 - Format: `[CMD_ID:1B] [LEN:2B LE] [payload]`
-- Commands: LIST_DIR(0x01), OPEN_FILE(0x02), READ_CHUNK(0x03), CLOSE_FILE(0x04), DELETE_FILE(0x05), GET_SYS_INFO(0x06), AGNSS operations(0x07-0x09), GPS_WAKEUP(0x0A), GPS_KEEP_ALIVE(0x0B)
+- Commands: LIST_DIR(0x01), OPEN_FILE(0x02), READ_CHUNK(0x03), CLOSE_FILE(0x04), DELETE_FILE(0x05), GET_SYS_INFO(0x06), AGNSS operations(0x07-0x09), GPS_WAKEUP(0x0A), GPS_KEEP_ALIVE(0x0B), WRITE_FINDMY_KEYS(0x0C), READ_FINDMY_KEYS(0x0D), GET_FINDMY_STATUS(0x0E) — last three require `findmy` feature
 
 ## Important Caveats
 
@@ -108,6 +110,7 @@ Command-response over NUS (see `docs/uart_file_proto.md`):
 - `platformio.ini` is for the deprecated C++ build — Rust firmware uses Cargo
 - nrf-softdevice is pinned to a specific git revision — updating requires careful compatibility testing
 - The `host-test` feature flag exists in Cargo.toml for potential host-side testing but hardware drivers make most code untestable without a device
+- The `findmy` feature flag enables Apple Find My offline finding (findmy.rs, protocol commands 0x0C-0x0E, SD card key storage). Requires `p224`, `sha2`, and `chrono` crates.
 
 ## Specifications
 
