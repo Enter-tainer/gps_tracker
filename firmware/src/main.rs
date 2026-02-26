@@ -26,6 +26,7 @@ use cortex_m::peripheral::SCB;
 use embassy_embedded_hal::shared_bus::blocking::i2c::I2cDevice;
 use embassy_executor::Spawner;
 use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
+use embassy_nrf::interrupt::Priority;
 use embassy_nrf::usb::vbus_detect::SoftwareVbusDetect;
 use embassy_nrf::{bind_interrupts, buffered_uarte, peripherals, saadc, spim, twim, uarte};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -206,12 +207,8 @@ async fn main(spawner: Spawner) {
     let mut config = embassy_nrf::config::Config::default();
     config.lfclk_source = embassy_nrf::config::LfclkSource::InternalRC;
 
-    {
-        use embassy_nrf::interrupt::Priority;
-
-        config.gpiote_interrupt_priority = Priority::P2;
-        config.time_interrupt_priority = Priority::P2;
-    }
+    config.gpiote_interrupt_priority = Priority::P2;
+    config.time_interrupt_priority = Priority::P2;
 
     let p = embassy_nrf::init(config);
     let board::Board {
@@ -423,13 +420,9 @@ async fn main(spawner: Spawner) {
         spawner.spawn(button::usb_only_button_task(button)).unwrap();
     }
 
-    let _unused = (serial2_rx, serial2_tx);
+    drop((serial2_rx, serial2_tx));
     #[cfg(not(feature = "i2c-spi"))]
-    {
-        let _unused_spi = (spi3, spi_sck, spi_miso, spi_mosi, spi_cs);
-        let _unused_i2c = (twispi0, i2c_sda, i2c_scl);
-        let _ = (_unused_spi, _unused_i2c);
-    }
+    drop((spi3, spi_sck, spi_miso, spi_mosi, spi_cs, twispi0, i2c_sda, i2c_scl));
 
     core::future::pending::<()>().await;
 }

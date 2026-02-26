@@ -17,9 +17,14 @@ use embedded_graphics::prelude::*;
 use embedded_graphics::text::{Baseline, Text, TextStyleBuilder};
 use embedded_graphics::text::renderer::TextRenderer;
 use heapless::String;
-use ssd1306::{I2CDisplayInterface, Ssd1306};
 use ssd1306::mode::BufferedGraphicsMode;
 use ssd1306::prelude::{DisplayConfig, DisplayRotation, DisplaySize128x64, I2CInterface};
+use ssd1306::{I2CDisplayInterface, Ssd1306};
+
+use crate::battery::estimate_battery_level;
+use crate::gps;
+use crate::system_info::{GpsState, SystemInfo, SYSTEM_INFO};
+use crate::timezone::TzCache;
 
 // Ferris logo bitmap: 64x42 pixels, 1-bit per pixel (MSB first)
 // Each row is 8 bytes (64 bits), 42 rows total = 336 bytes
@@ -112,11 +117,6 @@ const USB_ICON: [u8; 128] = [
     0xFF, 0xFF, 0xFF, 0xFF, // Row 30
     0xFF, 0xFF, 0xFF, 0xFF, // Row 31
 ];
-
-use crate::battery::estimate_battery_level;
-use crate::gps;
-use crate::system_info::{GpsState, SystemInfo, SYSTEM_INFO};
-use crate::timezone::TzCache;
 
 const DISPLAY_UPDATE_INTERVAL_MS: u64 = 100;
 const DISPLAY_TIMEOUT_MS: u64 = 30_000;
