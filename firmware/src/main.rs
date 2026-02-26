@@ -2,6 +2,7 @@
 #![no_main]
 
 mod accel;
+mod adv_scheduler;
 mod battery;
 mod ble;
 mod bmp280;

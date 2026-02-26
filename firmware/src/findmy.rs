@@ -18,6 +18,7 @@
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use embassy_executor::task;
+use embassy_futures::select::{select, Either};
 use embassy_time::{Duration, Instant, Timer};
 use p224::elliptic_curve::ops::Reduce;
 use p224::elliptic_curve::sec1::ToEncodedPoint;
@@ -26,7 +27,7 @@ use sha2::{Digest, Sha256};
 
 use nrf_softdevice::{raw, RawError, Softdevice};
 
-use crate::ble;
+use crate::adv_scheduler::{AdvPriority, ADV_SCHEDULER};
 use crate::display;
 use crate::storage;
 use crate::system_info::SYSTEM_INFO;
@@ -540,7 +541,7 @@ async fn adv_data_for_unix(unix_ts: u64) -> Option<([u8; 31], [u8; 6], u32)> {
 /// After first sync, if GPS time is temporarily unavailable, unix time is estimated
 /// from monotonic uptime and the last GPS timestamp.
 /// Key rotation happens at 15-minute boundaries aligned to the epoch.
-/// Only advertises when main BLE is idle (not advertising or connected).
+/// Uses `AdvScheduler` to coordinate with main BLE advertising.
 #[task]
 pub async fn findmy_task(_sd: &'static Softdevice) {
     defmt::info!("FindMy: task started, waiting for enable + GPS time");
@@ -584,19 +585,21 @@ pub async fn findmy_task(_sd: &'static Softdevice) {
                 break;
             }
 
-            // Wait for main BLE to become idle
-            if ble::is_active() {
-                set_diag_state(FindMyDiagState::WaitingBleIdle);
-                Timer::after(Duration::from_secs(2)).await;
-                continue;
+            // Acquire advertising resource (blocks if main BLE holds it).
+            set_diag_state(FindMyDiagState::WaitingBleIdle);
+            let guard = ADV_SCHEDULER.acquire(AdvPriority::FindMyAdv).await;
+
+            if !is_enabled() {
+                drop(guard);
+                break;
             }
 
             let unix_ts = match unix_ts_with_fallback(&mut time_anchor).await {
                 Some(ts) => ts,
                 None => {
-                    // Initial time was never acquired in this boot.
                     set_diag_state(FindMyDiagState::WaitingGpsTime);
                     defmt::warn!("FindMy: waiting for initial GPS time");
+                    drop(guard);
                     Timer::after(Duration::from_secs(10)).await;
                     continue;
                 }
@@ -605,9 +608,9 @@ pub async fn findmy_task(_sd: &'static Softdevice) {
             let (adv_payload, ble_addr, new_counter) = match adv_data_for_unix(unix_ts).await {
                 Some(d) => d,
                 None => {
-                    // Time known, but still before provisioned epoch.
                     set_diag_state(FindMyDiagState::WaitingGpsTime);
                     defmt::warn!("FindMy: unix time before epoch, retrying in 10s");
+                    drop(guard);
                     Timer::after(Duration::from_secs(10)).await;
                     continue;
                 }
@@ -618,7 +621,6 @@ pub async fn findmy_task(_sd: &'static Softdevice) {
             if new_counter != current_counter {
                 defmt::info!("FindMy: key rotated {} -> {}", current_counter, new_counter);
                 current_counter = new_counter;
-                // Persist SK cache to SD card after rotation
                 save_sk_cache_to_sd().await;
             }
 
@@ -637,6 +639,7 @@ pub async fn findmy_task(_sd: &'static Softdevice) {
             if let Err(e) = RawError::convert(unsafe { raw::sd_ble_gap_addr_set(&addr) }) {
                 defmt::warn!("FindMy: set addr failed: {:?}", e);
                 set_diag_state(FindMyDiagState::SetAddrFailed);
+                drop(guard);
                 Timer::after(Duration::from_secs(5)).await;
                 continue;
             }
@@ -664,12 +667,12 @@ pub async fn findmy_task(_sd: &'static Softdevice) {
             let adv_handle = match configure_adv_set(&adv_data, &adv_params) {
                 Ok(h) => h,
                 Err(e) => {
-                defmt::warn!("FindMy: adv configure failed: {:?}", e);
-                set_diag_state(FindMyDiagState::AdvConfigureFailed);
-                // Restore original address
-                let _ = unsafe { raw::sd_ble_gap_addr_set(&orig_addr) };
-                Timer::after(Duration::from_secs(5)).await;
-                continue;
+                    defmt::warn!("FindMy: adv configure failed: {:?}", e);
+                    set_diag_state(FindMyDiagState::AdvConfigureFailed);
+                    let _ = unsafe { raw::sd_ble_gap_addr_set(&orig_addr) };
+                    drop(guard);
+                    Timer::after(Duration::from_secs(5)).await;
+                    continue;
                 }
             };
 
@@ -678,8 +681,8 @@ pub async fn findmy_task(_sd: &'static Softdevice) {
             }) {
                 defmt::warn!("FindMy: adv start failed: {:?}", e);
                 set_diag_state(FindMyDiagState::AdvStartFailed);
-                // Restore original address
                 let _ = unsafe { raw::sd_ble_gap_addr_set(&orig_addr) };
+                drop(guard);
                 Timer::after(Duration::from_secs(5)).await;
                 continue;
             }
@@ -687,20 +690,25 @@ pub async fn findmy_task(_sd: &'static Softdevice) {
             set_diag_state(FindMyDiagState::Advertising);
             defmt::info!("FindMy: advertising (counter={})", current_counter);
 
-            // Sleep until next rotation boundary or BLE becomes active
+            // Wait until: preempted by main BLE, rotation timer fires, or disabled.
             let sleep_secs =
                 secs_until_next_rotation_from_unix(unix_ts).unwrap_or(KEY_ROTATION_SECS);
-            let mut remaining = sleep_secs + 1;
-            while remaining > 0 && !ble::is_active() && is_enabled() {
-                display::send_command(display::DisplayCommand::SetFindMyAddress(ble_addr));
-                let step = if remaining > 2 { 2 } else { remaining };
-                Timer::after(Duration::from_secs(step)).await;
-                remaining = remaining.saturating_sub(step);
+            let rotation_timer = Timer::after(Duration::from_secs(sleep_secs + 1));
+
+            match select(guard.wait_preempted(), rotation_timer).await {
+                Either::First(()) => {
+                    // Preempted by main BLE — stop advertising and yield.
+                    defmt::info!("FindMy: preempted by main BLE");
+                }
+                Either::Second(()) => {
+                    // Rotation timer expired — normal cycle end.
+                }
             }
 
-            // Stop advertising and restore original address
+            // Stop advertising and restore original address.
             let _ = RawError::convert(unsafe { raw::sd_ble_gap_adv_stop(adv_handle) });
             let _ = unsafe { raw::sd_ble_gap_addr_set(&orig_addr) };
+            drop(guard);
         }
 
         display::send_command(display::DisplayCommand::ClearFindMyAddress);
