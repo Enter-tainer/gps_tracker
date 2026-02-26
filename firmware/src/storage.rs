@@ -16,6 +16,9 @@ use embedded_sdmmc::{
 };
 use libm::{round, roundf};
 
+// Max open: 6 dirs (root + listing + ensure_log_directory peak + margin), 4 files, 1 volume
+type SdVolumeManager = VolumeManager<SdCard<SdSpiDevice, Delay>, GpsTimeSource, 6, 4, 1>;
+
 // Global GPS time storage (bit-packed FAT timestamp)
 // Format: bits 31-25: year-1980, bits 24-21: month, bits 20-16: day,
 //         bits 15-11: hour, bits 10-5: minute, bits 4-0: second/2
@@ -291,7 +294,7 @@ fn create_logger(
     let sd_spi = SdSpiDevice::new(spi, cs, config);
     let delay = Delay;
     let sd_card = SdCard::new(sd_spi, delay);
-    let volume_mgr = VolumeManager::new(sd_card, GpsTimeSource);
+    let volume_mgr = SdVolumeManager::new_with_limits(sd_card, GpsTimeSource, 0);
     let volume = volume_mgr.open_raw_volume(VolumeIdx(0)).ok()?;
     let root_dir = volume_mgr.open_root_dir(volume).ok()?;
 
@@ -318,7 +321,7 @@ fn rebuild_logger(usb_card: UsbSdCard) -> Option<SdLogger> {
     });
     usb_card.card.mark_card_uninit();
 
-    let volume_mgr = VolumeManager::new(usb_card.card, GpsTimeSource);
+    let volume_mgr = SdVolumeManager::new_with_limits(usb_card.card, GpsTimeSource, 0);
     let volume = volume_mgr.open_raw_volume(VolumeIdx(0)).ok()?;
     let root_dir = volume_mgr.open_root_dir(volume).ok()?;
 
@@ -359,7 +362,8 @@ impl TransferState {
 }
 
 struct SdLogger {
-    volume_mgr: VolumeManager<SdCard<SdSpiDevice, Delay>, GpsTimeSource, 4, 4, 1>,
+    // Max open: 4 files, 6 dirs (root_dir + listing_dir + ensure_log_directory peak of 2 temp dirs + margin), 1 volume
+    volume_mgr: SdVolumeManager,
     volume: RawVolume,
     root_dir: RawDirectory,
     current_file: Option<RawFile>,
@@ -377,7 +381,7 @@ struct SdLogger {
 
 impl SdLogger {
     fn new(
-        volume_mgr: VolumeManager<SdCard<SdSpiDevice, Delay>, GpsTimeSource, 4, 4, 1>,
+        volume_mgr: SdVolumeManager,
         volume: RawVolume,
         root_dir: RawDirectory,
         init_frequency: spim::Frequency,
@@ -532,6 +536,10 @@ impl SdLogger {
             longitude_scaled_1e5: round_f64(longitude * 1e5) as i32,
             altitude_m_scaled_1e1: round_f32(altitude_m * 10.0) as i32,
         };
+
+        // Release any open listing directory before log rotation, which may open
+        // temporary directories (year/month) via ensure_log_directory.
+        self.finish_listing();
 
         if !self.rotate_log_file_if_needed(timestamp) {
             return false;
