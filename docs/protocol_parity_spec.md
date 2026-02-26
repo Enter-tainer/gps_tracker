@@ -22,6 +22,9 @@ Source of truth is the C++ code; docs are secondary.
 - `0x09` END_AGNSS_WRITE
 - `0x0A` GPS_WAKEUP
 - `0x0B` GPS_KEEP_ALIVE
+- `0x0C` WRITE_FINDMY_KEYS (requires `findmy` feature)
+- `0x0D` READ_FINDMY_KEYS (requires `findmy` feature)
+- `0x0E` GET_FINDMY_STATUS (requires `findmy` feature)
 
 ## Common limits
 - `MAX_PATH_LENGTH = 64` bytes.
@@ -107,6 +110,27 @@ Version detection: Frontend checks payload length (50 = V1, 63 = V2).
 ### GPS_KEEP_ALIVE (0x0B)
 - Payload: `Duration (2 LE)` in minutes. `0` = cancel.
 - Response payload: empty.
+
+## Find My commands (requires `findmy` feature)
+
+- `0x0C` WRITE_FINDMY_KEYS
+- `0x0D` READ_FINDMY_KEYS
+- `0x0E` GET_FINDMY_STATUS
+
+### WRITE_FINDMY_KEYS (0x0C)
+- Payload: 68 bytes = `PrivateKey (28) + SymmetricKey (32) + Epoch (8 LE)`.
+- If payload length != 68: empty response.
+- On SD write failure: empty response.
+- On success: response payload = `0x01` (1 byte). Also initializes Find My module and enables advertising immediately.
+
+### READ_FINDMY_KEYS (0x0D)
+- Payload: empty.
+- Response payload on success: 68 bytes (same layout as WRITE_FINDMY_KEYS payload).
+- Response payload on failure (no file): empty.
+
+### GET_FINDMY_STATUS (0x0E)
+- Payload: empty.
+- Response payload: 1 byte. `0x01` = enabled, `0x00` = disabled.
 
 ## Known doc mismatches (vs docs/uart_file_proto.md)
 - START_AGNSS_WRITE does not use a total-size payload; any payload is ignored.

@@ -45,10 +45,15 @@ static_cell = "2.1"
 usbd-storage = { version = "2.0.0", default-features = false, features = ["bbb", "scsi"] }
 tzdb = { version = "0.7", default-features = false, features = ["alloc"] }
 
+# --- Find My (Apple Offline Finding) ---
+p224 = { version = "0.13", default-features = false, features = ["arithmetic"], optional = true }
+sha2 = { version = "0.10", default-features = false, optional = true }
+
 # 优化配置：发布模式下尽可能优化体积和速度
 [features]
-default = ["i2c-spi"]
+default = ["i2c-spi", "findmy"]
 i2c-spi = []
+findmy = ["dep:p224", "dep:sha2"]
 host-test = []
 extended_addressing = ["usbd-storage/extended_addressing"]
 

@@ -13,6 +13,7 @@ use nrf_softdevice::ble::advertisement_builder::{
 use nrf_softdevice::ble::{gatt_server, peripheral, Connection, PhySet};
 use nrf_softdevice::Softdevice;
 
+use crate::adv_scheduler::{AdvPriority, ADV_SCHEDULER};
 use crate::protocol::FileTransferProtocol;
 
 pub const DEVICE_NAME: &str = "MGT GPS Tracker";
@@ -84,6 +85,10 @@ pub async fn ble_task(sd: &'static Softdevice, server: &'static Server) {
                 }
             }
         };
+
+        // Acquire the advertising resource (preempts FindMy if active).
+        let guard = ADV_SCHEDULER.acquire(AdvPriority::MainAdv).await;
+
         let config = peripheral::Config {
             interval: ADV_INTERVAL_UNITS,
             timeout: Some(timeout),
@@ -103,17 +108,23 @@ pub async fn ble_task(sd: &'static Softdevice, server: &'static Server) {
             Either::First(Ok(conn)) => conn,
             Either::First(Err(peripheral::AdvertiseError::Timeout)) => {
                 defmt::info!("BLE advertising timeout");
+                drop(guard);
                 continue;
             }
             Either::First(Err(err)) => {
                 defmt::warn!("BLE advertise error: {:?}", err);
+                drop(guard);
                 continue;
             }
             Either::Second(()) => {
+                drop(guard);
                 pending_timeout = take_adv_request();
                 continue;
             }
         };
+
+        // Connection established — adv handle is free, release for FindMy.
+        drop(guard);
 
         let mut conn = conn;
         let _ = conn.data_length_update(None);

@@ -1,5 +1,7 @@
 use crate::battery;
 use crate::bmp280;
+#[cfg(feature = "findmy")]
+use crate::findmy;
 use crate::gps;
 use crate::storage;
 use crate::system_info::{serialize_system_info, SYSTEM_INFO, SYSTEM_INFO_SERIALIZED_LEN};
@@ -15,6 +17,12 @@ const CMD_WRITE_AGNSS_CHUNK: u8 = 0x08;
 const CMD_END_AGNSS_WRITE: u8 = 0x09;
 const CMD_GPS_WAKEUP: u8 = 0x0A;
 const CMD_GPS_KEEP_ALIVE: u8 = 0x0B;
+#[cfg(feature = "findmy")]
+const CMD_WRITE_FINDMY_KEYS: u8 = 0x0C;
+#[cfg(feature = "findmy")]
+const CMD_READ_FINDMY_KEYS: u8 = 0x0D;
+#[cfg(feature = "findmy")]
+const CMD_GET_FINDMY_STATUS: u8 = 0x0E;
 
 const MAX_CMD_PAYLOAD: usize = 570;
 const MAX_RESPONSE_PAYLOAD: usize = 256;
@@ -146,6 +154,12 @@ impl FileTransferProtocol {
             CMD_END_AGNSS_WRITE => self.handle_end_agnss_write().await,
             CMD_GPS_WAKEUP => self.handle_gps_wakeup().await,
             CMD_GPS_KEEP_ALIVE => self.handle_gps_keep_alive(payload).await,
+            #[cfg(feature = "findmy")]
+            CMD_WRITE_FINDMY_KEYS => self.handle_write_findmy_keys(payload).await,
+            #[cfg(feature = "findmy")]
+            CMD_READ_FINDMY_KEYS => self.handle_read_findmy_keys().await,
+            #[cfg(feature = "findmy")]
+            CMD_GET_FINDMY_STATUS => self.handle_get_findmy_status().await,
             _ => Some(self.encode_empty_response()),
         };
 
@@ -364,6 +378,58 @@ impl FileTransferProtocol {
         };
         gps::set_gps_keep_alive(duration_minutes).await;
         Some(self.encode_empty_response())
+    }
+
+    #[cfg(feature = "findmy")]
+    async fn handle_write_findmy_keys(&mut self, payload: &[u8]) -> Option<usize> {
+        if payload.len() != storage::FINDMY_KEY_SIZE {
+            defmt::warn!(
+                "WRITE_FINDMY_KEYS: bad size {} (expected {})",
+                payload.len(),
+                storage::FINDMY_KEY_SIZE
+            );
+            return Some(self.encode_empty_response());
+        }
+        let mut keys = [0u8; storage::FINDMY_KEY_SIZE];
+        keys.copy_from_slice(payload);
+        if !storage::write_findmy_keys(&keys).await {
+            defmt::warn!("WRITE_FINDMY_KEYS: SD write failed");
+            return Some(self.encode_empty_response());
+        }
+        // Activate immediately.
+        let mut pk = [0u8; 28];
+        let mut sk = [0u8; 32];
+        pk.copy_from_slice(&keys[..28]);
+        sk.copy_from_slice(&keys[28..60]);
+        let epoch = u64::from_le_bytes({
+            let mut b = [0u8; 8];
+            b.copy_from_slice(&keys[60..68]);
+            b
+        });
+        findmy::init(&pk, &sk, epoch);
+        findmy::invalidate_sk_cache().await;
+        findmy::set_enabled(true);
+        defmt::info!("WRITE_FINDMY_KEYS: OK, epoch={}", epoch);
+        self.response[2] = 0x01; // success flag
+        Some(self.encode_response(1))
+    }
+
+    #[cfg(feature = "findmy")]
+    async fn handle_read_findmy_keys(&mut self) -> Option<usize> {
+        let Some(keys) = storage::read_findmy_keys().await else {
+            defmt::info!("READ_FINDMY_KEYS: no keys on SD");
+            return Some(self.encode_empty_response());
+        };
+        self.response[2..2 + storage::FINDMY_KEY_SIZE]
+            .copy_from_slice(&keys);
+        Some(self.encode_response(storage::FINDMY_KEY_SIZE))
+    }
+
+    #[cfg(feature = "findmy")]
+    async fn handle_get_findmy_status(&mut self) -> Option<usize> {
+        // Response: [enabled: 1B]
+        self.response[2] = if findmy::is_enabled() { 0x01 } else { 0x00 };
+        Some(self.encode_response(1))
     }
 
     fn encode_response(&mut self, payload_len: usize) -> usize {
