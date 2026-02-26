@@ -231,6 +231,9 @@ pub const FINDMY_KEY_SIZE: usize = 68;
 /// FindMy SK cache size: sk(32) + counter(4) = 36 bytes.
 pub const FINDMY_SK_CACHE_SIZE: usize = 36;
 
+/// FMDN EIK size: 32 bytes.
+pub const FMDN_EIK_SIZE: usize = 32;
+
 /// Read FindMy key material from SD card (`/FINDMY.KEY`).
 pub async fn read_findmy_keys() -> Option<[u8; FINDMY_KEY_SIZE]> {
     let mut logger = SD_LOGGER.lock().await;
@@ -277,6 +280,15 @@ pub async fn write_findmy_sk_cache(data: &[u8; FINDMY_SK_CACHE_SIZE]) -> bool {
         return false;
     };
     logger.write_findmy_sk_cache(data)
+}
+
+/// Read FMDN EIK from SD card (`/FMDN.EIK`).
+pub async fn read_fmdn_eik() -> Option<[u8; FMDN_EIK_SIZE]> {
+    let mut logger = SD_LOGGER.lock().await;
+    let Some(logger) = logger.as_mut() else {
+        return None;
+    };
+    logger.read_fmdn_eik()
 }
 
 fn create_logger(
@@ -855,6 +867,21 @@ impl SdLogger {
         let n = self.volume_mgr.read(file, &mut buf).ok()?;
         let _ = self.volume_mgr.close_file(file);
         if n == FINDMY_KEY_SIZE {
+            Some(buf)
+        } else {
+            None
+        }
+    }
+
+    fn read_fmdn_eik(&mut self) -> Option<[u8; FMDN_EIK_SIZE]> {
+        let file = self
+            .volume_mgr
+            .open_file_in_dir(self.root_dir, "FMDN.EIK", Mode::ReadOnly)
+            .ok()?;
+        let mut buf = [0u8; FMDN_EIK_SIZE];
+        let n = self.volume_mgr.read(file, &mut buf).ok()?;
+        let _ = self.volume_mgr.close_file(file);
+        if n == FMDN_EIK_SIZE {
             Some(buf)
         } else {
             None

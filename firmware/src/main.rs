@@ -12,7 +12,11 @@ mod casic;
 mod display;
 #[cfg(feature = "findmy")]
 mod findmy;
+#[cfg(feature = "google-fmdn")]
+mod google_fmdn;
 mod gps;
+#[cfg(feature = "google-fmdn")]
+mod secp160r1;
 mod protocol;
 mod storage;
 mod system_info;
@@ -361,6 +365,21 @@ async fn main(spawner: Spawner) {
             defmt::info!("FindMy: no keys on SD, waiting for provisioning via BLE");
         }
         spawner.spawn(findmy::findmy_task(sd)).unwrap();
+    }
+
+    #[cfg(feature = "google-fmdn")]
+    {
+        // Load EIK from SD card (32 bytes).
+        if let Some(eik_data) = storage::read_fmdn_eik().await {
+            let mut eik = [0u8; 32];
+            eik.copy_from_slice(&eik_data[..32]);
+            google_fmdn::init(&eik);
+            google_fmdn::set_enabled(true);
+            defmt::info!("FMDN: loaded EIK from SD");
+        } else {
+            defmt::info!("FMDN: no EIK on SD, waiting for provisioning");
+        }
+        spawner.spawn(google_fmdn::fmdn_task(sd)).unwrap();
     }
 
     let gps_en = Output::new(gps_en_pin, Level::Low, OutputDrive::Standard);
