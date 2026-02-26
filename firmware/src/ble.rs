@@ -99,7 +99,7 @@ pub async fn ble_task(sd: &'static Softdevice, server: &'static Server) {
             scan_data: &SCAN_DATA,
         };
 
-        let conn = match select(
+        let mut conn = match select(
             peripheral::advertise_connectable(sd, adv, &config),
             ADV_REQUEST_SIGNAL.wait(),
         )
@@ -126,7 +126,6 @@ pub async fn ble_task(sd: &'static Softdevice, server: &'static Server) {
         // Connection established — adv handle is free, release for FindMy.
         drop(guard);
 
-        let mut conn = conn;
         let _ = conn.data_length_update(None);
         let _ = conn.phy_update(PhySet::M2, PhySet::M2);
         let mut conn_params = conn.conn_params();

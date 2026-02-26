@@ -15,10 +15,12 @@
 //! - `Pᵢ = dᵢ × G` — derive public key
 //! - BLE address = first 6 bytes of Pᵢ.x, payload = remaining 22 bytes
 
+use core::cell::RefCell;
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use embassy_executor::task;
 use embassy_futures::select::{select, Either};
+use embassy_sync::blocking_mutex::{raw::CriticalSectionRawMutex, Mutex as CsMutex};
 use embassy_time::{Duration, Instant, Timer};
 use p224::elliptic_curve::ops::Reduce;
 use p224::elliptic_curve::sec1::ToEncodedPoint;
@@ -42,11 +44,22 @@ const FINDMY_ADV_INTERVAL_UNITS: u32 = 3200;
 /// Enable/disable Find My advertising at runtime.
 static FINDMY_ENABLED: AtomicBool = AtomicBool::new(false);
 static FINDMY_DIAG_STATE: AtomicU8 = AtomicU8::new(FindMyDiagState::Disabled as u8);
-static mut FINDMY_ADV_HANDLE: u8 = raw::BLE_GAP_ADV_SET_HANDLE_NOT_SET as u8;
+static FINDMY_ADV_HANDLE: AtomicU8 =
+    AtomicU8::new(raw::BLE_GAP_ADV_SET_HANDLE_NOT_SET as u8);
 
 /// Master key material. Set once during initialization.
-/// Layout: [private_key: 28 | symmetric_key: 32 | epoch_secs: 8 (LE)]
-static mut MASTER_KEYS: [u8; 68] = [0u8; 68];
+struct MasterKeys {
+    private_key: [u8; 28],
+    symmetric_key: [u8; 32],
+    epoch_secs: u64,
+}
+
+static MASTER_KEYS: CsMutex<CriticalSectionRawMutex, RefCell<MasterKeys>> =
+    CsMutex::new(RefCell::new(MasterKeys {
+        private_key: [0u8; 28],
+        symmetric_key: [0u8; 32],
+        epoch_secs: 0,
+    }));
 
 /// Cached symmetric key state for incremental KDF advancement.
 /// Avoids re-deriving from SK₀ on every rotation.
@@ -56,11 +69,12 @@ struct SkCache {
     valid: bool,
 }
 
-static mut SK_CACHE: SkCache = SkCache {
-    sk: [0u8; 32],
-    counter: 0,
-    valid: false,
-};
+static SK_CACHE: CsMutex<CriticalSectionRawMutex, RefCell<SkCache>> =
+    CsMutex::new(RefCell::new(SkCache {
+        sk: [0u8; 32],
+        counter: 0,
+        valid: false,
+    }));
 
 #[repr(u8)]
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -104,37 +118,46 @@ fn configure_adv_set(
     adv_data: &raw::ble_gap_adv_data_t,
     adv_params: &raw::ble_gap_adv_params_t,
 ) -> Result<u8, RawError> {
-    unsafe {
-        let handle_ptr = &raw mut FINDMY_ADV_HANDLE;
-        let first = RawError::convert(raw::sd_ble_gap_adv_set_configure(
-            handle_ptr,
+    let mut handle = FINDMY_ADV_HANDLE.load(Ordering::Acquire);
+    let result = unsafe {
+        RawError::convert(raw::sd_ble_gap_adv_set_configure(
+            &mut handle,
             adv_data as *const _,
             adv_params as *const _,
-        ));
-        match first {
-            Ok(()) => Ok(*handle_ptr),
-            // Single advertising set device: if no free handle, reconfigure handle 0.
-            Err(RawError::NoMem) => {
-                *handle_ptr = 0;
-                RawError::convert(raw::sd_ble_gap_adv_set_configure(
-                    handle_ptr,
-                    adv_data as *const _,
-                    adv_params as *const _,
-                ))?;
-                Ok(*handle_ptr)
-            }
-            // Handle became stale; request a fresh one.
-            Err(RawError::BleInvalidAdvHandle) => {
-                *handle_ptr = raw::BLE_GAP_ADV_SET_HANDLE_NOT_SET as u8;
-                RawError::convert(raw::sd_ble_gap_adv_set_configure(
-                    handle_ptr,
-                    adv_data as *const _,
-                    adv_params as *const _,
-                ))?;
-                Ok(*handle_ptr)
-            }
-            Err(e) => Err(e),
+        ))
+    };
+    match result {
+        Ok(()) => {
+            FINDMY_ADV_HANDLE.store(handle, Ordering::Release);
+            Ok(handle)
         }
+        // Single advertising set device: if no free handle, reconfigure handle 0.
+        Err(RawError::NoMem) => {
+            handle = 0;
+            unsafe {
+                RawError::convert(raw::sd_ble_gap_adv_set_configure(
+                    &mut handle,
+                    adv_data as *const _,
+                    adv_params as *const _,
+                ))?;
+            }
+            FINDMY_ADV_HANDLE.store(handle, Ordering::Release);
+            Ok(handle)
+        }
+        // Handle became stale; request a fresh one.
+        Err(RawError::BleInvalidAdvHandle) => {
+            handle = raw::BLE_GAP_ADV_SET_HANDLE_NOT_SET as u8;
+            unsafe {
+                RawError::convert(raw::sd_ble_gap_adv_set_configure(
+                    &mut handle,
+                    adv_data as *const _,
+                    adv_params as *const _,
+                ))?;
+            }
+            FINDMY_ADV_HANDLE.store(handle, Ordering::Release);
+            Ok(handle)
+        }
+        Err(e) => Err(e),
     }
 }
 
@@ -210,23 +233,22 @@ fn advance_sk(start_sk: &[u8; 32], start_counter: u32, target_counter: u32) -> [
 /// Falls back to iterating from SK₀ when cache is invalid.
 fn derive_key_at(master_private: &[u8; 28], sk0: &[u8; 32], counter: u32) -> DerivedKey {
     // Step 1: Get SK at `counter`, using cache if possible
-    let sk = unsafe {
-        if SK_CACHE.valid && SK_CACHE.counter <= counter {
-            let cached_sk = core::ptr::read_volatile(&raw const SK_CACHE.sk);
-            let cached_counter = core::ptr::read_volatile(&raw const SK_CACHE.counter);
-            let sk = advance_sk(&cached_sk, cached_counter, counter);
-            SK_CACHE.sk = sk;
-            SK_CACHE.counter = counter;
+    let sk = SK_CACHE.lock(|cell| {
+        let mut cache = cell.borrow_mut();
+        if cache.valid && cache.counter <= counter {
+            let sk = advance_sk(&cache.sk, cache.counter, counter);
+            cache.sk = sk;
+            cache.counter = counter;
             sk
         } else {
             // Cold start: iterate from SK₀
             let sk = advance_sk(sk0, 0, counter);
-            SK_CACHE.sk = sk;
-            SK_CACHE.counter = counter;
-            SK_CACHE.valid = true;
+            cache.sk = sk;
+            cache.counter = counter;
+            cache.valid = true;
             sk
         }
-    };
+    });
 
     // Step 2: Diversify to get u_i and v_i (36 bytes each)
     let diversified = kdf(&sk, b"diversify", 72);
@@ -361,11 +383,7 @@ async fn gps_unix_ts() -> Option<u64> {
 
 /// Read the stored epoch from master keys.
 fn stored_epoch() -> u64 {
-    u64::from_le_bytes(unsafe {
-        let mut buf = [0u8; 8];
-        buf.copy_from_slice(&MASTER_KEYS[60..68]);
-        buf
-    })
+    MASTER_KEYS.lock(|cell| cell.borrow().epoch_secs)
 }
 
 pub fn epoch_secs() -> u64 {
@@ -420,23 +438,22 @@ async fn load_sk_cache_from_sd() {
         let mut sk = [0u8; 32];
         sk.copy_from_slice(&buf[..32]);
         let counter = u32::from_le_bytes([buf[32], buf[33], buf[34], buf[35]]);
-        unsafe {
-            SK_CACHE.sk = sk;
-            SK_CACHE.counter = counter;
-            SK_CACHE.valid = true;
-        }
+        SK_CACHE.lock(|cell| {
+            let mut cache = cell.borrow_mut();
+            cache.sk = sk;
+            cache.counter = counter;
+            cache.valid = true;
+        });
         defmt::info!("FindMy: SK cache loaded from SD, counter={}", counter);
     }
 }
 
 /// Save current SK cache to SD card.
 async fn save_sk_cache_to_sd() {
-    let (sk, counter, valid) = unsafe {
-        let sk = core::ptr::read_volatile(&raw const SK_CACHE.sk);
-        let counter = core::ptr::read_volatile(&raw const SK_CACHE.counter);
-        let valid = core::ptr::read_volatile(&raw const SK_CACHE.valid);
-        (sk, counter, valid)
-    };
+    let (sk, counter, valid) = SK_CACHE.lock(|cell| {
+        let cache = cell.borrow();
+        (cache.sk, cache.counter, cache.valid)
+    });
     if !valid {
         return;
     }
@@ -462,13 +479,16 @@ async fn save_sk_cache_to_sd() {
 ///
 /// After setting keys, call `load_sk_cache()` to restore cached SK from SD.
 pub fn init(private_key: &[u8; 28], symmetric_key: &[u8; 32], epoch: u64) {
-    unsafe {
-        MASTER_KEYS[..28].copy_from_slice(private_key);
-        MASTER_KEYS[28..60].copy_from_slice(symmetric_key);
-        MASTER_KEYS[60..68].copy_from_slice(&epoch.to_le_bytes());
-        // Invalidate SK cache; will be restored from SD by load_sk_cache()
-        SK_CACHE.valid = false;
-    }
+    MASTER_KEYS.lock(|cell| {
+        let mut keys = cell.borrow_mut();
+        keys.private_key.copy_from_slice(private_key);
+        keys.symmetric_key.copy_from_slice(symmetric_key);
+        keys.epoch_secs = epoch;
+    });
+    // Invalidate SK cache; will be restored from SD by load_sk_cache()
+    SK_CACHE.lock(|cell| {
+        cell.borrow_mut().valid = false;
+    });
 }
 
 /// Load SK cache from SD card. Call after `init()` to accelerate cold start.
@@ -517,13 +537,10 @@ async fn unix_ts_with_fallback(anchor: &mut Option<TimeAnchor>) -> Option<u64> {
 /// Returns `None` if timestamp is before the provisioned epoch.
 async fn adv_data_for_unix(unix_ts: u64) -> Option<([u8; 31], [u8; 6], u32)> {
     let counter = counter_from_unix(unix_ts)?;
-    let (pk, sk) = unsafe {
-        let mut p = [0u8; 28];
-        let mut s = [0u8; 32];
-        p.copy_from_slice(&MASTER_KEYS[..28]);
-        s.copy_from_slice(&MASTER_KEYS[28..60]);
-        (p, s)
-    };
+    let (pk, sk) = MASTER_KEYS.lock(|cell| {
+        let keys = cell.borrow();
+        (keys.private_key, keys.symmetric_key)
+    });
     let derived = derive_key_at(&pk, &sk, counter);
     let status = battery_to_status(battery_percent().await);
     let payload = build_adv_payload(&derived.public_key_x, status);
@@ -625,7 +642,10 @@ pub async fn findmy_task(_sd: &'static Softdevice) {
             }
 
             // Save original BLE address before overriding
-            let mut orig_addr: raw::ble_gap_addr_t = unsafe { core::mem::zeroed() };
+            let mut orig_addr = raw::ble_gap_addr_t {
+                _bitfield_1: raw::ble_gap_addr_t::new_bitfield_1(0, 0),
+                addr: [0u8; 6],
+            };
             let _ = unsafe { raw::sd_ble_gap_addr_get(&mut orig_addr) };
 
             // Set Find My BLE address
@@ -645,13 +665,18 @@ pub async fn findmy_task(_sd: &'static Softdevice) {
             }
 
             // Configure and start non-connectable advertising
-            let mut adv_params: raw::ble_gap_adv_params_t = unsafe { core::mem::zeroed() };
-            adv_params.properties.type_ =
-                raw::BLE_GAP_ADV_TYPE_NONCONNECTABLE_NONSCANNABLE_UNDIRECTED as u8;
-            adv_params.interval = FINDMY_ADV_INTERVAL_UNITS;
-            adv_params.duration = 0;
-            adv_params.filter_policy = raw::BLE_GAP_ADV_FP_ANY as u8;
-            adv_params.primary_phy = raw::BLE_GAP_PHY_1MBPS as u8;
+            // Safety: zeroed base is correct for this FFI struct (all-zeros = valid defaults).
+            let adv_params = raw::ble_gap_adv_params_t {
+                properties: raw::ble_gap_adv_properties_t {
+                    type_: raw::BLE_GAP_ADV_TYPE_NONCONNECTABLE_NONSCANNABLE_UNDIRECTED as u8,
+                    ..unsafe { core::mem::zeroed() }
+                },
+                interval: FINDMY_ADV_INTERVAL_UNITS,
+                duration: 0,
+                filter_policy: raw::BLE_GAP_ADV_FP_ANY as u8,
+                primary_phy: raw::BLE_GAP_PHY_1MBPS as u8,
+                ..unsafe { core::mem::zeroed() }
+            };
 
             let adv_data = raw::ble_gap_adv_data_t {
                 adv_data: raw::ble_data_t {

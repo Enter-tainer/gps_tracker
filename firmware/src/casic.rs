@@ -3,24 +3,26 @@ pub const CASIC_HEADER_2: u8 = 0xCE;
 pub const CASIC_MAX_PAYLOAD_SIZE: usize = 256;
 pub const CASIC_PACKET_TIMEOUT_MS: u64 = 30_000;
 
+// ACK and NACK share the same class ID (0x05) per CASIC protocol spec;
+// they are distinguished by message ID (ACK=0x01, NACK=0x00).
 pub const CASIC_CLASS_ACK: u8 = 0x05;
 pub const CASIC_CLASS_NACK: u8 = 0x05;
-#[allow(dead_code)]
+#[allow(dead_code)] // protocol completeness
 pub const CASIC_CLASS_AID: u8 = 0x0B;
 pub const CASIC_CLASS_MSG: u8 = 0x08;
 
 pub const CASIC_ID_ACK: u8 = 0x01;
 pub const CASIC_ID_NACK: u8 = 0x00;
-#[allow(dead_code)]
+#[allow(dead_code)] // protocol completeness
 pub const CASIC_ID_AID_INI: u8 = 0x01;
-#[allow(dead_code)]
+#[allow(dead_code)] // protocol completeness
 pub const CASIC_ID_MSG_BDSUTC: u8 = 0x00;
-#[allow(dead_code)]
+#[allow(dead_code)] // protocol completeness
 pub const CASIC_ID_MSG_BDSION: u8 = 0x01;
 pub const CASIC_ID_MSG_BDSEPH: u8 = 0x02;
-#[allow(dead_code)]
+#[allow(dead_code)] // protocol completeness
 pub const CASIC_ID_MSG_GPSUTC: u8 = 0x05;
-#[allow(dead_code)]
+#[allow(dead_code)] // protocol completeness
 pub const CASIC_ID_MSG_GPSION: u8 = 0x06;
 pub const CASIC_ID_MSG_GPSEPH: u8 = 0x07;
 
@@ -254,6 +256,7 @@ impl CasicParser {
                 + ((self.current.class_id as u32) << 16)
                 + (self.current.payload_length as u32);
 
+        // CASIC protocol guarantees payload_length is always a multiple of 4 bytes.
         let words = (self.current.payload_length as usize) / 4;
         for i in 0..words {
             let base = i * 4;
