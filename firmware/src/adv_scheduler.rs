@@ -61,6 +61,10 @@ impl AdvScheduler {
                         st.current_holder = Some(priority);
                         false
                     }
+                    Some(holder) if holder == priority => {
+                        // Already granted to us by release(). Claim it.
+                        false
+                    }
                     Some(holder) if priority < holder => {
                         // Higher priority: preempt current holder.
                         self.preempt_signals[holder as usize].signal(());
@@ -68,7 +72,7 @@ impl AdvScheduler {
                         true
                     }
                     _ => {
-                        // Same or lower priority: queue up.
+                        // Lower priority: queue up.
                         st.waiting[priority as usize] = true;
                         true
                     }
