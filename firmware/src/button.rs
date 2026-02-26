@@ -11,6 +11,7 @@ use crate::{request_usb_mode_transition, usb_connected};
 
 const DEBOUNCE_DELAY_MS: u64 = 50;
 const LONG_PRESS_MS: u64 = 2000;
+const VERY_LONG_PRESS_MS: u64 = 5000;
 const LIST_SD_ON_BUTTON: bool = false;
 
 #[task]
@@ -25,22 +26,35 @@ pub async fn button_task(mut button: Input<'static>) {
         }
         last_valid = now;
 
-        if usb_connected() {
-            match select(button.wait_for_rising_edge(), Timer::after_millis(LONG_PRESS_MS)).await {
-                Either::First(_) => {
-                    defmt::info!("Button short press");
-                    handle_button_press().await;
-                }
-                Either::Second(_) => {
-                    defmt::info!("Button long press");
-                    handle_usb_long_press();
-                    button.wait_for_rising_edge().await;
-                }
+        // Tier 1: wait for short press threshold
+        match select(button.wait_for_rising_edge(), Timer::after_millis(LONG_PRESS_MS)).await {
+            Either::First(_) => {
+                defmt::info!("Button short press");
+                handle_short_press();
+                Timer::after_millis(1).await;
+                continue;
             }
-        } else {
-            defmt::info!("Button press (no USB)");
-            handle_button_press().await;
+            Either::Second(_) => {
+                // Held past LONG_PRESS_MS — execute long press action
+                defmt::info!("Button long press");
+                handle_long_press().await;
+            }
         }
+
+        // Tier 2: wait for very long press threshold (USB MSC)
+        let remaining = VERY_LONG_PRESS_MS - LONG_PRESS_MS;
+        match select(button.wait_for_rising_edge(), Timer::after_millis(remaining)).await {
+            Either::First(_) => {
+                // Released between 2s–5s: long press only (already handled above)
+            }
+            Either::Second(_) => {
+                // Held past VERY_LONG_PRESS_MS — enter USB MSC mode
+                defmt::info!("Button very long press");
+                handle_very_long_press();
+                button.wait_for_rising_edge().await;
+            }
+        }
+
         Timer::after_millis(1).await;
     }
 }
@@ -71,16 +85,14 @@ pub async fn usb_only_button_task(mut button: Input<'static>) {
     }
 }
 
-fn handle_usb_long_press() {
-    if usb_connected() {
-        defmt::info!("USB long press -> request USB mode");
-        request_usb_mode_transition();
-    } else {
-        defmt::warn!("USB long press but USB not connected");
-    }
+/// Short press: toggle display only
+fn handle_short_press() {
+    send_command(DisplayCommand::ResetTimeout);
+    send_command(DisplayCommand::Toggle);
 }
 
-async fn handle_button_press() {
+/// Long press (~2s): BLE broadcast + flush SD cache
+async fn handle_long_press() {
     ble::request_fast_advertising();
 
     if storage::flush_sd_cache().await {
@@ -94,7 +106,16 @@ async fn handle_button_press() {
     }
 
     send_command(DisplayCommand::ResetTimeout);
-    send_command(DisplayCommand::Toggle);
+}
+
+/// Very long press (~5s): enter USB MSC mode
+fn handle_very_long_press() {
+    if usb_connected() {
+        defmt::info!("Very long press -> request USB mode");
+        request_usb_mode_transition();
+    } else {
+        defmt::warn!("Very long press but USB not connected");
+    }
 }
 
 async fn list_sd_root() {
