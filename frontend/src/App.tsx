@@ -44,6 +44,8 @@ import { createGpsDecoder } from "./services/gpsDecoder";
 import { createGpxConverter } from "./services/gpxConverter";
 import { exportKeysAsJson, generateFindMyKeys, unpackKeys } from "./services/findmyKeyGen";
 import type { FindMyKeyBundle } from "./services/findmyKeyGen";
+import { exportEikAsJson, generateFmdnEik, importEikFromJson } from "./services/fdmnKeyGen";
+import type { FmdnEikBundle } from "./services/fdmnKeyGen";
 import type { FileEntry, SysInfo } from "./types/ble";
 import { formatFileSize } from "./utils/helpers";
 
@@ -157,6 +159,9 @@ export default function App() {
   const [findMyKeys, setFindMyKeys] = useState<FindMyKeyBundle | null>(null);
   const [findMyEnabled, setFindMyEnabled] = useState<boolean | null>(null);
   const [findMyBusy, setFindMyBusy] = useState(false);
+  const [fmdnEik, setFmdnEik] = useState<FmdnEikBundle | null>(null);
+  const [fmdnStatus, setFmdnStatus] = useState<{ enabled: boolean; diagState: number } | null>(null);
+  const [fmdnBusy, setFmdnBusy] = useState(false);
 
   const getReadyStatus = useCallback(() => {
     const connected = bleServiceRef.current?.isConnected() ?? false;
@@ -668,6 +673,121 @@ export default function App() {
     logger.success("FindMy keys exported as JSON.");
   }, [findMyKeys, logger]);
 
+  const fmdnDiagLabels: Record<number, string> = {
+    0: "Disabled",
+    1: "Waiting GPS Time",
+    2: "Waiting BLE Idle",
+    3: "EID Ready",
+    4: "Advertising",
+    5: "Set Addr Failed",
+    6: "Adv Config Failed",
+    7: "Adv Start Failed"
+  };
+
+  const handleFmdnGenerate = useCallback(() => {
+    const bundle = generateFmdnEik();
+    setFmdnEik(bundle);
+    logger.success("FMDN EIK generated.");
+  }, [logger]);
+
+  const handleFmdnProvision = useCallback(async () => {
+    const bleService = bleServiceRef.current;
+    if (!bleService || !fmdnEik) return;
+
+    setFmdnBusy(true);
+    setStatusMessage("Provisioning FMDN EIK...");
+    try {
+      const result = await bleService.writeFmdnEik(fmdnEik.eik);
+      if (result.success) {
+        logger.success("FMDN EIK written to device.");
+        setFmdnStatus({ enabled: true, diagState: 1 });
+        setStatusMessage("FMDN EIK provisioned.");
+      } else {
+        logger.error("Device rejected FMDN EIK.");
+        setStatusMessage("FMDN provisioning failed.");
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error(`FMDN provision failed: ${message}`);
+      setStatusMessage("FMDN provisioning failed.");
+    } finally {
+      setFmdnBusy(false);
+    }
+    resetStatus();
+  }, [fmdnEik, logger, resetStatus]);
+
+  const handleFmdnDump = useCallback(async () => {
+    const bleService = bleServiceRef.current;
+    if (!bleService) return;
+
+    setFmdnBusy(true);
+    setStatusMessage("Reading FMDN EIK from device...");
+    try {
+      const result = await bleService.readFmdnEik();
+      if (result.success && result.eik) {
+        setFmdnEik({ eik: result.eik });
+        logger.success("FMDN EIK read from device.");
+      } else {
+        logger.log("No FMDN EIK on device.");
+      }
+      setStatusMessage("FMDN dump complete.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error(`FMDN dump failed: ${message}`);
+      setStatusMessage("FMDN dump failed.");
+    } finally {
+      setFmdnBusy(false);
+    }
+    resetStatus();
+  }, [logger, resetStatus]);
+
+  const handleFmdnStatus = useCallback(async () => {
+    const bleService = bleServiceRef.current;
+    if (!bleService) return;
+
+    try {
+      const result = await bleService.getFmdnStatus();
+      setFmdnStatus(result);
+      logger.log(`FMDN status: enabled=${result.enabled}, diag=${fmdnDiagLabels[result.diagState] ?? result.diagState}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error(`FMDN status query failed: ${message}`);
+    }
+  }, [logger]);
+
+  const handleFmdnExport = useCallback(() => {
+    if (!fmdnEik) return;
+    const json = exportEikAsJson(fmdnEik);
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `fmdn-eik-${Date.now()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+    logger.success("FMDN EIK exported as JSON.");
+  }, [fmdnEik, logger]);
+
+  const handleFmdnImport = useCallback(() => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".json";
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      const text = await file.text();
+      const bundle = importEikFromJson(text);
+      if (bundle) {
+        setFmdnEik(bundle);
+        logger.success("FMDN EIK imported from JSON.");
+      } else {
+        logger.error("Invalid FMDN EIK JSON file.");
+      }
+    };
+    input.click();
+  }, [logger]);
+
   const handleDownloadRaw = useCallback(async (entry: FileEntry) => {
     const fileService = fileServiceRef.current;
     if (!fileService) return;
@@ -1073,6 +1193,77 @@ export default function App() {
                   <Badge variant={findMyEnabled ? "default" : "muted"}>
                     {findMyEnabled ? "FindMy Active" : "FindMy Inactive"}
                   </Badge>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="animate-fade-up">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Satellite className="h-5 w-5 text-primary" />
+                  Google FMDN
+                </CardTitle>
+                <CardDescription>Google Find My Device Network EIK management.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="outline" size="sm" onClick={handleFmdnGenerate} disabled={fmdnBusy}>
+                    Generate EIK
+                  </Button>
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={handleFmdnProvision}
+                    disabled={!isConnected || !fmdnEik || fmdnBusy}
+                  >
+                    Provision
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleFmdnDump}
+                    disabled={!isConnected || fmdnBusy}
+                  >
+                    Dump
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleFmdnStatus}
+                    disabled={!isConnected || fmdnBusy}
+                  >
+                    Status
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleFmdnImport}
+                    disabled={fmdnBusy}
+                  >
+                    <Upload className="h-4 w-4" />
+                    Import
+                  </Button>
+                </div>
+                {fmdnEik && (
+                  <div className="space-y-2">
+                    <div className="rounded-md border border-border/70 bg-white/60 p-3 text-xs font-mono break-all">
+                      <div><span className="text-muted-foreground">EIK:</span> {Array.from(fmdnEik.eik).map(b => b.toString(16).padStart(2, "0")).join("")}</div>
+                    </div>
+                    <Button variant="outline" size="sm" onClick={handleFmdnExport} className="w-full">
+                      <Download className="h-4 w-4" />
+                      Export JSON
+                    </Button>
+                  </div>
+                )}
+                {fmdnStatus !== null && (
+                  <div className="space-y-1">
+                    <Badge variant={fmdnStatus.enabled ? "default" : "muted"}>
+                      {fmdnStatus.enabled ? "FMDN Active" : "FMDN Inactive"}
+                    </Badge>
+                    <div className="text-xs text-muted-foreground">
+                      Diag: {fmdnDiagLabels[fmdnStatus.diagState] ?? `Unknown (${fmdnStatus.diagState})`}
+                    </div>
+                  </div>
                 )}
               </CardContent>
             </Card>
