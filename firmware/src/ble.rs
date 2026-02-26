@@ -1,190 +1,276 @@
 use core::cmp;
 use core::sync::atomic::{AtomicU16, Ordering};
 
-use embassy_executor::task;
 use embassy_futures::select::{select, Either};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
-use heapless::Vec;
-use nrf_softdevice::ble::advertisement_builder::{
-    Flag, LegacyAdvertisementBuilder, LegacyAdvertisementPayload, ServiceList,
-};
-use nrf_softdevice::ble::{gatt_server, peripheral, Connection, PhySet};
-use nrf_softdevice::Softdevice;
+use embassy_time::Duration;
+use nrf_sdc::SoftdeviceController;
+use trouble_host::prelude::*;
 
-use crate::adv_scheduler::{AdvPriority, ADV_SCHEDULER};
 use crate::protocol::FileTransferProtocol;
 
 pub const DEVICE_NAME: &str = "MGT GPS Tracker";
-const NUS_SERVICE_UUID: u128 = 0x6e400001_b5a3_f393_e0a9_e50e24dcca9e_u128;
 const MAX_GATT_PAYLOAD: usize = 244;
-const ADV_INTERVAL_UNITS: u32 = 32; // 20ms (units of 0.625ms).
-const ADV_TIMEOUT_BOOT_10MS: u16 = 3000; // 30s (units of 10ms).
-const ADV_TIMEOUT_FAST_10MS: u16 = 500; // 5s (units of 10ms).
-const CONN_MIN_INTERVAL: u16 = 6; // 7.5ms (units of 1.25ms).
-const CONN_MAX_INTERVAL: u16 = 12; // 15ms (units of 1.25ms).
-const CONN_SLAVE_LATENCY: u16 = 0;
-const CONN_SUP_TIMEOUT: u16 = 400; // 4s (units of 10ms).
+const ADV_TIMEOUT_BOOT: Duration = Duration::from_secs(30);
+const ADV_TIMEOUT_FAST: Duration = Duration::from_secs(5);
+const ADV_INTERVAL_MIN: Duration = Duration::from_micros(20_000);
+const ADV_INTERVAL_MAX: Duration = Duration::from_micros(20_000);
 
-static RX_CHANNEL: Channel<CriticalSectionRawMutex, Vec<u8, MAX_GATT_PAYLOAD>, 8> = Channel::new();
 static ADV_REQUEST_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static ADV_REQUEST_TIMEOUT: AtomicU16 = AtomicU16::new(0);
 
-static ADV_DATA: LegacyAdvertisementPayload = LegacyAdvertisementBuilder::new()
-    .flags(&[Flag::GeneralDiscovery, Flag::LE_Only])
-    .services_128(ServiceList::Complete, &[NUS_SERVICE_UUID.to_le_bytes()])
-    .build();
-
-static SCAN_DATA: LegacyAdvertisementPayload = LegacyAdvertisementBuilder::new()
-    .full_name(DEVICE_NAME)
-    .build();
-
-#[nrf_softdevice::gatt_service(uuid = "6e400001-b5a3-f393-e0a9-e50e24dcca9e")]
-pub(crate) struct NusService {
-    #[characteristic(
-        uuid = "6e400002-b5a3-f393-e0a9-e50e24dcca9e",
-        write,
-        write_without_response,
-        value = "heapless::Vec::<u8, MAX_GATT_PAYLOAD>::new()"
-    )]
-    rx: Vec<u8, MAX_GATT_PAYLOAD>,
-    #[characteristic(
-        uuid = "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
-        notify,
-        value = "heapless::Vec::<u8, MAX_GATT_PAYLOAD>::new()"
-    )]
-    tx: Vec<u8, MAX_GATT_PAYLOAD>,
+#[gatt_service(uuid = "6e400001-b5a3-f393-e0a9-e50e24dcca9e")]
+struct NusService {
+    #[characteristic(uuid = "6e400002-b5a3-f393-e0a9-e50e24dcca9e", write, write_without_response)]
+    rx: [u8; MAX_GATT_PAYLOAD],
+    #[characteristic(uuid = "6e400003-b5a3-f393-e0a9-e50e24dcca9e", notify)]
+    tx: [u8; MAX_GATT_PAYLOAD],
 }
 
-#[nrf_softdevice::gatt_server]
-pub(crate) struct Server {
+#[gatt_server]
+pub struct Server {
     nus: NusService,
 }
 
-pub fn init_server(sd: &mut Softdevice) -> Result<Server, gatt_server::RegisterError> {
-    Server::new(sd)
-}
-
 pub fn request_fast_advertising() {
-    request_advertising(ADV_TIMEOUT_FAST_10MS);
+    request_advertising(ADV_TIMEOUT_FAST);
 }
 
-#[task]
-pub async fn ble_task(sd: &'static Softdevice, server: &'static Server) {
-    let mut pending_timeout = Some(ADV_TIMEOUT_BOOT_10MS);
+/// Unified BLE task managing both main BLE (connectable) and FindMy (non-connectable)
+/// advertisement sets via trouble-host extended advertising.
+///
+/// Design (Plan D):
+/// 1. Both adv sets run simultaneously via `advertise_ext`
+/// 2. On connection: accept and handle GATT; FindMy pauses during connection
+/// 3. On disconnect: restart both adv sets
+/// 4. On FindMy key rotation: restart adv sets with new FindMy data
+pub async fn ble_unified_task(
+    peripheral: &mut Peripheral<'_, SoftdeviceController<'_>, DefaultPacketPool>,
+    server: &Server,
+) {
+    let mut pending_timeout = Some(ADV_TIMEOUT_BOOT);
 
     loop {
         let timeout = match pending_timeout.take() {
-            Some(timeout) => timeout,
+            Some(t) => t,
             None => {
                 ADV_REQUEST_SIGNAL.wait().await;
                 match take_adv_request() {
-                    Some(timeout) => timeout,
+                    Some(t) => t,
                     None => continue,
                 }
             }
         };
 
-        // Acquire the advertising resource (preempts FindMy if active).
-        let guard = ADV_SCHEDULER.acquire(AdvPriority::MainAdv).await;
+        // Build main BLE adv data
+        let nus_uuid = 0x6e400001_b5a3_f393_e0a9_e50e24dcca9eu128.to_le_bytes();
+        let mut adv_data = [0u8; 31];
+        let adv_len = AdStructure::encode_slice(
+            &[
+                AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
+                AdStructure::ServiceUuids128(&[nus_uuid]),
+            ],
+            &mut adv_data,
+        )
+        .unwrap_or(0);
 
-        let config = peripheral::Config {
-            interval: ADV_INTERVAL_UNITS,
+        let mut scan_data = [0u8; 31];
+        let scan_len = AdStructure::encode_slice(
+            &[AdStructure::CompleteLocalName(DEVICE_NAME.as_bytes())],
+            &mut scan_data,
+        )
+        .unwrap_or(0);
+
+        let main_params = AdvertisementParameters {
+            primary_phy: PhyKind::Le1M,
+            secondary_phy: PhyKind::Le1M,
+            interval_min: ADV_INTERVAL_MIN,
+            interval_max: ADV_INTERVAL_MAX,
             timeout: Some(timeout),
             ..Default::default()
         };
-        let adv = peripheral::ConnectableAdvertisement::ScannableUndirected {
-            adv_data: &ADV_DATA,
-            scan_data: &SCAN_DATA,
-        };
 
-        let mut conn = match select(
-            peripheral::advertise_connectable(sd, adv, &config),
-            ADV_REQUEST_SIGNAL.wait(),
-        )
-        .await
-        {
-            Either::First(Ok(conn)) => conn,
-            Either::First(Err(peripheral::AdvertiseError::Timeout)) => {
-                defmt::info!("BLE advertising timeout");
-                drop(guard);
-                continue;
-            }
-            Either::First(Err(err)) => {
-                defmt::warn!("BLE advertise error: {:?}", err);
-                drop(guard);
-                continue;
-            }
-            Either::Second(()) => {
-                drop(guard);
-                pending_timeout = take_adv_request();
-                continue;
-            }
-        };
+        // Build FindMy adv set if enabled
+        #[cfg(feature = "findmy")]
+        let findmy_data = crate::findmy::current_adv_data().await;
 
-        // Connection established — adv handle is free, release for FindMy.
-        drop(guard);
+        #[cfg(feature = "findmy")]
+        let findmy_enabled = findmy_data.is_some();
+        #[cfg(not(feature = "findmy"))]
+        let findmy_enabled = false;
 
-        let _ = conn.data_length_update(None);
-        let _ = conn.phy_update(PhySet::M2, PhySet::M2);
-        let mut conn_params = conn.conn_params();
-        conn_params.min_conn_interval = CONN_MIN_INTERVAL;
-        conn_params.max_conn_interval = CONN_MAX_INTERVAL;
-        conn_params.slave_latency = CONN_SLAVE_LATENCY;
-        conn_params.conn_sup_timeout = CONN_SUP_TIMEOUT;
-        if let Err(err) = conn.set_conn_params(conn_params) {
-            defmt::warn!("BLE conn params update failed: {:?}", err);
-        }
+        if findmy_enabled {
+            #[cfg(feature = "findmy")]
+            {
+                let (payload, _addr) = findmy_data.unwrap();
+                let findmy_params = AdvertisementParameters {
+                    primary_phy: PhyKind::Le1M,
+                    secondary_phy: PhyKind::Le1M,
+                    interval_min: Duration::from_millis(2000),
+                    interval_max: Duration::from_millis(2000),
+                    ..Default::default()
+                };
 
-        RX_CHANNEL.clear();
-        let mut protocol = FileTransferProtocol::new();
+                // Ext connectable cannot be scannable per BLE spec, so no scan_data.
+                // Device name is included in adv_data via ShortenedLocalName if space allows.
+                let sets = [
+                    AdvertisementSet {
+                        params: main_params,
+                        data: Advertisement::ExtConnectableNonscannableUndirected {
+                            adv_data: &adv_data[..adv_len],
+                        },
+                    },
+                    AdvertisementSet {
+                        params: findmy_params,
+                        data: Advertisement::ExtNonconnectableNonscannableUndirected {
+                            anonymous: false,
+                            adv_data: &payload,
+                        },
+                    },
+                ];
+                let mut handles = AdvertisementSet::handles(&sets);
 
-        let rx_fut = async {
-            loop {
-                let data = RX_CHANNEL.receive().await;
-                process_bytes(&mut protocol, &conn, &server, &data).await;
-            }
-        };
+                // TODO: Set per-adv-set random address for FindMy.
+                // trouble-host sets the stack-level random address on all sets.
+                // For FindMy we need `_addr` as the random address on set[1].
+                // This may require sending LeSetAdvSetRandomAddr via bt-hci directly.
 
-        let gatt_fut = gatt_server::run(&conn, server, |event| match event {
-            ServerEvent::Nus(evt) => match evt {
-                NusServiceEvent::RxWrite(data) => {
-                    let _ = RX_CHANNEL.try_send(data);
+                let advertiser = match peripheral.advertise_ext(&sets, &mut handles).await {
+                    Ok(adv) => adv,
+                    Err(err) => {
+                        defmt::warn!("BLE ext advertise error: {:?}", err);
+                        embassy_time::Timer::after_millis(500).await;
+                        pending_timeout = take_adv_request().or(Some(timeout));
+                        continue;
+                    }
+                };
+
+                // Wait for connection, key rotation, or new adv request
+                let rotation_secs = crate::findmy::secs_until_rotation();
+
+                match select(
+                    advertiser.accept(),
+                    select(
+                        embassy_time::Timer::after(Duration::from_secs(rotation_secs)),
+                        ADV_REQUEST_SIGNAL.wait(),
+                    ),
+                )
+                .await
+                {
+                    Either::First(Ok(conn)) => {
+                        handle_connection(conn, server).await;
+                        pending_timeout = take_adv_request().or(Some(timeout));
+                    }
+                    Either::First(Err(_)) => {
+                        defmt::info!("BLE advertising timeout/error");
+                        pending_timeout = take_adv_request();
+                    }
+                    Either::Second(Either::First(())) => {
+                        // Key rotation — restart adv sets with new FindMy data
+                        defmt::info!("FindMy key rotation, restarting adv");
+                        pending_timeout = Some(timeout);
+                    }
+                    Either::Second(Either::Second(())) => {
+                        // New adv request
+                        pending_timeout = take_adv_request();
+                    }
                 }
-                NusServiceEvent::TxCccdWrite { notifications } => {
-                    defmt::info!("BLE notifications enabled: {}", notifications);
-                }
-            },
-        });
-
-        match select(gatt_fut, rx_fut).await {
-            Either::First(_) => {
-                defmt::info!("BLE disconnected");
             }
-            Either::Second(_) => {}
-        }
+        } else {
+            // No FindMy — single connectable adv set (legacy, supports scan response)
+            let sets = [AdvertisementSet {
+                params: main_params,
+                data: Advertisement::ConnectableScannableUndirected {
+                    adv_data: &adv_data[..adv_len],
+                    scan_data: &scan_data[..scan_len],
+                },
+            }];
+            let mut handles = AdvertisementSet::handles(&sets);
 
-        pending_timeout = take_adv_request().or(Some(timeout));
+            let advertiser = match peripheral.advertise_ext(&sets, &mut handles).await {
+                Ok(adv) => adv,
+                Err(err) => {
+                    defmt::warn!("BLE advertise error: {:?}", err);
+                    embassy_time::Timer::after_millis(500).await;
+                    pending_timeout = take_adv_request().or(Some(timeout));
+                    continue;
+                }
+            };
+
+            match select(advertiser.accept(), ADV_REQUEST_SIGNAL.wait()).await {
+                Either::First(Ok(conn)) => {
+                    handle_connection(conn, server).await;
+                    pending_timeout = take_adv_request().or(Some(timeout));
+                }
+                Either::First(Err(_)) => {
+                    defmt::info!("BLE advertising timeout");
+                    pending_timeout = take_adv_request();
+                }
+                Either::Second(()) => {
+                    pending_timeout = take_adv_request();
+                }
+            }
+        }
     }
 }
 
-async fn process_bytes(
-    protocol: &mut FileTransferProtocol,
-    conn: &Connection,
+async fn handle_connection(
+    conn: Connection<'_, DefaultPacketPool>,
+    server: &Server,
+) {
+    defmt::info!("BLE connected");
+
+    let conn = match conn.with_attribute_server(server) {
+        Ok(c) => c,
+        Err(err) => {
+            defmt::warn!("BLE GATT server attach failed: {:?}", err);
+            return;
+        }
+    };
+
+    let mut protocol = FileTransferProtocol::new();
+
+    loop {
+        match conn.next().await {
+            GattConnectionEvent::Disconnected { reason } => {
+                defmt::info!("BLE disconnected: {:?}", reason);
+                break;
+            }
+            GattConnectionEvent::Gatt { event } => match event {
+                GattEvent::Write(evt) => {
+                    let handle = evt.handle();
+                    if handle == server.nus.rx.handle {
+                        let data = evt.data();
+                        for &byte in data {
+                            if let Some(len) = protocol.push_byte(byte).await {
+                                let response = protocol.response(len);
+                                ble_send(&conn, server, response).await;
+                            }
+                        }
+                    }
+                    if let Ok(reply) = evt.accept() {
+                        reply.send().await;
+                    }
+                }
+                GattEvent::Read(evt) => {
+                    if let Ok(reply) = evt.accept() {
+                        reply.send().await;
+                    }
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+}
+
+async fn ble_send<P: PacketPool>(
+    conn: &GattConnection<'_, '_, P>,
     server: &Server,
     data: &[u8],
 ) {
-    for &byte in data {
-        if let Some(len) = protocol.push_byte(byte).await {
-            ble_send(conn, server, protocol.response(len)).await;
-        }
-    }
-}
-
-async fn ble_send(conn: &Connection, server: &Server, data: &[u8]) {
-    let mtu_payload = conn.att_mtu().saturating_sub(3) as usize;
-    let max_payload = cmp::min(mtu_payload, MAX_GATT_PAYLOAD);
+    let max_payload = MAX_GATT_PAYLOAD;
     if max_payload == 0 {
         return;
     }
@@ -192,11 +278,9 @@ async fn ble_send(conn: &Connection, server: &Server, data: &[u8]) {
     let mut offset = 0usize;
     while offset < data.len() {
         let chunk_len = cmp::min(max_payload, data.len() - offset);
-        let mut chunk: Vec<u8, MAX_GATT_PAYLOAD> = Vec::new();
-        if chunk.extend_from_slice(&data[offset..offset + chunk_len]).is_err() {
-            break;
-        }
-        if let Err(err) = server.nus.tx_notify(conn, &chunk) {
+        let mut buf = [0u8; MAX_GATT_PAYLOAD];
+        buf[..chunk_len].copy_from_slice(&data[offset..offset + chunk_len]);
+        if let Err(err) = server.nus.tx.notify(conn, &buf).await {
             defmt::warn!("BLE notify failed: {:?}", err);
             break;
         }
@@ -204,16 +288,17 @@ async fn ble_send(conn: &Connection, server: &Server, data: &[u8]) {
     }
 }
 
-fn request_advertising(timeout_10ms: u16) {
+fn request_advertising(timeout: Duration) {
+    let timeout_10ms = (timeout.as_millis() / 10) as u16;
     ADV_REQUEST_TIMEOUT.store(timeout_10ms, Ordering::Release);
     ADV_REQUEST_SIGNAL.signal(());
 }
 
-fn take_adv_request() -> Option<u16> {
-    let timeout = ADV_REQUEST_TIMEOUT.swap(0, Ordering::AcqRel);
-    if timeout == 0 {
+fn take_adv_request() -> Option<Duration> {
+    let timeout_10ms = ADV_REQUEST_TIMEOUT.swap(0, Ordering::AcqRel);
+    if timeout_10ms == 0 {
         None
     } else {
-        Some(timeout)
+        Some(Duration::from_millis(timeout_10ms as u64 * 10))
     }
 }

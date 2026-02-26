@@ -2,7 +2,6 @@
 #![no_main]
 
 mod accel;
-mod adv_scheduler;
 mod battery;
 mod ble;
 mod bmp280;
@@ -28,23 +27,30 @@ use embassy_executor::Spawner;
 use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
 use embassy_nrf::interrupt::Priority;
 use embassy_nrf::usb::vbus_detect::SoftwareVbusDetect;
-use embassy_nrf::{bind_interrupts, buffered_uarte, peripherals, saadc, spim, twim, uarte};
+use embassy_nrf::{bind_interrupts, buffered_uarte, peripherals, rng, saadc, spim, twim, uarte};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::Timer;
+use nrf_pac as pac;
+use nrf_sdc::mpsl::MultiprotocolServiceLayer;
 use static_cell::StaticCell;
+use trouble_host::prelude::*;
 
 use {defmt_rtt as _, panic_probe as _};
-use nrf_softdevice::ble::SecurityMode;
-use nrf_softdevice::{raw, RawError, SocEvent, Softdevice};
 
 bind_interrupts!(struct Irqs {
     UARTE0 => buffered_uarte::InterruptHandler<peripherals::UARTE0>;
     TWISPI0 => twim::InterruptHandler<peripherals::TWISPI0>;
     SPIM3 => spim::InterruptHandler<peripherals::SPI3>;
     SAADC => saadc::InterruptHandler;
+    RNG => rng::InterruptHandler<peripherals::RNG>;
+    EGU0_SWI0 => nrf_sdc::mpsl::LowPrioInterruptHandler;
+    CLOCK_POWER => nrf_sdc::mpsl::ClockInterruptHandler;
+    RADIO => nrf_sdc::mpsl::HighPrioInterruptHandler;
+    TIMER0 => nrf_sdc::mpsl::HighPrioInterruptHandler;
+    RTC0 => nrf_sdc::mpsl::HighPrioInterruptHandler;
 });
 
 // DMA buffers must live in RAM for UARTE/TWIM.
@@ -75,76 +81,93 @@ pub(crate) fn usb_connected() -> bool {
 }
 
 fn set_usb_boot_flag() {
-    let result = RawError::convert(unsafe { raw::sd_power_gpregret_set(0, USB_BOOT_FLAG as u32) });
-    match result {
-        Ok(()) => defmt::info!("Set USB boot flag (sd_power_gpregret_set)"),
-        Err(err) => defmt::warn!("Set USB boot flag failed: {:?}", err),
+    unsafe {
+        let power = &*pac::POWER::PTR;
+        let current = power.gpregret().read().bits();
+        power
+            .gpregret()
+            .write(|w| w.bits(current | USB_BOOT_FLAG as u32));
     }
+    defmt::info!("Set USB boot flag (PAC)");
 }
 
 fn take_usb_boot_flag() -> bool {
-    let mut current = 0u32;
-    let read = RawError::convert(unsafe { raw::sd_power_gpregret_get(0, &mut current as *mut _) });
-    let current = match read {
-        Ok(()) => current as u8,
-        Err(err) => {
-            defmt::warn!("Read USB boot flag failed: {:?}", err);
+    unsafe {
+        let power = &*pac::POWER::PTR;
+        let current = power.gpregret().read().bits() as u8;
+        defmt::info!("Boot gpregret=0x{:02x}", current);
+        if (current & USB_BOOT_FLAG) == 0 {
+            defmt::info!("USB boot flag not set");
             return false;
         }
-    };
-    defmt::info!("Boot gpregret=0x{:02x}", current);
-    if (current & USB_BOOT_FLAG) == 0 {
-        defmt::info!("USB boot flag not set");
-        return false;
+        power
+            .gpregret()
+            .write(|w| w.bits((current & !USB_BOOT_FLAG) as u32));
+        defmt::info!("Cleared USB boot flag");
+        true
     }
-    let clear =
-        RawError::convert(unsafe { raw::sd_power_gpregret_clr(0, USB_BOOT_FLAG as u32) });
-    match clear {
-        Ok(()) => defmt::info!("Cleared USB boot flag"),
-        Err(err) => defmt::warn!("Clear USB boot flag failed: {:?}", err),
-    }
-    true
 }
 
+/// Poll USB power register status (replaces SoftDevice SocEvent callback).
+///
+/// CLOCK_POWER interrupt is occupied by MPSL ClockInterruptHandler,
+/// so we poll USBREGSTATUS at 100ms intervals instead.
 #[embassy_executor::task]
-async fn softdevice_task(
-    sd: &'static Softdevice,
+async fn usb_power_task(
     vbus: &'static SoftwareVbusDetect,
-    usb_present: bool,
+    initial_detected: bool,
     usb_only: bool,
 ) {
-    let mut hfclk_requested = false;
-    if usb_present {
-        let _ = unsafe { raw::sd_clock_hfclk_request() };
-        hfclk_requested = true;
+    let power = unsafe { &*pac::POWER::PTR };
+    let clock = unsafe { &*pac::CLOCK::PTR };
+    let mut last_detected = initial_detected;
+    let mut hfclk_requested = initial_detected;
+
+    if initial_detected {
+        clock
+            .tasks_hfclkstart()
+            .write(|w| w.set_tasks_hfclkstart(true));
     }
 
-    sd.run_with_callback(move |event| match event {
-        SocEvent::PowerUsbDetected => {
+    loop {
+        Timer::after_millis(100).await;
+
+        let regstatus = power.usbregstatus().read();
+        let detected = regstatus.vbusdetect().bit_is_set();
+        let ready = regstatus.outputrdy().bit_is_set();
+
+        if detected && !last_detected {
             USB_CONNECTED.store(true, Ordering::Release);
             defmt::info!("USB detected");
             vbus.detected(true);
             if !hfclk_requested {
-                let _ = unsafe { raw::sd_clock_hfclk_request() };
+                clock
+                    .tasks_hfclkstart()
+                    .write(|w| w.set_tasks_hfclkstart(true));
                 hfclk_requested = true;
             }
-        }
-        SocEvent::PowerUsbRemoved => {
+            if ready {
+                vbus.ready();
+            }
+        } else if !detected && last_detected {
             USB_CONNECTED.store(false, Ordering::Release);
             defmt::info!("USB removed");
             vbus.detected(false);
             if hfclk_requested {
-                let _ = unsafe { raw::sd_clock_hfclk_release() };
+                clock
+                    .tasks_hfclkstop()
+                    .write(|w| w.set_tasks_hfclkstop(true));
                 hfclk_requested = false;
             }
             if usb_only {
                 SCB::sys_reset();
             }
+        } else if detected && ready && last_detected {
+            vbus.ready();
         }
-        SocEvent::PowerUsbPowerReady => vbus.ready(),
-        _ => {}
-    })
-    .await
+
+        last_detected = detected;
+    }
 }
 
 #[embassy_executor::task]
@@ -179,27 +202,21 @@ async fn usb_mode_task() {
     }
 }
 
-fn init_usb_power_events(vbus: &SoftwareVbusDetect) -> bool {
-    unsafe {
-        let _ = raw::sd_power_usbdetected_enable(1);
-        let _ = raw::sd_power_usbremoved_enable(1);
-        let _ = raw::sd_power_usbpwrrdy_enable(1);
-    }
+#[embassy_executor::task]
+async fn mpsl_task(mpsl: &'static MultiprotocolServiceLayer<'static>) -> ! {
+    mpsl.run().await
+}
 
-    let mut regstatus = 0u32;
-    if RawError::convert(unsafe { raw::sd_power_usbregstatus_get(&mut regstatus as *mut _) })
-        .is_ok()
-    {
-        let detected = (regstatus & 0x1) != 0;
-        let ready = (regstatus & 0x2) != 0;
-        vbus.detected(detected);
-        if detected && ready {
-            vbus.ready();
-        }
-        return detected;
+fn detect_usb_present(vbus: &SoftwareVbusDetect) -> bool {
+    let power = unsafe { &*pac::POWER::PTR };
+    let regstatus = power.usbregstatus().read();
+    let detected = regstatus.vbusdetect().bit_is_set();
+    let ready = regstatus.outputrdy().bit_is_set();
+    vbus.detected(detected);
+    if detected && ready {
+        vbus.ready();
     }
-
-    false
+    detected
 }
 
 #[embassy_executor::main]
@@ -236,52 +253,79 @@ async fn main(spawner: Spawner) {
         ppi_ch8,
         ppi_ch9,
         ppi_group1,
+        // MPSL
+        rtc0,
+        timer0,
+        temp,
+        ppi_ch19,
+        ppi_ch30,
+        ppi_ch31,
+        // SDC
+        rng: rng_periph,
+        ppi_ch17,
+        ppi_ch18,
+        ppi_ch20,
+        ppi_ch21,
+        ppi_ch22,
+        ppi_ch23,
+        ppi_ch24,
+        ppi_ch25,
+        ppi_ch26,
+        ppi_ch27,
+        ppi_ch28,
+        ppi_ch29,
     } = board::Board::new(p);
 
-    let device_name = ble::DEVICE_NAME.as_bytes();
-    let sd_config = nrf_softdevice::Config {
-        clock: Some(raw::nrf_clock_lf_cfg_t {
-            source: raw::NRF_CLOCK_LF_SRC_RC as u8,
-            rc_ctiv: 16,
-            rc_temp_ctiv: 2,
-            accuracy: raw::NRF_CLOCK_LF_ACCURACY_500_PPM as u8,
-        }),
-        conn_gap: Some(raw::ble_gap_conn_cfg_t {
-            conn_count: 1,
-            event_length: 24,
-        }),
-        conn_gatt: Some(raw::ble_gatt_conn_cfg_t { att_mtu: 247 }),
-        conn_gatts: Some(raw::ble_gatts_conn_cfg_t {
-            hvn_tx_queue_size: 8,
-        }),
-        common_vs_uuid: Some(raw::ble_common_cfg_vs_uuid_t { vs_uuid_count: 1 }),
-        gap_role_count: Some(raw::ble_gap_cfg_role_count_t {
-            // S140 7.3.0 supports only one advertising set handle.
-            // Find My and connectable BLE must time-share this single handle.
-            adv_set_count: 1,
-            periph_role_count: 1,
-            central_role_count: 0,
-            central_sec_count: 0,
-            _bitfield_1: raw::ble_gap_cfg_role_count_t::new_bitfield_1(0),
-        }),
-        gap_device_name: Some(raw::ble_gap_cfg_device_name_t {
-            p_value: device_name.as_ptr() as *mut u8,
-            current_len: device_name.len() as u16,
-            max_len: device_name.len() as u16,
-            write_perm: SecurityMode::NoAccess.into_raw(),
-            _bitfield_1: raw::ble_gap_cfg_device_name_t::new_bitfield_1(
-                raw::BLE_GATTS_VLOC_STACK as u8,
-            ),
-        }),
-        gatts_attr_tab_size: Some(raw::ble_gatts_cfg_attr_tab_size_t {
-            attr_tab_size: raw::BLE_GATTS_ATTR_TAB_SIZE_DEFAULT,
-        }),
-        ..Default::default()
+    // Enable DC/DC converter via PAC (replaces sd_power_dcdc_mode_set)
+    unsafe {
+        let power = &*pac::POWER::PTR;
+        power.dcdcen().write(|w| w.set_dcdcen(true));
+    }
+
+    // Initialize MPSL
+    let mpsl_p = nrf_sdc::mpsl::Peripherals::new(rtc0, timer0, temp, ppi_ch19, ppi_ch30, ppi_ch31);
+    let lfclk_cfg = nrf_sdc::mpsl::raw::mpsl_clock_lfclk_cfg_t {
+        source: nrf_sdc::mpsl::raw::MPSL_CLOCK_LF_SRC_RC as u8,
+        rc_ctiv: nrf_sdc::mpsl::raw::MPSL_RECOMMENDED_RC_CTIV as u8,
+        rc_temp_ctiv: nrf_sdc::mpsl::raw::MPSL_RECOMMENDED_RC_TEMP_CTIV as u8,
+        accuracy_ppm: nrf_sdc::mpsl::raw::MPSL_DEFAULT_CLOCK_ACCURACY_PPM as u16,
+        skip_wait_lfclk_started: nrf_sdc::mpsl::raw::MPSL_DEFAULT_SKIP_WAIT_LFCLK_STARTED != 0,
     };
-    let sd = Softdevice::enable(&sd_config);
-    unsafe { raw::sd_power_dcdc_mode_set(raw::NRF_POWER_DCDC_MODES_NRF_POWER_DCDC_ENABLE as u8) };
+    static MPSL: StaticCell<MultiprotocolServiceLayer> = StaticCell::new();
+    let mpsl = MPSL.init(
+        nrf_sdc::mpsl::MultiprotocolServiceLayer::new(mpsl_p, Irqs, lfclk_cfg)
+            .expect("MPSL init failed"),
+    );
+    spawner.spawn(mpsl_task(mpsl)).unwrap();
+
+    // Build SDC (SoftDevice Controller) with 2 adv sets
+    let sdc_p = nrf_sdc::Peripherals::new(
+        ppi_ch17, ppi_ch18, ppi_ch20, ppi_ch21, ppi_ch22, ppi_ch23, ppi_ch24, ppi_ch25, ppi_ch26,
+        ppi_ch27, ppi_ch28, ppi_ch29,
+    );
+    let mut sdc_rng = rng::Rng::new(rng_periph, Irqs);
+    static SDC_MEM: StaticCell<nrf_sdc::Mem<14000>> = StaticCell::new();
+    let sdc_mem = SDC_MEM.init(nrf_sdc::Mem::new());
+    let sdc = nrf_sdc::Builder::new()
+        .expect("SDC builder")
+        .support_adv()
+        .expect("support_adv")
+        .support_ext_adv()
+        .expect("support_ext_adv")
+        .support_peripheral()
+        .expect("support_peripheral")
+        .peripheral_count(1)
+        .expect("peripheral_count")
+        .adv_count(2)
+        .expect("adv_count")
+        .buffer_cfg(247, 247, 3, 3)
+        .expect("buffer_cfg")
+        .build(sdc_p, &mut sdc_rng, mpsl, sdc_mem)
+        .expect("SDC build");
+
+    // USB detection via PAC (replaces init_usb_power_events + SocEvent)
     let vbus = usb_msc::init_vbus();
-    let usb_present = init_usb_power_events(vbus);
+    let usb_present = detect_usb_present(vbus);
     USB_CONNECTED.store(usb_present, Ordering::Release);
     let usb_boot_requested = take_usb_boot_flag();
     let usb_only = usb_boot_requested;
@@ -291,25 +335,41 @@ async fn main(spawner: Spawner) {
         usb_boot_requested,
         usb_only
     );
-    let server = if usb_only {
-        None
-    } else {
-        Some(BLE_SERVER.init(ble::init_server(sd).unwrap()))
-    };
-    let sd = &*sd;
+
     spawner
-        .spawn(softdevice_task(sd, vbus, usb_present, usb_only))
+        .spawn(usb_power_task(vbus, usb_present, usb_only))
         .unwrap();
     spawner.spawn(usb_mode_task()).unwrap();
+
     if usb_only {
         #[cfg(feature = "i2c-spi")]
         spawner.spawn(usb_msc::usb_msc_task(usbd, vbus)).unwrap();
         #[cfg(not(feature = "i2c-spi"))]
         defmt::warn!("USB MSC disabled (feature i2c-spi off)");
     }
-    if let Some(server) = server {
-        spawner.spawn(ble::ble_task(sd, server)).unwrap();
-    }
+
+    // Build trouble-host BLE stack
+    let address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
+    // HostResources<PacketPool, CONNS, CHANNELS, ADV_SETS>
+    static HOST_RESOURCES: StaticCell<HostResources<DefaultPacketPool, 1, 0, 2>> = StaticCell::new();
+    let host_resources = HOST_RESOURCES.init(HostResources::new());
+    let stack = trouble_host::new(sdc, host_resources).set_random_address(address);
+    let Host {
+        mut peripheral,
+        mut runner,
+        ..
+    } = stack.build();
+
+    let server = if usb_only {
+        None
+    } else {
+        Some(BLE_SERVER.init(ble::Server::new_with_config(
+            GapConfig::Peripheral(PeripheralConfig {
+                name: ble::DEVICE_NAME,
+                appearance: &appearance::UNKNOWN,
+            }),
+        ).expect("GATT server init")))
+    };
 
     // LED is on P0.15 per promicro_diy variant.
     let _led = Output::new(led, Level::Low, OutputDrive::Standard);
@@ -360,7 +420,6 @@ async fn main(spawner: Spawner) {
         } else {
             defmt::info!("FindMy: no keys on SD, waiting for provisioning via BLE");
         }
-        spawner.spawn(findmy::findmy_task(sd)).unwrap();
     }
 
     let gps_en = Output::new(gps_en_pin, Level::Low, OutputDrive::Standard);
@@ -417,12 +476,26 @@ async fn main(spawner: Spawner) {
         }
     } else {
         let button = Input::new(button_pin, Pull::Up);
-        spawner.spawn(button::usb_only_button_task(button)).unwrap();
+        spawner
+            .spawn(button::usb_only_button_task(button))
+            .unwrap();
     }
 
     drop((serial2_rx, serial2_tx));
     #[cfg(not(feature = "i2c-spi"))]
     drop((spi3, spi_sck, spi_miso, spi_mosi, spi_cs, twispi0, i2c_sda, i2c_scl));
 
-    core::future::pending::<()>().await;
+    // Run BLE host runner and unified BLE task concurrently.
+    // peripheral has a non-'static lifetime tied to host_resources,
+    // so we run it inline rather than spawning a task.
+    if let Some(server) = server {
+        embassy_futures::join::join(
+            async { runner.run().await.unwrap() },
+            ble::ble_unified_task(&mut peripheral, server),
+        )
+        .await;
+    } else {
+        // USB-only mode: just run the BLE runner (keeps stack alive for future use)
+        runner.run().await.unwrap();
+    }
 }

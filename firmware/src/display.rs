@@ -924,23 +924,8 @@ fn findmy_status_text(info: &SystemInfo, _findmy_addr: Option<[u8; 6]>) -> Strin
                 out.push_str("Waiting GPS time").ok();
             }
         }
-        crate::findmy::FindMyDiagState::WaitingBleIdle => {
-            out.push_str("Waiting BLE idle").ok();
-        }
-        crate::findmy::FindMyDiagState::AddressReady => {
-            out.push_str("Address ready").ok();
-        }
         crate::findmy::FindMyDiagState::Advertising => {
             out.push_str("Broadcasting").ok();
-        }
-        crate::findmy::FindMyDiagState::SetAddrFailed => {
-            out.push_str("Set addr failed").ok();
-        }
-        crate::findmy::FindMyDiagState::AdvConfigureFailed => {
-            out.push_str("Adv cfg failed").ok();
-        }
-        crate::findmy::FindMyDiagState::AdvStartFailed => {
-            out.push_str("Adv start failed").ok();
         }
     }
     out

@@ -25,6 +25,27 @@ pub struct Board {
     pub ppi_ch8: Peri<'static, peripherals::PPI_CH8>,
     pub ppi_ch9: Peri<'static, peripherals::PPI_CH9>,
     pub ppi_group1: Peri<'static, peripherals::PPI_GROUP1>,
+    // MPSL peripherals
+    pub rtc0: Peri<'static, peripherals::RTC0>,
+    pub timer0: Peri<'static, peripherals::TIMER0>,
+    pub temp: Peri<'static, peripherals::TEMP>,
+    pub ppi_ch19: Peri<'static, peripherals::PPI_CH19>,
+    pub ppi_ch30: Peri<'static, peripherals::PPI_CH30>,
+    pub ppi_ch31: Peri<'static, peripherals::PPI_CH31>,
+    // SDC peripherals
+    pub rng: Peri<'static, peripherals::RNG>,
+    pub ppi_ch17: Peri<'static, peripherals::PPI_CH17>,
+    pub ppi_ch18: Peri<'static, peripherals::PPI_CH18>,
+    pub ppi_ch20: Peri<'static, peripherals::PPI_CH20>,
+    pub ppi_ch21: Peri<'static, peripherals::PPI_CH21>,
+    pub ppi_ch22: Peri<'static, peripherals::PPI_CH22>,
+    pub ppi_ch23: Peri<'static, peripherals::PPI_CH23>,
+    pub ppi_ch24: Peri<'static, peripherals::PPI_CH24>,
+    pub ppi_ch25: Peri<'static, peripherals::PPI_CH25>,
+    pub ppi_ch26: Peri<'static, peripherals::PPI_CH26>,
+    pub ppi_ch27: Peri<'static, peripherals::PPI_CH27>,
+    pub ppi_ch28: Peri<'static, peripherals::PPI_CH28>,
+    pub ppi_ch29: Peri<'static, peripherals::PPI_CH29>,
 }
 
 impl Board {
@@ -54,6 +75,27 @@ impl Board {
             ppi_ch8: p.PPI_CH8,
             ppi_ch9: p.PPI_CH9,
             ppi_group1: p.PPI_GROUP1,
+            // MPSL
+            rtc0: p.RTC0,
+            timer0: p.TIMER0,
+            temp: p.TEMP,
+            ppi_ch19: p.PPI_CH19,
+            ppi_ch30: p.PPI_CH30,
+            ppi_ch31: p.PPI_CH31,
+            // SDC
+            rng: p.RNG,
+            ppi_ch17: p.PPI_CH17,
+            ppi_ch18: p.PPI_CH18,
+            ppi_ch20: p.PPI_CH20,
+            ppi_ch21: p.PPI_CH21,
+            ppi_ch22: p.PPI_CH22,
+            ppi_ch23: p.PPI_CH23,
+            ppi_ch24: p.PPI_CH24,
+            ppi_ch25: p.PPI_CH25,
+            ppi_ch26: p.PPI_CH26,
+            ppi_ch27: p.PPI_CH27,
+            ppi_ch28: p.PPI_CH28,
+            ppi_ch29: p.PPI_CH29,
         }
     }
 }

@@ -1,8 +1,8 @@
 MEMORY
 {
-  /* S140 7.3.0 occupies up to 0x00026498, round up to 0x00027000 */
-  FLASH : ORIGIN = 0x00027000, LENGTH = 1024K - 0x27000
+  /* No SoftDevice blob — Flash starts at 0 */
+  FLASH : ORIGIN = 0x00000000, LENGTH = 1024K
 
-  /* Reserve 0x3000 RAM for SoftDevice by default */
-  RAM : ORIGIN = 0x20003000, LENGTH = 256K - 0x3000
+  /* No SoftDevice RAM reservation — SDC uses sdc::Mem<N> in user memory */
+  RAM : ORIGIN = 0x20000000, LENGTH = 256K
 }
