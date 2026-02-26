@@ -60,6 +60,8 @@ Key modules:
 - **display.rs** — SSD1306 OLED rendering with embedded-graphics
 - **timezone.rs** — IANA timezone database for GPS time conversion
 - **findmy.rs** — Apple Find My offline finding: P-224 key derivation (ANSI X9.63 KDF), BLE non-connectable advertising with 15-min rolling keys, GPS-time-based counter. Gated behind `findmy` feature flag.
+- **google_fmdn.rs** — Google Find My Device Network: EID computation (AES-ECB-256 + SECP160R1), BLE advertising (Eddystone 0xFEAA), 1024s EID rotation. Gated behind `google-fmdn` feature flag.
+- **secp160r1.rs** — SECP160R1 elliptic curve implementation (field arithmetic, scalar multiplication) for FMDN EID generation. Gated behind `google-fmdn` feature flag.
 - **main.rs** — Peripheral init, interrupt binding, task spawning, USB boot mode detection
 
 Hardware constraints:
@@ -97,12 +99,13 @@ Key services:
 - **gpxConverter.ts** — GPZ → GPX format conversion for export
 - **modules/agnss/** — A-GNSS ephemeris data fetching and CASIC formatting
 - **findmyKeyGen.ts** — P-224 key generation for Find My provisioning (uses @noble/curves)
+- **fdmnKeyGen.ts** — FMDN EIK generation (32-byte random), JSON export/import
 
 ### BLE File Transfer Protocol
 
 Command-response over NUS (see `docs/uart_file_proto.md`):
 - Format: `[CMD_ID:1B] [LEN:2B LE] [payload]`
-- Commands: LIST_DIR(0x01), OPEN_FILE(0x02), READ_CHUNK(0x03), CLOSE_FILE(0x04), DELETE_FILE(0x05), GET_SYS_INFO(0x06), AGNSS operations(0x07-0x09), GPS_WAKEUP(0x0A), GPS_KEEP_ALIVE(0x0B), WRITE_FINDMY_KEYS(0x0C), READ_FINDMY_KEYS(0x0D), GET_FINDMY_STATUS(0x0E) — last three require `findmy` feature
+- Commands: LIST_DIR(0x01), OPEN_FILE(0x02), READ_CHUNK(0x03), CLOSE_FILE(0x04), DELETE_FILE(0x05), GET_SYS_INFO(0x06), AGNSS operations(0x07-0x09), GPS_WAKEUP(0x0A), GPS_KEEP_ALIVE(0x0B), WRITE_FINDMY_KEYS(0x0C), READ_FINDMY_KEYS(0x0D), GET_FINDMY_STATUS(0x0E) — last three require `findmy` feature; WRITE_FMDN_EIK(0x0F), READ_FMDN_EIK(0x10), GET_FMDN_STATUS(0x11) — require `google-fmdn` feature
 
 ## Important Caveats
 
@@ -111,6 +114,7 @@ Command-response over NUS (see `docs/uart_file_proto.md`):
 - nrf-softdevice is pinned to a specific git revision — updating requires careful compatibility testing
 - The `host-test` feature flag exists in Cargo.toml for potential host-side testing but hardware drivers make most code untestable without a device
 - The `findmy` feature flag enables Apple Find My offline finding (findmy.rs, protocol commands 0x0C-0x0E, SD card key storage). Requires `p224`, `sha2`, and `chrono` crates.
+- The `google-fmdn` feature flag enables Google Find My Device Network (google_fmdn.rs, secp160r1.rs, protocol commands 0x0F-0x11, SD card EIK storage). Requires `aes`, `sha2` crates.
 
 ## Specifications
 
@@ -185,6 +189,48 @@ python3 request_reports.py -t   # -t for trusted device 2FA push
 # 4. auth.json is generated in the current directory
 ```
 
+## Google Find My Device Network (FMDN)
+
+### How It Works
+
+The device broadcasts BLE advertisements compatible with Google's Find My Device Network (Find Hub). Nearby Android devices detect the Eddystone-format advertisements, encrypt their GPS location with the broadcasted EID public key, and upload encrypted reports to Google's servers. The device owner uses the Spot API to retrieve and decrypt location reports.
+
+Privacy is maintained through **rotating EIDs**: the Ephemeral Identifier changes every 1024 seconds (~17 minutes) using AES-ECB-256 + SECP160R1 elliptic curve.
+
+### Key Concepts
+
+- **EIK (Ephemeral Identity Key)** (32 bytes): Random key provisioned to device via BLE, stored on SD card at `/FMDN.EIK`. Used as AES-256 key for EID computation.
+- **EID (Ephemeral Identifier)** (20 bytes): Rotating public value broadcast in BLE advertisements. Computed as x-coordinate of `r*G` on SECP160R1, where `r` is derived from AES-ECB-256(EIK, input_block).
+- **EID Rotation**: Every 1024 seconds (K=10, 2^10=1024). Firmware needs GPS time to compute the correct rotation period.
+- **SECP160R1**: Non-standard 160-bit elliptic curve used for compact 20-byte EIDs. Custom implementation in `secp160r1.rs`.
+- **Hashed flags**: Battery level and UTP mode encoded as `SHA256(r)[0] XOR flags_raw`.
+- **Key hierarchy**: Recovery key = SHA256(EIK||0x01)[:8], Ring key = SHA256(EIK||0x02)[:8], Tracking key = SHA256(EIK||0x03)[:8].
+- **Precomputed key IDs**: Truncated EIDs (first 10 bytes) with timestamps, uploaded to Google's Spot API every ~3-4 days. Without fresh uploads, the tracker stops receiving location reports.
+
+### Provisioning EIK to Device
+
+1. In the web frontend: **Generate EIK** → **Provision** (writes 32-byte EIK via BLE command 0x0F)
+2. **Export** the EIK as JSON backup
+3. Device stores EIK to `/FMDN.EIK` on SD card and begins advertising once GPS time is available
+
+### Companion Tool
+
+```bash
+cd tools
+pip install cryptography
+
+# Generate EIK and save to file
+python fmdn_companion.py generate -o eik.json
+
+# Show EID sequence for last 24 hours (verify firmware EID computation)
+python fmdn_companion.py keys -k eik.json -H 24
+
+# Precompute key IDs for Spot API upload (96 hours)
+python fmdn_companion.py key-ids -k eik.json -H 96 -o key_ids.json
+```
+
+**Note**: Device registration and location report fetching require integration with [GoogleFindMyTools](https://github.com/leonboe1/GoogleFindMyTools) and Google OAuth authentication via the Spot gRPC API. These operations are not yet implemented in the standalone companion tool.
+
 ## Utility Scripts
 
 - `gps_format_tool.py` — Encode/decode GPZ files for debugging
@@ -193,3 +239,4 @@ python3 request_reports.py -t   # -t for trusted device 2FA push
 - `scripts/gen_logo.py` — Generate embedded OLED logo bitmaps
 - `tools/build_uf2.py` — Build UF2 firmware images
 - `tools/findmy_query.py` — Find My location report query tool: key generation, Apple API fetch, GPX export
+- `tools/fmdn_companion.py` — FMDN companion tool: EIK generation, EID derivation, key ID precomputation

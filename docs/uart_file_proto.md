@@ -63,6 +63,9 @@
 | `WRITE_FINDMY_KEYS`   | `0x0C` | 写入 Find My 密钥材料    |
 | `READ_FINDMY_KEYS`    | `0x0D` | 读取 Find My 密钥材料    |
 | `GET_FINDMY_STATUS`   | `0x0E` | 查询 Find My 状态        |
+| `WRITE_FMDN_EIK`     | `0x0F` | 写入 Google FMDN EIK     |
+| `READ_FMDN_EIK`      | `0x10` | 读取 Google FMDN EIK     |
+| `GET_FMDN_STATUS`    | `0x11` | 查询 Google FMDN 状态    |
 
 ## 4. 详细命令规范
 
@@ -481,6 +484,68 @@
     ```
     *   **Enabled**: `0x01` = Find My 已启用且正在广播，`0x00` = 未启用。
 
+### 4.15. `WRITE_FMDN_EIK` (需要 `google-fmdn` feature)
+
+*   **目的**: 将 32 字节 FMDN EIK (Ephemeral Identity Key) 写入设备 SD 卡。
+*   **CMD ID**: `0x0F`
+
+#### 4.15.1. 命令包 (`WRITE_FMDN_EIK_CMD`)
+
+*   **Payload** (`32` 字节):
+    ```
+    +--------------------+
+    | EIK (32B)          |
+    +--------------------+
+    ```
+    *   **EIK**: 32 字节 Ephemeral Identity Key。
+
+#### 4.15.2. 响应包 (`WRITE_FMDN_EIK_RSP`)
+
+*   **成功**: `Payload Len` = `1`, `Payload` = `0x01`。设备立即初始化 FMDN 模块并开始广播。
+*   **失败** (长度不正确或 SD 写入失败): `Payload Len` = `0`。
+
+### 4.16. `READ_FMDN_EIK` (需要 `google-fmdn` feature)
+
+*   **目的**: 从设备 SD 卡读取 FMDN EIK。
+*   **CMD ID**: `0x10`
+
+#### 4.16.1. 命令包 (`READ_FMDN_EIK_CMD`)
+
+*   **Payload**: 无（`Payload Len` 为 `0`）
+
+#### 4.16.2. 响应包 (`READ_FMDN_EIK_RSP`)
+
+*   **成功**: `Payload Len` = `32`, `Payload` = 32 字节 EIK。
+*   **失败** (文件不存在): `Payload Len` = `0`。
+
+### 4.17. `GET_FMDN_STATUS` (需要 `google-fmdn` feature)
+
+*   **目的**: 查询 Google FMDN 模块的当前状态。
+*   **CMD ID**: `0x11`
+
+#### 4.17.1. 命令包 (`GET_FMDN_STATUS_CMD`)
+
+*   **Payload**: 无（`Payload Len` 为 `0`）
+
+#### 4.17.2. 响应包 (`GET_FMDN_STATUS_RSP`)
+
+*   **Payload** (`2` 字节):
+    ```
+    +--------------------------+--------------------------+
+    | Enabled (1B, uint8)      | DiagState (1B, uint8)    |
+    +--------------------------+--------------------------+
+    ```
+    *   **Enabled**: `0x01` = FMDN 已启用，`0x00` = 未启用。
+    *   **DiagState**: 诊断状态码:
+        *   `0` = Disabled
+        *   `1` = WaitingGpsTime
+        *   `2` = WaitingBleIdle
+        *   `3` = EidReady
+        *   `4` = Advertising
+        *   `5` = SetAddrFailed
+        *   `6` = AdvConfigureFailed
+        *   `7` = AdvStartFailed
+
 ## 5. 流程示例
 
 ### 5.1. 列出根目录并读取文件 "/log.txt"
@@ -596,6 +661,7 @@
 
 ## 7. 协议版本和兼容性
 
-*   当前协议版本: 1.3
+*   当前协议版本: 1.4
 *   Find My 命令（0x0C-0x0E）需要固件编译时启用 `findmy` feature flag，未启用时设备不识别这些命令。
+*   Google FMDN 命令（0x0F-0x11）需要固件编译时启用 `google-fmdn` feature flag，未启用时设备不识别这些命令。
 *   新增功能保持向后兼容，不影响现有的文件读取和 AGNSS 功能。
