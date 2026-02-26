@@ -1,3 +1,7 @@
+// TODO: This module is too large (~1200 lines). Consider splitting into submodules:
+//   gps/state_machine.rs — GpsStateMachine + state transitions
+//   gps/agnss.rs — AgnssState, AgnssQueue, AgnssMessage + helpers
+//   gps/nmea.rs — NmeaBuffer, SpeedAverage, update_system_info_from_nmea
 use chrono::{Datelike, Timelike};
 use embassy_nrf::buffered_uarte::{Baudrate, BufferedUarteRx, BufferedUarteTx};
 use embassy_nrf::gpio::Output;
@@ -9,6 +13,7 @@ use nmea::Nmea;
 use crate::casic::{CasicPacket, CasicParser, CasicParserState, CASIC_MAX_PAYLOAD_SIZE};
 use crate::storage;
 use crate::system_info::{GpsState, SystemInfo, SYSTEM_INFO};
+use crate::timezone;
 
 const MIN_HDOP_FOR_VALID_FIX: f32 = 2.0;
 const GPS_HIGH_SPEED_THRESHOLD_KMPH: f32 = 20.0;
@@ -28,7 +33,7 @@ const T_AGNSS_MESSAGE_SEND_TIMEOUT_MS: u64 = 1;
 const T_AGNSS_TOTAL_TIMEOUT_MS: u64 = 600_000;
 const MAX_AGNSS_MESSAGE_RETRY: u8 = 3;
 const MAX_AGNSS_MESSAGES: usize = 70;
-const MAX_AGNSS_MESSAGE_SIZE: usize = 568;
+pub const MAX_AGNSS_MESSAGE_SIZE: usize = 568;
 
 const EMPTY_CASIC_PACKET: CasicPacket = CasicPacket {
     class_id: 0,
@@ -69,20 +74,20 @@ static GPS_WAKEUP: Mutex<CriticalSectionRawMutex, bool> = Mutex::new(false);
 static GPS_KEEP_ALIVE_DEADLINE: Mutex<CriticalSectionRawMutex, Option<u64>> = Mutex::new(None);
 
 #[derive(Clone, Copy)]
-struct AgnssMessage {
-    len: usize,
-    data: [u8; MAX_AGNSS_MESSAGE_SIZE],
+pub struct AgnssMessage {
+    pub len: usize,
+    pub data: [u8; MAX_AGNSS_MESSAGE_SIZE],
 }
 
 impl AgnssMessage {
-    const fn empty() -> Self {
+    pub const fn empty() -> Self {
         Self {
             len: 0,
             data: [0; MAX_AGNSS_MESSAGE_SIZE],
         }
     }
 
-    fn from_slice(data: &[u8]) -> Option<Self> {
+    pub fn from_slice(data: &[u8]) -> Option<Self> {
         if data.len() > MAX_AGNSS_MESSAGE_SIZE {
             return None;
         }
@@ -92,7 +97,7 @@ impl AgnssMessage {
         Some(msg)
     }
 
-    fn as_slice(&self) -> &[u8] {
+    pub fn as_slice(&self) -> &[u8] {
         &self.data[..self.len]
     }
 }
@@ -290,10 +295,8 @@ impl NmeaBuffer {
         if byte == b'$' {
             self.len = 0;
             self.in_sentence = true;
-            if !self.buf.is_empty() {
-                self.buf[0] = byte;
-                self.len = 1;
-            }
+            self.buf[0] = byte;
+            self.len = 1;
             return None;
         }
 
@@ -356,6 +359,8 @@ impl SpeedAverage {
         }
     }
 
+    /// Returns the average of non-zero samples. Zero values are excluded
+    /// because they represent stationary readings (GPS noise), not actual speed.
     fn get_average(&self) -> f32 {
         let mut sum = 0.0;
         let mut count = 0;
@@ -1121,37 +1126,7 @@ fn date_time_to_unix_timestamp(
     minute: u8,
     second: u8,
 ) -> u32 {
-    if year < 1970 || year > 2100 {
-        return 0;
-    }
-    if month == 0 || month > 12 || hour >= 24 || minute >= 60 || second >= 60 {
-        return 0;
-    }
-
-    let year_minus_one = (year - 1) as u32;
-    let leap_years = year_minus_one / 4 - year_minus_one / 100 + year_minus_one / 400;
-    let base_year_minus_one = 1969u32;
-    let base_leaps =
-        base_year_minus_one / 4 - base_year_minus_one / 100 + base_year_minus_one / 400;
-    let mut days = (year as u32 - 1970) * 365 + (leap_years - base_leaps);
-
-    let is_leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
-    let mut days_in_month = [0u8, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    if is_leap {
-        days_in_month[2] = 29;
-    }
-    if day == 0 || day > days_in_month[month as usize] {
-        return 0;
-    }
-    for m in 1..month {
-        days += days_in_month[m as usize] as u32;
-    }
-    days += (day as u32).saturating_sub(1);
-    let mut seconds_val = days * 86_400;
-    seconds_val += hour as u32 * 3_600;
-    seconds_val += minute as u32 * 60;
-    seconds_val += second as u32;
-    seconds_val
+    timezone::date_time_to_unix_timestamp(year, month, day, hour, minute, second).unwrap_or(0)
 }
 
 fn has_elapsed(start: Option<u64>, now_ms: u64, timeout_ms: u64) -> bool {

@@ -254,7 +254,7 @@ impl TzCache {
     }
 }
 
-fn date_time_to_unix_timestamp(
+pub fn date_time_to_unix_timestamp(
     year: u16,
     month: u8,
     day: u8,

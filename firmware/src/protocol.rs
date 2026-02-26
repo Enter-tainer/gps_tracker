@@ -3,6 +3,7 @@ use crate::bmp280;
 #[cfg(feature = "findmy")]
 use crate::findmy;
 use crate::gps;
+use crate::gps::AgnssMessage;
 use crate::storage;
 use crate::system_info::{serialize_system_info, SYSTEM_INFO, SYSTEM_INFO_SERIALIZED_LEN};
 
@@ -30,7 +31,6 @@ const MAX_RESPONSE_LEN: usize = 2 + MAX_RESPONSE_PAYLOAD;
 const READ_CHUNK_MAX_DATA: usize = 254;
 const LIST_DIR_RESPONSE_MAX: usize = 128;
 const MAX_AGNSS_MESSAGES: usize = 70;
-const MAX_AGNSS_MESSAGE_SIZE: usize = 568;
 
 #[derive(Clone, Copy)]
 enum CommandState {
@@ -39,21 +39,6 @@ enum CommandState {
     WaitPayloadLenMsb,
     WaitPayload,
     ProcessCommand,
-}
-
-#[derive(Clone, Copy)]
-struct AgnssMessage {
-    len: usize,
-    data: [u8; MAX_AGNSS_MESSAGE_SIZE],
-}
-
-impl AgnssMessage {
-    const fn empty() -> Self {
-        Self {
-            len: 0,
-            data: [0; MAX_AGNSS_MESSAGE_SIZE],
-        }
-    }
 }
 
 pub struct FileTransferProtocol {
@@ -136,6 +121,8 @@ impl FileTransferProtocol {
 
     async fn handle_command(&mut self) -> Option<usize> {
         let payload_len = self.payload_len as usize;
+        // Copy payload to a separate buffer so we can pass it to &mut self methods
+        // without conflicting borrows on self.buffer.
         let mut payload_buf = [0u8; MAX_CMD_PAYLOAD];
         if payload_len > 0 {
             payload_buf[..payload_len].copy_from_slice(&self.buffer[..payload_len]);
@@ -307,7 +294,7 @@ impl FileTransferProtocol {
             );
             return Some(self.encode_empty_response());
         }
-        if chunk_size > MAX_AGNSS_MESSAGE_SIZE || self.agnss_len >= self.agnss_messages.len() {
+        if chunk_size > gps::MAX_AGNSS_MESSAGE_SIZE || self.agnss_len >= self.agnss_messages.len() {
             defmt::warn!(
                 "AGNSS write chunk ignored: size {} count {}",
                 chunk_size,

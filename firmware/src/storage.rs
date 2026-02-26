@@ -55,6 +55,8 @@ pub enum ListDirOutcome {
 }
 
 static SD_LOGGER: Mutex<CriticalSectionRawMutex, Option<SdLogger>> = Mutex::new(None);
+// ThreadModeRawMutex: USB_CARD is only accessed from the single-threaded executor,
+// so a lightweight thread-mode mutex (no critical section) is sufficient.
 static USB_CARD: BlockingMutex<ThreadModeRawMutex, RefCell<Option<UsbSdCard>>> =
     BlockingMutex::new(RefCell::new(None));
 

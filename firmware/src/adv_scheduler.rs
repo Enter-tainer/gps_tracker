@@ -26,6 +26,15 @@ pub enum AdvPriority {
     FindMyAdv = 1,
 }
 
+impl AdvPriority {
+    fn from_index(index: usize) -> Self {
+        match index {
+            0 => Self::MainAdv,
+            _ => Self::FindMyAdv,
+        }
+    }
+}
+
 struct SchedulerState {
     current_holder: Option<AdvPriority>,
     waiting: [bool; PRIORITY_COUNT],
@@ -102,10 +111,7 @@ impl AdvScheduler {
             for p in 0..PRIORITY_COUNT {
                 if st.waiting[p] {
                     st.waiting[p] = false;
-                    st.current_holder = Some(match p {
-                        0 => AdvPriority::MainAdv,
-                        _ => AdvPriority::FindMyAdv,
-                    });
+                    st.current_holder = Some(AdvPriority::from_index(p));
                     self.grant_signals[p].signal(());
                     return;
                 }

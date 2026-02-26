@@ -90,7 +90,7 @@ pub async fn usb_msc_task(usbd: Peri<'static, peripherals::USBD>, vbus: &'static
     let mut scsi = None;
     let mut usb_dev = None;
 
-    let mut vbus = vbus;
+    let mut vbus = vbus; // mut required: wait_power_ready() takes &mut self
     let mut state = MscState::new();
 
     loop {
