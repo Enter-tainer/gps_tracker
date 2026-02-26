@@ -291,6 +291,15 @@ pub async fn read_fmdn_eik() -> Option<[u8; FMDN_EIK_SIZE]> {
     logger.read_fmdn_eik()
 }
 
+/// Write FMDN EIK to SD card (`/FMDN.EIK`).
+pub async fn write_fmdn_eik(data: &[u8; FMDN_EIK_SIZE]) -> bool {
+    let mut logger = SD_LOGGER.lock().await;
+    let Some(logger) = logger.as_mut() else {
+        return false;
+    };
+    logger.write_fmdn_eik(data)
+}
+
 fn create_logger(
     mut spi: Spim<'static>,
     mut cs: Output<'static>,
@@ -886,6 +895,24 @@ impl SdLogger {
         } else {
             None
         }
+    }
+
+    fn write_fmdn_eik(&mut self, data: &[u8; FMDN_EIK_SIZE]) -> bool {
+        let _ = self
+            .volume_mgr
+            .delete_file_in_dir(self.root_dir, "FMDN.EIK");
+        let file = match self.volume_mgr.open_file_in_dir(
+            self.root_dir,
+            "FMDN.EIK",
+            Mode::ReadWriteCreateOrTruncate,
+        ) {
+            Ok(f) => f,
+            Err(_) => return false,
+        };
+        let ok = self.volume_mgr.write(file, data).is_ok();
+        let flush_ok = ok && self.volume_mgr.flush_file(file).is_ok();
+        let _ = self.volume_mgr.close_file(file);
+        flush_ok
     }
 
     fn write_findmy_keys(&mut self, data: &[u8; FINDMY_KEY_SIZE]) -> bool {

@@ -130,6 +130,7 @@ type Display = Ssd1306<I2CInterface<SharedI2c>, DisplaySize128x64, BufferedGraph
 enum DisplayPage {
     Main,
     FindMy,
+    GoogleFmdn,
 }
 
 #[derive(Clone, Copy)]
@@ -344,6 +345,23 @@ async fn handle_command(
                     *last_activity = Instant::now();
                 }
                 DisplayPage::FindMy => {
+                    *current_page = DisplayPage::GoogleFmdn;
+                    let mut info = *SYSTEM_INFO.lock().await;
+                    info.keep_alive_remaining_s = gps::get_keep_alive_remaining_s().await;
+                    render_current_page(
+                        display,
+                        text_style,
+                        text_settings,
+                        &info,
+                        tz_cache,
+                        *current_page,
+                        *findmy_addr,
+                        findmy_time_anchor,
+                    )
+                    .await;
+                    *last_activity = Instant::now();
+                }
+                DisplayPage::GoogleFmdn => {
                     *current_page = DisplayPage::Main;
                     turn_display_off(display, display_on);
                 }
@@ -471,6 +489,9 @@ async fn render_current_page(
         DisplayPage::FindMy => {
             let findmy_time = resolve_findmy_display_time(info, findmy_time_anchor);
             render_findmy_page(display, text_style, text_settings, info, findmy_addr, findmy_time)
+        }
+        DisplayPage::GoogleFmdn => {
+            render_fmdn_page(display, text_style, text_settings, info)
         }
     }
 }
@@ -677,6 +698,138 @@ fn render_findmy_page(
     );
 
     let _ = display.flush();
+}
+
+fn render_fmdn_page(
+    display: &mut Display,
+    text_style: &MonoTextStyle<'_, BinaryColor>,
+    text_settings: embedded_graphics::text::TextStyle,
+    info: &SystemInfo,
+) {
+    let _ = display.clear(BinaryColor::Off);
+
+    // Battery on right side of line 0 (consistent with other pages).
+    let mut battery = String::<16>::new();
+    if info.battery_voltage >= 0.0 {
+        let percent = estimate_battery_level(info.battery_voltage * 1000.0);
+        let _ = write!(battery, "{:.0}%", percent);
+    } else {
+        battery.push_str("N/A").ok();
+    }
+    let battery_width = text_width(text_style, &battery);
+    let battery_x = SCREEN_WIDTH - 1 - battery_width;
+    Text::with_text_style(&battery, Point::new(battery_x, 0), *text_style, text_settings)
+        .draw(display)
+        .ok();
+
+    let status = fmdn_status_text();
+    draw_line(display, text_style, text_settings, 0, "FMDN:", status);
+
+    let diag = fmdn_diag_text();
+    draw_line(display, text_style, text_settings, 1, "Diag:", diag);
+
+    let rotation = fmdn_rotation_text(info);
+    draw_line(display, text_style, text_settings, 2, "EID: ", rotation);
+
+    let mut gps_state = String::<32>::new();
+    gps_state.push_str(gps_state_label(info.gps_state)).ok();
+    draw_line(display, text_style, text_settings, 3, "GPS: ", gps_state);
+
+    let date_text = format_date(info);
+    draw_line(display, text_style, text_settings, 4, "Date: ", date_text);
+
+    let time_text = if info.date_time_valid {
+        format_time(info)
+    } else {
+        let mut na = String::<32>::new();
+        na.push_str("N/A").ok();
+        na
+    };
+    draw_line(display, text_style, text_settings, 5, "Time: ", time_text);
+
+    let _ = display.flush();
+}
+
+#[cfg(feature = "google-fmdn")]
+fn fmdn_status_text() -> String<32> {
+    let mut out = String::<32>::new();
+    if crate::google_fmdn::is_enabled() {
+        out.push_str("Enabled").ok();
+    } else {
+        out.push_str("Disabled").ok();
+    }
+    out
+}
+
+#[cfg(not(feature = "google-fmdn"))]
+fn fmdn_status_text() -> String<32> {
+    let mut out = String::<32>::new();
+    out.push_str("Disabled").ok();
+    out
+}
+
+#[cfg(feature = "google-fmdn")]
+fn fmdn_diag_text() -> String<32> {
+    let mut out = String::<32>::new();
+    match crate::google_fmdn::diag_state() {
+        crate::google_fmdn::FmdnDiagState::Disabled => {
+            out.push_str("Disabled").ok();
+        }
+        crate::google_fmdn::FmdnDiagState::WaitingGpsTime => {
+            out.push_str("Wait GPS time").ok();
+        }
+        crate::google_fmdn::FmdnDiagState::WaitingBleIdle => {
+            out.push_str("Wait BLE idle").ok();
+        }
+        crate::google_fmdn::FmdnDiagState::EidReady => {
+            out.push_str("EID ready").ok();
+        }
+        crate::google_fmdn::FmdnDiagState::Advertising => {
+            out.push_str("Broadcasting").ok();
+        }
+        crate::google_fmdn::FmdnDiagState::SetAddrFailed => {
+            out.push_str("Set addr fail").ok();
+        }
+        crate::google_fmdn::FmdnDiagState::AdvConfigureFailed => {
+            out.push_str("Adv cfg fail").ok();
+        }
+        crate::google_fmdn::FmdnDiagState::AdvStartFailed => {
+            out.push_str("Adv start fail").ok();
+        }
+    }
+    out
+}
+
+#[cfg(not(feature = "google-fmdn"))]
+fn fmdn_diag_text() -> String<32> {
+    let mut out = String::<32>::new();
+    out.push_str("N/A").ok();
+    out
+}
+
+#[cfg(feature = "google-fmdn")]
+fn fmdn_rotation_text(info: &SystemInfo) -> String<32> {
+    let mut out = String::<32>::new();
+    if !crate::google_fmdn::is_enabled() {
+        out.push_str("N/A").ok();
+        return out;
+    }
+    if let Some(unix_ts) = info_unix_ts(info) {
+        // EID rotation every 1024 seconds.
+        let period = 1024u64;
+        let remaining = period - (unix_ts % period);
+        let _ = write!(out, "rot {}s", remaining);
+    } else {
+        out.push_str("no time").ok();
+    }
+    out
+}
+
+#[cfg(not(feature = "google-fmdn"))]
+fn fmdn_rotation_text(_info: &SystemInfo) -> String<32> {
+    let mut out = String::<32>::new();
+    out.push_str("N/A").ok();
+    out
 }
 
 fn render_usb_mode(
