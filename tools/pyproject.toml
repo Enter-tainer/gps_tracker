@@ -1,0 +1,30 @@
+[project]
+name = "gps-tracker-tools"
+version = "0.1.0"
+description = "CLI tools for gps_tracker: Apple Find My, Google FMDN, CASIC protocol, GPS format, UF2 build"
+requires-python = ">=3.11"
+dependencies = [
+    "cryptography>=42.0",
+    "requests>=2.31",
+]
+
+[project.optional-dependencies]
+google = [
+    "gpsoauth>=1.1.1",
+    "selenium>=4.15",
+    "undetected-chromedriver>=3.5",
+    "httpx[http2]>=0.27",
+    "protobuf>=5.28",
+    "pycryptodomex>=3.20",
+    "ecdsa>=0.19",
+]
+
+[project.scripts]
+gt = "gps_tracker_tools.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/gps_tracker_tools"]
