@@ -297,8 +297,9 @@ async fn main(spawner: Spawner) {
         ppi_ch27, ppi_ch28, ppi_ch29,
     );
     let mut sdc_rng = rng::Rng::new(rng_periph, Irqs);
-    static SDC_MEM: StaticCell<nrf_sdc::Mem<6000>> = StaticCell::new();
+    static SDC_MEM: StaticCell<nrf_sdc::Mem<14000>> = StaticCell::new();
     let sdc_mem = SDC_MEM.init(nrf_sdc::Mem::new());
+    defmt::info!("SDC: building (ext_adv only, no legacy adv)");
     let sdc = nrf_sdc::Builder::new().unwrap();
     // Only ext_adv — covers both legacy and extended HCI commands.
     // Do NOT call support_adv() together with support_ext_adv() (Nordic docs: either/or).
@@ -308,6 +309,7 @@ async fn main(spawner: Spawner) {
     let sdc = sdc.adv_count(2).unwrap();
     let sdc = sdc.buffer_cfg(247, 247, 3, 3).unwrap();
     let sdc = sdc.build(sdc_p, &mut sdc_rng, mpsl, sdc_mem).unwrap();
+    defmt::info!("SDC: build OK");
 
     // USB detection via PAC (replaces init_usb_power_events + SocEvent)
     let vbus = usb_msc::init_vbus();
@@ -335,6 +337,7 @@ async fn main(spawner: Spawner) {
     }
 
     // Build trouble-host BLE stack
+    defmt::info!("trouble-host: building stack");
     let address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
     // HostResources<PacketPool, CONNS, CHANNELS, ADV_SETS>
     static HOST_RESOURCES: StaticCell<HostResources<DefaultPacketPool, 1, 0, 2>> = StaticCell::new();
@@ -345,6 +348,7 @@ async fn main(spawner: Spawner) {
         mut runner,
         ..
     } = stack.build();
+    defmt::info!("trouble-host: stack built OK");
 
     let server = if usb_only {
         None
@@ -357,9 +361,11 @@ async fn main(spawner: Spawner) {
         ).expect("GATT server init")))
     };
 
+    defmt::info!("GATT server init OK, enabling LED + V3.3");
     // LED is on P0.15 per promicro_diy variant.
     let _led = Output::new(led, Level::Low, OutputDrive::Standard);
     let _v3v3_en = Output::new(v3v3_en, Level::High, OutputDrive::Standard);
+    defmt::info!("V3.3 enabled, starting peripherals");
 
     // Phase 2 bring-up: create core drivers.
     #[cfg(feature = "i2c-spi")]
@@ -471,6 +477,7 @@ async fn main(spawner: Spawner) {
     #[cfg(not(feature = "i2c-spi"))]
     drop((spi3, spi_sck, spi_miso, spi_mosi, spi_cs, twispi0, i2c_sda, i2c_scl));
 
+    defmt::info!("All tasks spawned, entering BLE join loop");
     // Run BLE host runner and unified BLE task concurrently.
     // peripheral has a non-'static lifetime tied to host_resources,
     // so we run it inline rather than spawning a task.
