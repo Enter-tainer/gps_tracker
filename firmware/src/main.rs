@@ -297,10 +297,11 @@ async fn main(spawner: Spawner) {
         ppi_ch27, ppi_ch28, ppi_ch29,
     );
     let mut sdc_rng = rng::Rng::new(rng_periph, Irqs);
-    static SDC_MEM: StaticCell<nrf_sdc::Mem<14000>> = StaticCell::new();
+    static SDC_MEM: StaticCell<nrf_sdc::Mem<6000>> = StaticCell::new();
     let sdc_mem = SDC_MEM.init(nrf_sdc::Mem::new());
     let sdc = nrf_sdc::Builder::new().unwrap();
-    let sdc = sdc.support_adv();
+    // Only ext_adv — covers both legacy and extended HCI commands.
+    // Do NOT call support_adv() together with support_ext_adv() (Nordic docs: either/or).
     let sdc = sdc.support_ext_adv();
     let sdc = sdc.support_peripheral();
     let sdc = sdc.peripheral_count(1).unwrap();

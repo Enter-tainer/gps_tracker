@@ -49,9 +49,11 @@ pub async fn ble_unified_task(
     peripheral: &mut Peripheral<'_, SoftdeviceController<'_>, DefaultPacketPool>,
     server: &Server<'_>,
 ) {
+    defmt::info!("ble_unified_task: started");
     let mut pending_timeout = Some(ADV_TIMEOUT_BOOT);
 
     loop {
+        defmt::info!("ble_unified_task: loop iteration, pending_timeout={}", pending_timeout.is_some());
         let timeout = match pending_timeout.take() {
             Some(t) => t,
             None => {
@@ -99,6 +101,8 @@ pub async fn ble_unified_task(
         let findmy_enabled = findmy_data.is_some();
         #[cfg(not(feature = "findmy"))]
         let findmy_enabled = false;
+
+        defmt::info!("ble_unified_task: findmy_enabled={}, adv_len={}", findmy_enabled, adv_len);
 
         if findmy_enabled {
             #[cfg(feature = "findmy")]
@@ -188,8 +192,12 @@ pub async fn ble_unified_task(
             }];
             let mut handles = AdvertisementSet::handles(&sets);
 
+            defmt::info!("ble_unified_task: starting single-set advertise_ext (connectable scannable)");
             let advertiser = match peripheral.advertise_ext(&sets, &mut handles).await {
-                Ok(adv) => adv,
+                Ok(adv) => {
+                    defmt::info!("ble_unified_task: advertise_ext started OK, waiting for connection");
+                    adv
+                }
                 Err(err) => {
                     defmt::warn!("BLE advertise error: {:?}", err);
                     embassy_time::Timer::after_millis(500).await;
