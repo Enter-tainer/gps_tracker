@@ -8,7 +8,6 @@ dependencies = [
     "requests>=2.31",
     "gpsoauth>=1.1.1",
     "selenium>=4.15",
-    "undetected-chromedriver>=3.5",
     "httpx[http2]>=0.27",
     "protobuf>=5.28",
     "pycryptodomex>=3.20",

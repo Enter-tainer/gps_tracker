@@ -96,32 +96,11 @@ def _request_oauth_token() -> str:
         file=sys.stderr,
     )
 
-    uc_import_error = None
-    driver = None
-
-    # Prefer undetected-chromedriver when it imports correctly. On Python
-    # 3.12+, some versions fail because they import stdlib distutils.
-    try:
-        import undetected_chromedriver as uc
-
-        options = uc.ChromeOptions()
-        options.add_argument("--no-first-run")
-        options.add_argument("--no-default-browser-check")
-        driver = uc.Chrome(options=options)
-    except Exception as exc:
-        uc_import_error = exc
-
-    if driver is None:
-        if uc_import_error is not None:
-            print(
-                "undetected-chromedriver unavailable; using Selenium fallback.",
-                file=sys.stderr,
-            )
-        options = ChromeOptions()
-        options.add_argument("--no-first-run")
-        options.add_argument("--no-default-browser-check")
-        options.add_argument("--disable-blink-features=AutomationControlled")
-        driver = webdriver.Chrome(options=options)
+    options = ChromeOptions()
+    options.add_argument("--no-first-run")
+    options.add_argument("--no-default-browser-check")
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    driver = webdriver.Chrome(options=options)
 
     try:
         driver.get("https://accounts.google.com/EmbeddedSetup")

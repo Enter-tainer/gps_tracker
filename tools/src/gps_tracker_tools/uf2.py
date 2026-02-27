@@ -11,7 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[4]  # tools/src/gps_tracker_tools/ -> repo root
+ROOT = Path(__file__).resolve().parents[3]  # uf2.py -> gps_tracker_tools -> src -> tools -> repo root
 FIRMWARE_DIR = ROOT / "firmware"
 TARGET = "thumbv7em-none-eabihf"
 PROFILE = "release"
