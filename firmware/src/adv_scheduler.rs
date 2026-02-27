@@ -83,8 +83,10 @@ impl AdvScheduler {
                         // Already granted to us by release(). Claim it.
                         false
                     }
-                    Some(holder) if priority < holder => {
-                        // Higher priority: preempt current holder.
+                    Some(holder) if priority == AdvPriority::MainAdv => {
+                        // Only MainAdv may preempt background advertisers.
+                        // Background tasks (FindMy / FMDN) must not preempt
+                        // each other; they rely on voluntary 5-second yielding.
                         self.preempt_signals[holder as usize].signal(());
                         st.waiting[priority as usize] = true;
                         true
