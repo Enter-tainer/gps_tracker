@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Owner-side companion for gps_tracker's Google FMDN module.
 
@@ -11,14 +10,7 @@ Subcommands:
     generate  - Generate a random 32-byte EIK
     keys      - Derive and display EID sequence for recent/future time windows
     key-ids   - Precompute truncated key IDs for Spot API upload
-
-Dependencies:
-    pip install cryptography
-
-Note: Device registration and location report fetching require integration
-with GoogleFindMyTools (https://github.com/leonboe1/GoogleFindMyTools) and
-Google OAuth authentication via the Spot gRPC API. These advanced operations
-are not yet implemented in this standalone tool.
+    fetch     - Fetch and decrypt location reports from Google
 """
 
 import argparse
@@ -48,6 +40,7 @@ EIK_SIZE = 32
 # SECP160R1 arithmetic (matches firmware secp160r1.rs)
 # ---------------------------------------------------------------------------
 
+
 def modinv(a: int, m: int) -> int:
     """Modular inverse via extended Euclidean algorithm."""
     if a < 0:
@@ -65,7 +58,9 @@ def _extended_gcd(a: int, b: int):
     return g, y - (b // a) * x, x
 
 
-def point_add(x1: int, y1: int, x2: int, y2: int) -> tuple[int, int]:
+def point_add(
+    x1: int, y1: int, x2: int, y2: int
+) -> tuple[int, int]:
     """Add two points on SECP160R1."""
     p = SECP160R1_P
     if x1 == 0 and y1 == 0:
@@ -104,7 +99,10 @@ def scalar_mul(k: int, x: int, y: int) -> tuple[int, int]:
 # EID computation (matches firmware compute_eid)
 # ---------------------------------------------------------------------------
 
-def compute_eid(eik: bytes, unix_ts: int, battery_flags: int = 0x20) -> dict:
+
+def compute_eid(
+    eik: bytes, unix_ts: int, battery_flags: int = 0x20
+) -> dict:
     """Compute EID for a given timestamp.
 
     Returns dict with: eid (20 bytes), hashed_flags, masked_ts, scalar_r.
@@ -155,6 +153,7 @@ def compute_eid(eik: bytes, unix_ts: int, battery_flags: int = 0x20) -> dict:
 # Key hierarchy (matches research doc section 4)
 # ---------------------------------------------------------------------------
 
+
 def derive_recovery_key(eik: bytes) -> bytes:
     return hashlib.sha256(eik + b"\x01").digest()[:8]
 
@@ -167,9 +166,46 @@ def derive_tracking_key(eik: bytes) -> bytes:
     return hashlib.sha256(eik + b"\x03").digest()[:8]
 
 
+def _sqrt_mod(a: int, p: int) -> int | None:
+    """Modular square root using Tonelli-Shanks (for p ≡ 3 mod 4, use shortcut)."""
+    if a == 0:
+        return 0
+    if pow(a, (p - 1) // 2, p) != 1:
+        return None
+    if p % 4 == 3:
+        return pow(a, (p + 1) // 4, p)
+    # General Tonelli-Shanks
+    q = p - 1
+    s = 0
+    while q % 2 == 0:
+        q //= 2
+        s += 1
+    z = 2
+    while pow(z, (p - 1) // 2, p) != p - 1:
+        z += 1
+    m = s
+    c = pow(z, q, p)
+    t = pow(a, q, p)
+    r = pow(a, (q + 1) // 2, p)
+    while True:
+        if t == 1:
+            return r
+        i = 0
+        tmp = t
+        while tmp != 1:
+            tmp = pow(tmp, 2, p)
+            i += 1
+        b = pow(c, 1 << (m - i - 1), p)
+        m = i
+        c = pow(b, 2, p)
+        t = (t * c) % p
+        r = (r * b) % p
+
+
 # ---------------------------------------------------------------------------
 # Subcommands
 # ---------------------------------------------------------------------------
+
 
 def cmd_generate(args):
     """Generate a random EIK."""
@@ -177,7 +213,9 @@ def cmd_generate(args):
 
     result = {
         "eik": eik.hex(),
-        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "generated_at": time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+        ),
         "recovery_key": derive_recovery_key(eik).hex(),
         "ring_key": derive_ring_key(eik).hex(),
         "tracking_key": derive_tracking_key(eik).hex(),
@@ -208,7 +246,10 @@ def cmd_keys(args):
     print(f"Time range: {hours}h back + 1h forward")
     print(f"Rotation period: {EID_ROTATION_SECS}s")
     print()
-    print(f"{'Counter':>8}  {'Timestamp':>10}  {'UTC Time':23}  {'EID (hex)':40}  {'HF':>4}")
+    print(
+        f"{'Counter':>8}  {'Timestamp':>10}  {'UTC Time':23}  "
+        f"{'EID (hex)':40}  {'HF':>4}"
+    )
     print("-" * 95)
 
     ts = start_ts
@@ -218,7 +259,9 @@ def cmd_keys(args):
         utc = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(ts))
         marker = " <-- now" if abs(ts - now) < EID_ROTATION_SECS else ""
         print(
-            f"{counter:>8}  {ts:>10}  {utc}  {result['eid'].hex()}  0x{result['hashed_flags']:02x}{marker}"
+            f"{counter:>8}  {ts:>10}  {utc}  "
+            f"{result['eid'].hex()}  0x{result['hashed_flags']:02x}"
+            f"{marker}"
         )
         ts += EID_ROTATION_SECS
         counter += 1
@@ -240,17 +283,25 @@ def cmd_key_ids(args):
         result = compute_eid(eik, ts)
         # Truncated key ID = first 10 bytes of EID
         truncated = result["eid"][:10]
-        key_ids.append({
-            "timestamp": ts,
-            "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts)),
-            "key_id": truncated.hex(),
-        })
+        key_ids.append(
+            {
+                "timestamp": ts,
+                "utc": time.strftime(
+                    "%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts)
+                ),
+                "key_id": truncated.hex(),
+            }
+        )
         ts += EID_ROTATION_SECS
 
     output = {
         "eik": eik.hex(),
-        "start": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(start_ts)),
-        "end": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(end_ts)),
+        "start": time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ", time.gmtime(start_ts)
+        ),
+        "end": time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ", time.gmtime(end_ts)
+        ),
         "count": len(key_ids),
         "key_ids": key_ids,
     }
@@ -260,14 +311,59 @@ def cmd_key_ids(args):
     if args.output:
         with open(args.output, "w") as f:
             f.write(json_str + "\n")
-        print(f"Wrote {len(key_ids)} key IDs to {args.output}", file=sys.stderr)
+        print(
+            f"Wrote {len(key_ids)} key IDs to {args.output}",
+            file=sys.stderr,
+        )
     else:
         print(json_str)
+
+
+def cmd_fetch(args):
+    """Fetch and decrypt FMDN location reports from Google."""
+    from gps_tracker_tools.fmdn_fetch import fetch_fmdn_reports
+
+    eik = load_eik(args.keys)
+    results = fetch_fmdn_reports(
+        eik=eik,
+        hours=args.hours,
+        token_cache=args.token_cache,
+    )
+
+    if not results:
+        print("No location reports found.", file=sys.stderr)
+        return
+
+    results.sort(key=lambda r: r["timestamp"])
+
+    print(f"\n{len(results)} locations decoded:\n")
+    for r in results:
+        print(
+            f"  {r['datetime']}  "
+            f"({r['lat']:.6f}, {r['lon']:.6f})  "
+            f"accuracy={r.get('accuracy', '?')}"
+        )
+        print(
+            f"    https://maps.google.com/maps?q={r['lat']},{r['lon']}"
+        )
+
+    if args.output:
+        with open(args.output, "w") as f:
+            json.dump(results, f, indent=2)
+        print(f"\nResults saved to {args.output}")
+
+    if args.gpx:
+        from gps_tracker_tools.gpx import write_gpx
+
+        write_gpx(results, args.gpx)
+
+    return results
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def load_eik(path: str) -> bytes:
     """Load EIK from a JSON file."""
@@ -276,20 +372,99 @@ def load_eik(path: str) -> bytes:
 
     eik_hex = data.get("eik")
     if not eik_hex or not isinstance(eik_hex, str):
-        print("Error: JSON must contain an 'eik' field (hex string).", file=sys.stderr)
+        print(
+            "Error: JSON must contain an 'eik' field (hex string).",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     eik = bytes.fromhex(eik_hex)
     if len(eik) != EIK_SIZE:
-        print(f"Error: EIK must be {EIK_SIZE} bytes, got {len(eik)}.", file=sys.stderr)
+        print(
+            f"Error: EIK must be {EIK_SIZE} bytes, got {len(eik)}.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     return eik
 
 
 # ---------------------------------------------------------------------------
-# CLI
+# CLI setup
 # ---------------------------------------------------------------------------
+
+
+def add_subcommands(subparsers) -> None:
+    """Register fmdn subcommands on the given subparsers object."""
+    # generate
+    gen = subparsers.add_parser("generate", help="Generate a random EIK")
+    gen.add_argument("-o", "--output", help="Save JSON to file")
+    gen.set_defaults(func=cmd_generate)
+
+    # keys
+    keys = subparsers.add_parser(
+        "keys", help="Derive and display EID sequence"
+    )
+    keys.add_argument(
+        "-k", "--keys", required=True, help="EIK JSON file"
+    )
+    keys.add_argument(
+        "-H",
+        "--hours",
+        type=int,
+        default=24,
+        help="Hours back (default: 24)",
+    )
+    keys.set_defaults(func=cmd_keys)
+
+    # key-ids
+    kid = subparsers.add_parser(
+        "key-ids",
+        help="Precompute truncated key IDs for API upload",
+    )
+    kid.add_argument(
+        "-k", "--keys", required=True, help="EIK JSON file"
+    )
+    kid.add_argument(
+        "-H",
+        "--hours",
+        type=int,
+        default=96,
+        help="Hours forward (default: 96)",
+    )
+    kid.add_argument("-o", "--output", help="Save JSON to file")
+    kid.set_defaults(func=cmd_key_ids)
+
+    # fetch
+    fetch = subparsers.add_parser(
+        "fetch",
+        help="Fetch and decrypt location reports from Google",
+    )
+    fetch.add_argument(
+        "-k", "--keys", required=True, help="EIK JSON file"
+    )
+    fetch.add_argument(
+        "-H",
+        "--hours",
+        type=int,
+        default=24,
+        help="Hours to look back (default: 24)",
+    )
+    from gps_tracker_tools.fmdn_fetch import DEFAULT_TOKEN_CACHE
+
+    fetch.add_argument(
+        "--token-cache",
+        default=DEFAULT_TOKEN_CACHE,
+        help=f"Path to token cache file (default: {DEFAULT_TOKEN_CACHE})",
+    )
+    fetch.add_argument(
+        "-o", "--output", help="Save results to JSON file"
+    )
+    fetch.add_argument(
+        "--gpx", help="Also export results as GPX file"
+    )
+    fetch.set_defaults(func=cmd_fetch)
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -297,40 +472,22 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""Examples:
   # Generate EIK and save to file
-  python fmdn_companion.py generate -o eik.json
+  gt fmdn generate -o eik.json
 
   # Show EID sequence for last 24 hours
-  python fmdn_companion.py keys -k eik.json -H 24
+  gt fmdn keys -k eik.json -H 24
 
   # Precompute key IDs for Spot API upload (96 hours)
-  python fmdn_companion.py key-ids -k eik.json -H 96 -o key_ids.json
+  gt fmdn key-ids -k eik.json -H 96 -o key_ids.json
+
+  # Fetch location reports from Google
+  gt fmdn fetch -k eik.json -H 24 --gpx track.gpx -o results.json
 """,
     )
     sub = parser.add_subparsers(dest="command", required=True)
-
-    # generate
-    gen = sub.add_parser("generate", help="Generate a random EIK")
-    gen.add_argument("-o", "--output", help="Save JSON to file")
-
-    # keys
-    keys = sub.add_parser("keys", help="Derive and display EID sequence")
-    keys.add_argument("-k", "--keys", required=True, help="EIK JSON file")
-    keys.add_argument("-H", "--hours", type=int, default=24, help="Hours back (default: 24)")
-
-    # key-ids
-    kid = sub.add_parser("key-ids", help="Precompute truncated key IDs for API upload")
-    kid.add_argument("-k", "--keys", required=True, help="EIK JSON file")
-    kid.add_argument("-H", "--hours", type=int, default=96, help="Hours forward (default: 96)")
-    kid.add_argument("-o", "--output", help="Save JSON to file")
-
+    add_subcommands(sub)
     args = parser.parse_args()
-
-    if args.command == "generate":
-        cmd_generate(args)
-    elif args.command == "keys":
-        cmd_keys(args)
-    elif args.command == "key-ids":
-        cmd_key_ids(args)
+    args.func(args)
 
 
 if __name__ == "__main__":

@@ -7,13 +7,13 @@ on:
       - main
     paths:
       - "firmware/**"
-      - "tools/build_uf2.py"
+      - "tools/src/gps_tracker_tools/uf2.py"
       - "uf2conv.py"
       - ".github/workflows/build-firmware-uf2.yml"
   pull_request:
     paths:
       - "firmware/**"
-      - "tools/build_uf2.py"
+      - "tools/src/gps_tracker_tools/uf2.py"
       - "uf2conv.py"
       - ".github/workflows/build-firmware-uf2.yml"
   workflow_dispatch:
@@ -94,8 +94,11 @@ jobs:
 
           echo "SoftDevice downloaded: ${output} ($(wc -c < "${output}") bytes)"
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
       - name: Build combined UF2
-        run: python3 tools/build_uf2.py
+        run: cd tools && uv run gt uf2 build
 
       - name: Show artifacts
         run: |

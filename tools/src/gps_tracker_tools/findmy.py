@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Owner-side companion for gps_tracker's Find My module.
 
@@ -12,9 +11,6 @@ Subcommands:
     keys      - Derive and display rolling public keys (no auth needed)
     fetch     - Derive keys + query Apple API + decrypt location reports
     gpx       - Convert a previously saved JSON report file to GPX
-
-Dependencies:
-    pip install cryptography requests
 
 For 'fetch' mode, you also need:
     1. auth.json with Apple ID credentials (dsid + searchPartyToken)
@@ -33,12 +29,19 @@ import struct
 import sys
 import time
 
+DEFAULT_AUTH_PATH = "~/.config/gps-tracker/auth.json"
+DEFAULT_ANISETTE_URL = "http://localhost:6969"
+
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
+from gps_tracker_tools.gpx import dedupe_reports, reports_to_gpx, write_gpx
+
 # P-224 curve order
-P224_ORDER = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFF16A2E0B8F03E13DD29455C5C2A3D
+P224_ORDER = (
+    0xFFFFFFFFFFFFFFFFFFFFFFFFFFFF16A2E0B8F03E13DD29455C5C2A3D
+)
 
 # Key rotation interval (must match firmware KEY_ROTATION_SECS)
 KEY_ROTATION_SECS = 900  # 15 minutes
@@ -55,7 +58,9 @@ FETCH_BATCH_SIZE = 10
 # ---------------------------------------------------------------------------
 
 
-def kdf_x963(input_data: bytes, shared_info: bytes, output_len: int) -> bytes:
+def kdf_x963(
+    input_data: bytes, shared_info: bytes, output_len: int
+) -> bytes:
     """ANSI X9.63 Key Derivation Function using SHA-256.
 
     output = SHA256(input || counter_be32 || shared_info), iterated.
@@ -205,7 +210,9 @@ def fetch_reports(
     )
 
     if r.status_code != 200:
-        print(f"Error: Apple API returned {r.status_code}", file=sys.stderr)
+        print(
+            f"Error: Apple API returned {r.status_code}", file=sys.stderr
+        )
         print(r.text[:500], file=sys.stderr)
         return []
 
@@ -223,7 +230,9 @@ def fetch_reports_batched(
     reports = []
     for i in range(0, len(key_hashes), FETCH_BATCH_SIZE):
         batch = key_hashes[i : i + FETCH_BATCH_SIZE]
-        reports.extend(fetch_reports(dsid, token, batch, hours, anisette_url))
+        reports.extend(
+            fetch_reports(dsid, token, batch, hours, anisette_url)
+        )
         if i + FETCH_BATCH_SIZE < len(key_hashes):
             time.sleep(1)
     return reports
@@ -271,7 +280,9 @@ def decrypt_report(
 
     # AES-GCM decrypt
     try:
-        cipher = Cipher(algorithms.AES(decryption_key), modes.GCM(iv, tag))
+        cipher = Cipher(
+            algorithms.AES(decryption_key), modes.GCM(iv, tag)
+        )
         decryptor = cipher.decryptor()
         plaintext = decryptor.update(enc_data) + decryptor.finalize()
     except Exception:
@@ -292,88 +303,6 @@ def decrypt_report(
             timestamp, tz=datetime.timezone.utc
         ).isoformat(),
     }
-
-
-# ---------------------------------------------------------------------------
-# GPX export
-# ---------------------------------------------------------------------------
-
-
-def dedupe_reports(reports: list[dict], radius_m: float = 50.0) -> list[dict]:
-    """Dedupe reports: within each counter, merge points closer than `radius_m`.
-
-    For each cluster of nearby points, keep the one with the highest confidence.
-    Different locations within the same counter are preserved.
-    """
-    import math
-
-    def haversine_m(lat1, lon1, lat2, lon2):
-        R = 6371000
-        dlat = math.radians(lat2 - lat1)
-        dlon = math.radians(lon2 - lon1)
-        a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2
-        return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-
-    # Group by counter
-    by_counter: dict[int, list[dict]] = {}
-    for r in reports:
-        by_counter.setdefault(r["counter"], []).append(r)
-
-    result = []
-    for _counter, group in sorted(by_counter.items()):
-        # Greedy clustering within each counter window
-        clusters: list[list[dict]] = []
-        for r in sorted(group, key=lambda x: -x["confidence"]):
-            merged = False
-            for cluster in clusters:
-                ref = cluster[0]
-                if haversine_m(ref["lat"], ref["lon"], r["lat"], r["lon"]) < radius_m:
-                    cluster.append(r)
-                    merged = True
-                    break
-            if not merged:
-                clusters.append([r])
-        # Take best-confidence point from each cluster
-        for cluster in clusters:
-            result.append(max(cluster, key=lambda r: r["confidence"]))
-
-    return sorted(result, key=lambda r: r["timestamp"])
-
-
-def reports_to_gpx(reports: list[dict], name: str = "Find My Track") -> str:
-    """Convert location reports to GPX XML string."""
-    lines = [
-        '<?xml version="1.0" encoding="UTF-8"?>',
-        '<gpx version="1.1" creator="findmy_query"',
-        '     xmlns="http://www.topografix.com/GPX/1/1">',
-        f"  <metadata><name>{name}</name></metadata>",
-        "  <trk>",
-        f"    <name>{name}</name>",
-        "    <trkseg>",
-    ]
-    for r in reports:
-        ts = datetime.datetime.fromtimestamp(r["timestamp"], tz=datetime.timezone.utc)
-        lines.append(
-            f'      <trkpt lat="{r["lat"]:.7f}" lon="{r["lon"]:.7f}">'
-        )
-        lines.append(f"        <time>{ts.isoformat()}</time>")
-        lines.append(f"        <hdop>{r['confidence']}</hdop>")
-        lines.append("      </trkpt>")
-    lines += ["    </trkseg>", "  </trk>", "</gpx>", ""]
-    return "\n".join(lines)
-
-
-def write_gpx(reports: list[dict], gpx_path: str, dedupe: bool = True) -> None:
-    """Dedupe reports and write GPX file."""
-    if dedupe:
-        original = len(reports)
-        reports = dedupe_reports(reports)
-        if original != len(reports):
-            print(f"Deduped {original} reports -> {len(reports)} points", file=sys.stderr)
-    gpx = reports_to_gpx(reports)
-    with open(gpx_path, "w") as f:
-        f.write(gpx)
-    print(f"GPX written to {gpx_path}", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -427,13 +356,17 @@ def _add_key_args(parser):
     """Add key material arguments to a subparser."""
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument(
-        "-k", "--keyfile", help="JSON file with private_key, symmetric_key, epoch"
+        "-k",
+        "--keyfile",
+        help="JSON file with private_key, symmetric_key, epoch",
     )
     group.add_argument(
-        "--private-key", help="Master private key (56 hex chars, 28 bytes)"
+        "--private-key",
+        help="Master private key (56 hex chars, 28 bytes)",
     )
     parser.add_argument(
-        "--symmetric-key", help="Initial symmetric key SK_0 (64 hex chars, 32 bytes)"
+        "--symmetric-key",
+        help="Initial symmetric key SK_0 (64 hex chars, 32 bytes)",
     )
     parser.add_argument("--epoch", type=int, help="Epoch unix timestamp")
 
@@ -481,7 +414,9 @@ def cmd_keys(args):
     counter_start = counter_at(start, epoch)
     counter_end = counter_at(now, epoch)
 
-    epoch_dt = datetime.datetime.fromtimestamp(epoch, tz=datetime.timezone.utc).isoformat()
+    epoch_dt = datetime.datetime.fromtimestamp(
+        epoch, tz=datetime.timezone.utc
+    ).isoformat()
     print(f"Epoch: {epoch} ({epoch_dt})")
     print(f"Counter range: {counter_start} - {counter_end}")
     print(f"Keys to derive: {counter_end - counter_start + 1}")
@@ -495,14 +430,16 @@ def cmd_keys(args):
         ).strftime("%Y-%m-%d %H:%M UTC")
         h = hashed_adv_key(x_i)
         addr = ble_address_from_key(x_i)
-        print(f"  [{i:4d}] {dt}  addr={addr}  hash={h[:12]}...")
+        print(
+            f"  [{i:4d}] {dt}  addr={addr}  hash={h[:12]}..."
+        )
 
 
 def cmd_fetch(args):
     """Derive keys, fetch reports from Apple, decrypt."""
     priv, sk0, epoch = load_key_material(args)
 
-    auth_path = args.auth or os.path.join(os.path.dirname(__file__), "auth.json")
+    auth_path = os.path.expanduser(args.auth or DEFAULT_AUTH_PATH)
     if not os.path.exists(auth_path):
         print(
             f"Error: auth.json not found at {auth_path}\n"
@@ -523,7 +460,9 @@ def cmd_fetch(args):
     counter_end = counter_at(now, epoch)
     n_keys = counter_end - counter_start + 1
 
-    print(f"Deriving {n_keys} keys (counter {counter_start}-{counter_end})...")
+    print(
+        f"Deriving {n_keys} keys (counter {counter_start}-{counter_end})..."
+    )
 
     # Derive all keys for the time range
     key_map: dict[str, tuple[int, int, bytes]] = {}
@@ -533,8 +472,12 @@ def cmd_fetch(args):
         key_map[h] = (i, d_i, x_i)
 
     all_hashes = list(key_map.keys())
-    n_batches = (len(all_hashes) + FETCH_BATCH_SIZE - 1) // FETCH_BATCH_SIZE
-    print(f"Querying Apple with {len(all_hashes)} key hashes in {n_batches} batches...")
+    n_batches = (
+        len(all_hashes) + FETCH_BATCH_SIZE - 1
+    ) // FETCH_BATCH_SIZE
+    print(
+        f"Querying Apple with {len(all_hashes)} key hashes in {n_batches} batches..."
+    )
 
     reports = fetch_reports_batched(
         dsid, token, all_hashes, args.hours, args.anisette_url
@@ -576,6 +519,8 @@ def cmd_fetch(args):
     if args.gpx:
         write_gpx(results, args.gpx)
 
+    return results
+
 
 def cmd_gpx(args):
     """Convert a JSON report file to GPX."""
@@ -588,7 +533,10 @@ def cmd_gpx(args):
         original = len(reports)
         points = dedupe_reports(reports)
         if original != len(points):
-            print(f"Deduped {original} reports -> {len(points)} points", file=sys.stderr)
+            print(
+                f"Deduped {original} reports -> {len(points)} points",
+                file=sys.stderr,
+            )
 
     gpx = reports_to_gpx(points)
 
@@ -601,8 +549,77 @@ def cmd_gpx(args):
 
 
 # ---------------------------------------------------------------------------
-# Main
+# CLI setup
 # ---------------------------------------------------------------------------
+
+
+def add_subcommands(subparsers) -> None:
+    """Register findmy subcommands on the given subparsers object."""
+    # --- generate ---
+    p_gen = subparsers.add_parser(
+        "generate", help="Generate fresh key material"
+    )
+    p_gen.add_argument("-o", "--output", help="Output JSON file path")
+    p_gen.set_defaults(func=cmd_generate)
+
+    # --- keys ---
+    p_keys = subparsers.add_parser(
+        "keys", help="Derive and display rolling keys"
+    )
+    _add_key_args(p_keys)
+    p_keys.add_argument(
+        "-H",
+        "--hours",
+        type=int,
+        default=24,
+        help="Hours to look back (default: 24)",
+    )
+    p_keys.set_defaults(func=cmd_keys)
+
+    # --- fetch ---
+    p_fetch = subparsers.add_parser(
+        "fetch", help="Fetch and decrypt location reports"
+    )
+    _add_key_args(p_fetch)
+    p_fetch.add_argument(
+        "-H",
+        "--hours",
+        type=int,
+        default=24,
+        help="Hours to look back (default: 24)",
+    )
+    p_fetch.add_argument(
+        "--auth",
+        default=DEFAULT_AUTH_PATH,
+        help=f"Path to auth.json (default: {DEFAULT_AUTH_PATH})",
+    )
+    p_fetch.add_argument(
+        "--anisette-url",
+        default=DEFAULT_ANISETTE_URL,
+        help=f"Anisette v3 server URL (default: {DEFAULT_ANISETTE_URL})",
+    )
+    p_fetch.add_argument(
+        "-o", "--output", help="Save results to JSON file"
+    )
+    p_fetch.add_argument(
+        "--gpx", help="Also export results as GPX file"
+    )
+    p_fetch.set_defaults(func=cmd_fetch)
+
+    # --- gpx ---
+    p_gpx = subparsers.add_parser(
+        "gpx", help="Convert JSON report file to GPX"
+    )
+    p_gpx.add_argument("input", help="Input JSON file from 'fetch -o'")
+    p_gpx.add_argument(
+        "-o", "--output", help="Output GPX file (default: stdout)"
+    )
+    p_gpx.add_argument(
+        "--all",
+        action="store_true",
+        help="Include all reports (don't dedupe by counter)",
+    )
+    p_gpx.set_defaults(func=cmd_gpx)
 
 
 def main():
@@ -610,52 +627,9 @@ def main():
         description="Owner-side Find My companion for gps_tracker"
     )
     sub = parser.add_subparsers(dest="command", required=True)
-
-    # --- generate ---
-    p_gen = sub.add_parser("generate", help="Generate fresh key material")
-    p_gen.add_argument("-o", "--output", help="Output JSON file path")
-
-    # --- keys ---
-    p_keys = sub.add_parser("keys", help="Derive and display rolling keys")
-    _add_key_args(p_keys)
-    p_keys.add_argument(
-        "-H", "--hours", type=int, default=24, help="Hours to look back (default: 24)"
-    )
-
-    # --- fetch ---
-    p_fetch = sub.add_parser("fetch", help="Fetch and decrypt location reports")
-    _add_key_args(p_fetch)
-    p_fetch.add_argument(
-        "-H", "--hours", type=int, default=24, help="Hours to look back (default: 24)"
-    )
-    p_fetch.add_argument("--auth", help="Path to auth.json")
-    p_fetch.add_argument(
-        "--anisette-url",
-        default="http://localhost:6969",
-        help="Anisette v3 server URL (default: http://localhost:6969)",
-    )
-    p_fetch.add_argument("-o", "--output", help="Save results to JSON file")
-    p_fetch.add_argument("--gpx", help="Also export results as GPX file")
-
-    # --- gpx ---
-    p_gpx = sub.add_parser("gpx", help="Convert JSON report file to GPX")
-    p_gpx.add_argument("input", help="Input JSON file from 'fetch -o'")
-    p_gpx.add_argument("-o", "--output", help="Output GPX file (default: stdout)")
-    p_gpx.add_argument(
-        "--all", action="store_true",
-        help="Include all reports (don't dedupe by counter)",
-    )
-
+    add_subcommands(sub)
     args = parser.parse_args()
-
-    if args.command == "generate":
-        cmd_generate(args)
-    elif args.command == "keys":
-        cmd_keys(args)
-    elif args.command == "fetch":
-        cmd_fetch(args)
-    elif args.command == "gpx":
-        cmd_gpx(args)
+    args.func(args)
 
 
 if __name__ == "__main__":

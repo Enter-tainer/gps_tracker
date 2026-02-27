@@ -1,4 +1,9 @@
-#!/usr/bin/env python3
+"""
+UF2 firmware build tool.
+
+Builds firmware, converts to Intel HEX, merges with SoftDevice, and generates UF2.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -6,7 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]  # uf2.py -> gps_tracker_tools -> src -> tools -> repo root
 FIRMWARE_DIR = ROOT / "firmware"
 TARGET = "thumbv7em-none-eabihf"
 PROFILE = "release"
@@ -65,14 +70,29 @@ def objcopy_to_hex(elf: Path, out_hex: Path) -> None:
         pass
 
     try:
-        run(["llvm-objcopy", "-O", "ihex", str(elf), str(out_hex)], cwd=FIRMWARE_DIR)
+        run(
+            [
+                "llvm-objcopy",
+                "-O",
+                "ihex",
+                str(elf),
+                str(out_hex),
+            ],
+            cwd=FIRMWARE_DIR,
+        )
         return
     except (subprocess.CalledProcessError, FileNotFoundError):
         pass
 
     try:
         run(
-            ["arm-none-eabi-objcopy", "-O", "ihex", str(elf), str(out_hex)],
+            [
+                "arm-none-eabi-objcopy",
+                "-O",
+                "ihex",
+                str(elf),
+                str(out_hex),
+            ],
             cwd=FIRMWARE_DIR,
         )
     except (subprocess.CalledProcessError, FileNotFoundError) as err:
@@ -98,13 +118,21 @@ def parse_ihex(path: Path) -> dict[int, int]:
             addr = int(line[3:7], 16)
             rectype = int(line[7:9], 16)
             data = bytes.fromhex(line[9 : 9 + count * 2])
-            checksum = int(line[9 + count * 2 : 9 + count * 2 + 2], 16)
+            checksum = int(
+                line[9 + count * 2 : 9 + count * 2 + 2], 16
+            )
         except ValueError as err:
-            raise ValueError(f"{path}:{line_no}: invalid hex record") from err
+            raise ValueError(
+                f"{path}:{line_no}: invalid hex record"
+            ) from err
 
-        total = count + (addr >> 8) + (addr & 0xFF) + rectype + sum(data)
+        total = (
+            count + (addr >> 8) + (addr & 0xFF) + rectype + sum(data)
+        )
         if ((-total) & 0xFF) != checksum:
-            raise ValueError(f"{path}:{line_no}: checksum mismatch")
+            raise ValueError(
+                f"{path}:{line_no}: checksum mismatch"
+            )
 
         if rectype == 0x00:
             base = upper + addr
@@ -120,11 +148,15 @@ def parse_ihex(path: Path) -> dict[int, int]:
             break
         elif rectype == 0x04:
             if len(data) != 2:
-                raise ValueError(f"{path}:{line_no}: bad type 04 length")
+                raise ValueError(
+                    f"{path}:{line_no}: bad type 04 length"
+                )
             upper = ((data[0] << 8) | data[1]) << 16
         elif rectype == 0x02:
             if len(data) != 2:
-                raise ValueError(f"{path}:{line_no}: bad type 02 length")
+                raise ValueError(
+                    f"{path}:{line_no}: bad type 02 length"
+                )
             upper = ((data[0] << 8) | data[1]) << 4
         else:
             continue
@@ -133,7 +165,12 @@ def parse_ihex(path: Path) -> dict[int, int]:
 
 def format_record(addr: int, rectype: int, data: bytes) -> str:
     count = len(data)
-    parts = [count, (addr >> 8) & 0xFF, addr & 0xFF, rectype] + list(data)
+    parts = [
+        count,
+        (addr >> 8) & 0xFF,
+        addr & 0xFF,
+        rectype,
+    ] + list(data)
     checksum = (-sum(parts)) & 0xFF
     return ":" + "".join(f"{b:02X}" for b in parts + [checksum])
 
@@ -174,21 +211,27 @@ def write_ihex(mem: dict[int, int], path: Path) -> None:
     path.write_text("\n".join(lines) + "\n")
 
 
-def merge_hex(app_hex: Path, sd_hex: Path | None, out_hex: Path) -> None:
+def merge_hex(
+    app_hex: Path, sd_hex: Path | None, out_hex: Path
+) -> None:
     mem = parse_ihex(app_hex)
     if sd_hex is not None:
         sd_mem = parse_ihex(sd_hex)
         for addr, byte in sd_mem.items():
             prev = mem.get(addr)
             if prev is not None and prev != byte:
-                raise ValueError(f"overlap at 0x{addr:08X}")
+                raise ValueError(
+                    f"overlap at 0x{addr:08X}"
+                )
             mem[addr] = byte
     write_ihex(mem, out_hex)
 
 
 def convert_to_uf2(in_hex: Path, out_uf2: Path) -> None:
     if not UF2CONV.is_file():
-        raise FileNotFoundError(f"uf2conv.py not found at {UF2CONV}")
+        raise FileNotFoundError(
+            f"uf2conv.py not found at {UF2CONV}"
+        )
     out_uf2.parent.mkdir(parents=True, exist_ok=True)
     run(
         [
@@ -205,32 +248,12 @@ def convert_to_uf2(in_hex: Path, out_uf2: Path) -> None:
     )
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Build firmware + SoftDevice and generate a combined UF2."
-    )
-    parser.add_argument("--no-build", action="store_true", help="Skip cargo build.")
-    parser.add_argument("--app-hex", type=Path, default=None, help="Use existing app hex.")
-    parser.add_argument("--elf", type=Path, default=DEFAULT_ELF, help="App ELF path.")
-    parser.add_argument(
-        "--softdevice",
-        type=Path,
-        default=DEFAULT_SD_HEX,
-        help="SoftDevice hex to merge.",
-    )
-    parser.add_argument(
-        "--no-softdevice",
-        action="store_true",
-        help="Skip SoftDevice merge (app-only UF2).",
-    )
-    parser.add_argument(
-        "--out",
-        type=Path,
-        default=DEFAULT_UF2,
-        help="Output UF2 file path.",
-    )
-    args = parser.parse_args()
+# ---------------------------------------------------------------------------
+# Subcommands
+# ---------------------------------------------------------------------------
 
+
+def cmd_build(args) -> int:
     app_hex = args.app_hex or DEFAULT_APP_HEX
     combined_hex = DEFAULT_COMBINED_HEX
 
@@ -239,16 +262,78 @@ def main() -> int:
         objcopy_to_hex(args.elf, app_hex)
 
     if not app_hex.is_file():
-        raise FileNotFoundError(f"app hex not found: {app_hex}")
+        raise FileNotFoundError(
+            f"app hex not found: {app_hex}"
+        )
 
     sd_hex = None if args.no_softdevice else args.softdevice
     if sd_hex is not None and not sd_hex.is_file():
-        raise FileNotFoundError(f"SoftDevice hex not found: {sd_hex}")
+        raise FileNotFoundError(
+            f"SoftDevice hex not found: {sd_hex}"
+        )
 
     merge_hex(app_hex, sd_hex, combined_hex)
     convert_to_uf2(combined_hex, args.out)
     print(f"UF2 ready: {args.out}")
     return 0
+
+
+# ---------------------------------------------------------------------------
+# CLI setup
+# ---------------------------------------------------------------------------
+
+
+def add_subcommands(subparsers) -> None:
+    """Register UF2 subcommands."""
+    p = subparsers.add_parser(
+        "build",
+        help="Build firmware + SoftDevice and generate a combined UF2",
+    )
+    p.add_argument(
+        "--no-build",
+        action="store_true",
+        help="Skip cargo build.",
+    )
+    p.add_argument(
+        "--app-hex",
+        type=Path,
+        default=None,
+        help="Use existing app hex.",
+    )
+    p.add_argument(
+        "--elf",
+        type=Path,
+        default=DEFAULT_ELF,
+        help="App ELF path.",
+    )
+    p.add_argument(
+        "--softdevice",
+        type=Path,
+        default=DEFAULT_SD_HEX,
+        help="SoftDevice hex to merge.",
+    )
+    p.add_argument(
+        "--no-softdevice",
+        action="store_true",
+        help="Skip SoftDevice merge (app-only UF2).",
+    )
+    p.add_argument(
+        "--out",
+        type=Path,
+        default=DEFAULT_UF2,
+        help="Output UF2 file path.",
+    )
+    p.set_defaults(func=cmd_build)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Build firmware + SoftDevice and generate a combined UF2."
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+    add_subcommands(sub)
+    args = parser.parse_args()
+    return args.func(args)
 
 
 if __name__ == "__main__":
