@@ -22,9 +22,9 @@ static ADV_REQUEST_TIMEOUT: AtomicU16 = AtomicU16::new(0);
 
 #[gatt_service(uuid = "6e400001-b5a3-f393-e0a9-e50e24dcca9e")]
 struct NusService {
-    #[characteristic(uuid = "6e400002-b5a3-f393-e0a9-e50e24dcca9e", write, write_without_response)]
+    #[characteristic(uuid = "6e400002-b5a3-f393-e0a9-e50e24dcca9e", write, write_without_response, value = [0u8; MAX_GATT_PAYLOAD])]
     rx: [u8; MAX_GATT_PAYLOAD],
-    #[characteristic(uuid = "6e400003-b5a3-f393-e0a9-e50e24dcca9e", notify)]
+    #[characteristic(uuid = "6e400003-b5a3-f393-e0a9-e50e24dcca9e", notify, value = [0u8; MAX_GATT_PAYLOAD])]
     tx: [u8; MAX_GATT_PAYLOAD],
 }
 
@@ -47,7 +47,7 @@ pub fn request_fast_advertising() {
 /// 4. On FindMy key rotation: restart adv sets with new FindMy data
 pub async fn ble_unified_task(
     peripheral: &mut Peripheral<'_, SoftdeviceController<'_>, DefaultPacketPool>,
-    server: &Server,
+    server: &Server<'_>,
 ) {
     let mut pending_timeout = Some(ADV_TIMEOUT_BOOT);
 
@@ -217,7 +217,7 @@ pub async fn ble_unified_task(
 
 async fn handle_connection(
     conn: Connection<'_, DefaultPacketPool>,
-    server: &Server,
+    server: &Server<'_>,
 ) {
     defmt::info!("BLE connected");
 
@@ -267,7 +267,7 @@ async fn handle_connection(
 
 async fn ble_send<P: PacketPool>(
     conn: &GattConnection<'_, '_, P>,
-    server: &Server,
+    server: &Server<'_>,
     data: &[u8],
 ) {
     let max_payload = MAX_GATT_PAYLOAD;

@@ -24,7 +24,9 @@
 use core::cell::RefCell;
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
-use embassy_time::{Duration, Instant, Timer};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::blocking_mutex::Mutex as CsMutex;
+use embassy_time::Instant;
 use p224::elliptic_curve::ops::Reduce;
 use p224::elliptic_curve::sec1::ToEncodedPoint;
 use p224::{FieldBytes, ProjectivePoint, Scalar};
@@ -170,7 +172,7 @@ fn advance_sk(start_sk: &[u8; 32], start_counter: u32, target_counter: u32) -> [
 /// Falls back to iterating from SK₀ when cache is invalid.
 fn derive_key_at(master_private: &[u8; 28], sk0: &[u8; 32], counter: u32) -> DerivedKey {
     // Step 1: Get SK at `counter`, using cache if possible
-    let sk = SK_CACHE.lock(|cell| {
+    let sk = SK_CACHE.lock(|cell: &RefCell<SkCache>| {
         let mut cache = cell.borrow_mut();
         if cache.valid && cache.counter <= counter {
             let sk = advance_sk(&cache.sk, cache.counter, counter);
@@ -319,7 +321,7 @@ async fn gps_unix_ts() -> Option<u64> {
 
 /// Read the stored epoch from master keys.
 fn stored_epoch() -> u64 {
-    MASTER_KEYS.lock(|cell| cell.borrow().epoch_secs)
+    MASTER_KEYS.lock(|cell: &RefCell<MasterKeys>| cell.borrow().epoch_secs)
 }
 
 pub fn epoch_secs() -> u64 {
@@ -374,7 +376,7 @@ async fn load_sk_cache_from_sd() {
         let mut sk = [0u8; 32];
         sk.copy_from_slice(&buf[..32]);
         let counter = u32::from_le_bytes([buf[32], buf[33], buf[34], buf[35]]);
-        SK_CACHE.lock(|cell| {
+        SK_CACHE.lock(|cell: &RefCell<SkCache>| {
             let mut cache = cell.borrow_mut();
             cache.sk = sk;
             cache.counter = counter;
@@ -386,7 +388,7 @@ async fn load_sk_cache_from_sd() {
 
 /// Save current SK cache to SD card.
 async fn save_sk_cache_to_sd() {
-    let (sk, counter, valid) = SK_CACHE.lock(|cell| {
+    let (sk, counter, valid) = SK_CACHE.lock(|cell: &RefCell<SkCache>| {
         let cache = cell.borrow();
         (cache.sk, cache.counter, cache.valid)
     });
@@ -415,14 +417,14 @@ async fn save_sk_cache_to_sd() {
 ///
 /// After setting keys, call `load_sk_cache()` to restore cached SK from SD.
 pub fn init(private_key: &[u8; 28], symmetric_key: &[u8; 32], epoch: u64) {
-    MASTER_KEYS.lock(|cell| {
+    MASTER_KEYS.lock(|cell: &RefCell<MasterKeys>| {
         let mut keys = cell.borrow_mut();
         keys.private_key.copy_from_slice(private_key);
         keys.symmetric_key.copy_from_slice(symmetric_key);
         keys.epoch_secs = epoch;
     });
     // Invalidate SK cache; will be restored from SD by load_sk_cache()
-    SK_CACHE.lock(|cell| {
+    SK_CACHE.lock(|cell: &RefCell<SkCache>| {
         cell.borrow_mut().valid = false;
     });
 }
@@ -485,7 +487,7 @@ pub async fn current_adv_data() -> Option<([u8; 31], [u8; 6])> {
 
     let unix_ts = unix_ts_with_fallback().await?;
     let counter = counter_from_unix(unix_ts)?;
-    let (pk, sk) = MASTER_KEYS.lock(|cell| {
+    let (pk, sk) = MASTER_KEYS.lock(|cell: &RefCell<MasterKeys>| {
         let keys = cell.borrow();
         (keys.private_key, keys.symmetric_key)
     });

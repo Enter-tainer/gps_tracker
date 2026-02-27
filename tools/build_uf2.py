@@ -221,7 +221,13 @@ def main() -> int:
     parser.add_argument(
         "--no-softdevice",
         action="store_true",
-        help="Skip SoftDevice merge (app-only UF2).",
+        default=True,
+        help="Skip SoftDevice merge (app-only UF2). Default since migration to nrf-sdc.",
+    )
+    parser.add_argument(
+        "--with-softdevice",
+        action="store_true",
+        help="Include SoftDevice in the combined UF2 (legacy S140 builds).",
     )
     parser.add_argument(
         "--out",
@@ -241,7 +247,7 @@ def main() -> int:
     if not app_hex.is_file():
         raise FileNotFoundError(f"app hex not found: {app_hex}")
 
-    sd_hex = None if args.no_softdevice else args.softdevice
+    sd_hex = None if (args.no_softdevice and not args.with_softdevice) else args.softdevice
     if sd_hex is not None and not sd_hex.is_file():
         raise FileNotFoundError(f"SoftDevice hex not found: {sd_hex}")
 

@@ -69,13 +69,11 @@ pub fn init_vbus() -> &'static SoftwareVbusDetect {
 }
 
 async fn wait_hfclk_running() {
-    let clock = unsafe { &*pac::CLOCK::PTR };
-    clock
-        .tasks_hfclkstart()
-        .write(|w| w.set_tasks_hfclkstart(true));
+    let clock = pac::CLOCK;
+    clock.tasks_hfclkstart().write_value(1);
     loop {
-        if clock.events_hfclkstarted().read().bits() != 0 {
-            clock.events_hfclkstarted().write(|w| w.bits(0));
+        if clock.events_hfclkstarted().read() != 0 {
+            clock.events_hfclkstarted().write_value(0);
             break;
         }
         Timer::after_millis(USB_HFCLK_POLL_MS).await;

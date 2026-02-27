@@ -1,7 +1,7 @@
 [package]
 name = "gps-tracker-firmware"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
 # --- Embassy 核心 ---
@@ -20,7 +20,7 @@ nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc", rev = "43df6b8b0affeacd
 nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc", rev = "43df6b8b0affeacd9cb4094a3ab4f81576554887", features = ["nrf52840", "critical-section-impl", "defmt"] }
 
 # --- BLE Host (pure Rust) ---
-trouble-host = { version = "0.6", default-features = false, features = ["peripheral", "gatt", "derive", "defmt"] }
+trouble-host = { version = "0.6", default-features = false, features = ["peripheral", "gatt", "derive", "defmt", "default-packet-pool"] }
 bt-hci = "0.8"
 
 # --- 常用嵌入式库 ---

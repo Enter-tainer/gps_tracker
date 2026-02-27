@@ -81,31 +81,27 @@ pub(crate) fn usb_connected() -> bool {
 }
 
 fn set_usb_boot_flag() {
-    unsafe {
-        let power = &*pac::POWER::PTR;
-        let current = power.gpregret().read().bits();
-        power
-            .gpregret()
-            .write(|w| w.bits(current | USB_BOOT_FLAG as u32));
-    }
+    let power = pac::POWER;
+    let current = power.gpregret().read().gpregret();
+    power
+        .gpregret()
+        .write(|w| w.set_gpregret(current | USB_BOOT_FLAG));
     defmt::info!("Set USB boot flag (PAC)");
 }
 
 fn take_usb_boot_flag() -> bool {
-    unsafe {
-        let power = &*pac::POWER::PTR;
-        let current = power.gpregret().read().bits() as u8;
-        defmt::info!("Boot gpregret=0x{:02x}", current);
-        if (current & USB_BOOT_FLAG) == 0 {
-            defmt::info!("USB boot flag not set");
-            return false;
-        }
-        power
-            .gpregret()
-            .write(|w| w.bits((current & !USB_BOOT_FLAG) as u32));
-        defmt::info!("Cleared USB boot flag");
-        true
+    let power = pac::POWER;
+    let current = power.gpregret().read().gpregret();
+    defmt::info!("Boot gpregret=0x{:02x}", current);
+    if (current & USB_BOOT_FLAG) == 0 {
+        defmt::info!("USB boot flag not set");
+        return false;
     }
+    power
+        .gpregret()
+        .write(|w| w.set_gpregret(current & !USB_BOOT_FLAG));
+    defmt::info!("Cleared USB boot flag");
+    true
 }
 
 /// Poll USB power register status (replaces SoftDevice SocEvent callback).
@@ -118,23 +114,23 @@ async fn usb_power_task(
     initial_detected: bool,
     usb_only: bool,
 ) {
-    let power = unsafe { &*pac::POWER::PTR };
-    let clock = unsafe { &*pac::CLOCK::PTR };
+    let power = pac::POWER;
+    let clock = pac::CLOCK;
     let mut last_detected = initial_detected;
     let mut hfclk_requested = initial_detected;
 
     if initial_detected {
         clock
             .tasks_hfclkstart()
-            .write(|w| w.set_tasks_hfclkstart(true));
+            .write_value(1);
     }
 
     loop {
         Timer::after_millis(100).await;
 
         let regstatus = power.usbregstatus().read();
-        let detected = regstatus.vbusdetect().bit_is_set();
-        let ready = regstatus.outputrdy().bit_is_set();
+        let detected = regstatus.vbusdetect();
+        let ready = regstatus.outputrdy();
 
         if detected && !last_detected {
             USB_CONNECTED.store(true, Ordering::Release);
@@ -143,7 +139,7 @@ async fn usb_power_task(
             if !hfclk_requested {
                 clock
                     .tasks_hfclkstart()
-                    .write(|w| w.set_tasks_hfclkstart(true));
+                    .write_value(1);
                 hfclk_requested = true;
             }
             if ready {
@@ -156,7 +152,7 @@ async fn usb_power_task(
             if hfclk_requested {
                 clock
                     .tasks_hfclkstop()
-                    .write(|w| w.set_tasks_hfclkstop(true));
+                    .write_value(1);
                 hfclk_requested = false;
             }
             if usb_only {
@@ -208,10 +204,10 @@ async fn mpsl_task(mpsl: &'static MultiprotocolServiceLayer<'static>) -> ! {
 }
 
 fn detect_usb_present(vbus: &SoftwareVbusDetect) -> bool {
-    let power = unsafe { &*pac::POWER::PTR };
+    let power = pac::POWER;
     let regstatus = power.usbregstatus().read();
-    let detected = regstatus.vbusdetect().bit_is_set();
-    let ready = regstatus.outputrdy().bit_is_set();
+    let detected = regstatus.vbusdetect();
+    let ready = regstatus.outputrdy();
     vbus.detected(detected);
     if detected && ready {
         vbus.ready();
@@ -277,10 +273,7 @@ async fn main(spawner: Spawner) {
     } = board::Board::new(p);
 
     // Enable DC/DC converter via PAC (replaces sd_power_dcdc_mode_set)
-    unsafe {
-        let power = &*pac::POWER::PTR;
-        power.dcdcen().write(|w| w.set_dcdcen(true));
-    }
+    pac::POWER.dcdcen().write(|w| w.set_dcdcen(true));
 
     // Initialize MPSL
     let mpsl_p = nrf_sdc::mpsl::Peripherals::new(rtc0, timer0, temp, ppi_ch19, ppi_ch30, ppi_ch31);
@@ -306,22 +299,14 @@ async fn main(spawner: Spawner) {
     let mut sdc_rng = rng::Rng::new(rng_periph, Irqs);
     static SDC_MEM: StaticCell<nrf_sdc::Mem<14000>> = StaticCell::new();
     let sdc_mem = SDC_MEM.init(nrf_sdc::Mem::new());
-    let sdc = nrf_sdc::Builder::new()
-        .expect("SDC builder")
-        .support_adv()
-        .expect("support_adv")
-        .support_ext_adv()
-        .expect("support_ext_adv")
-        .support_peripheral()
-        .expect("support_peripheral")
-        .peripheral_count(1)
-        .expect("peripheral_count")
-        .adv_count(2)
-        .expect("adv_count")
-        .buffer_cfg(247, 247, 3, 3)
-        .expect("buffer_cfg")
-        .build(sdc_p, &mut sdc_rng, mpsl, sdc_mem)
-        .expect("SDC build");
+    let sdc = nrf_sdc::Builder::new().unwrap();
+    let sdc = sdc.support_adv();
+    let sdc = sdc.support_ext_adv();
+    let sdc = sdc.support_peripheral();
+    let sdc = sdc.peripheral_count(1).unwrap();
+    let sdc = sdc.adv_count(2).unwrap();
+    let sdc = sdc.buffer_cfg(247, 247, 3, 3).unwrap();
+    let sdc = sdc.build(sdc_p, &mut sdc_rng, mpsl, sdc_mem).unwrap();
 
     // USB detection via PAC (replaces init_usb_power_events + SocEvent)
     let vbus = usb_msc::init_vbus();
