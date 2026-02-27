@@ -449,7 +449,7 @@ pub async fn fmdn_task(_sd: &'static Softdevice) {
             ble_addr.copy_from_slice(&addr_hash[0..6]);
             ble_addr[5] |= 0xC0; // Mark as random static address
 
-            display::send_command(display::DisplayCommand::SetFindMyAddress(ble_addr));
+            display::send_command(display::DisplayCommand::SetFmdnAddress(ble_addr));
 
             // Save original BLE address
             let mut orig_addr: raw::ble_gap_addr_t = unsafe { core::mem::zeroed() };
@@ -538,6 +538,7 @@ pub async fn fmdn_task(_sd: &'static Softdevice) {
             drop(guard);
         }
 
+        display::send_command(display::DisplayCommand::ClearFmdnAddress);
         set_diag_state(FmdnDiagState::Disabled);
         defmt::info!("FMDN: disabled");
     }
