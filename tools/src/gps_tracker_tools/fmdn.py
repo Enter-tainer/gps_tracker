@@ -10,7 +10,7 @@ Subcommands:
     generate  - Generate a random 32-byte EIK
     keys      - Derive and display EID sequence for recent/future time windows
     key-ids   - Precompute truncated key IDs for Spot API upload
-    fetch     - Fetch and decrypt location reports from Google (requires [google] extra)
+    fetch     - Fetch and decrypt location reports from Google
 """
 
 import argparse

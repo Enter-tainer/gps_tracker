@@ -7,9 +7,6 @@ Implements the full flow:
 3. Nova API for device listing and location requests
 4. EID-based location report decryption (SECP160R1 + HKDF-SHA256 + AES-EAX-256)
 
-Requires the [google] optional dependencies:
-    pip install gps-tracker-tools[google]
-
 Reference: GoogleFindMyTools (https://github.com/leonboe1/GoogleFindMyTools)
 """
 
@@ -89,16 +86,8 @@ def _get_android_id(cache: dict) -> str:
 
 def _request_oauth_token() -> str:
     """Open Chrome for interactive Google login, extract oauth_token cookie."""
-    try:
-        import undetected_chromedriver as uc
-        from selenium.webdriver.support.ui import WebDriverWait
-    except ImportError:
-        print(
-            "Error: Google authentication requires [google] extras.\n"
-            "Install with: pip install gps-tracker-tools[google]",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+    import undetected_chromedriver as uc
+    from selenium.webdriver.support.ui import WebDriverWait
 
     print("Opening Chrome for Google login...", file=sys.stderr)
     print(
@@ -131,14 +120,7 @@ def _get_aas_token(cache: dict) -> str:
     if "aas_token" in cache:
         return cache["aas_token"]
 
-    try:
-        import gpsoauth
-    except ImportError:
-        print(
-            "Error: gpsoauth required. Install with: pip install gps-tracker-tools[google]",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+    import gpsoauth
 
     android_id = _get_android_id(cache)
     oauth_token = _request_oauth_token()
@@ -169,14 +151,7 @@ def _get_adm_token(cache: dict) -> str:
     if "adm_token" in cache:
         return cache["adm_token"]
 
-    try:
-        import gpsoauth
-    except ImportError:
-        print(
-            "Error: gpsoauth required.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+    import gpsoauth
 
     aas_token = _get_aas_token(cache)
     android_id = _get_android_id(cache)
@@ -210,14 +185,7 @@ def _get_spot_token(cache: dict) -> str:
     if "spot_token" in cache:
         return cache["spot_token"]
 
-    try:
-        import gpsoauth
-    except ImportError:
-        print(
-            "Error: gpsoauth required.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+    import gpsoauth
 
     aas_token = _get_aas_token(cache)
     android_id = _get_android_id(cache)
@@ -365,14 +333,7 @@ SPOT_HEADERS = {
 
 def _spot_request(method: str, payload: bytes, spot_token: str) -> bytes:
     """Make a gRPC request to the Spot API."""
-    try:
-        import httpx
-    except ImportError:
-        print(
-            "Error: httpx[http2] required. Install with: pip install gps-tracker-tools[google]",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+    import httpx
 
     url = f"{SPOT_BASE}/{method}"
     headers = {
@@ -589,19 +550,7 @@ def _decrypt_crowdsourced_report(
     5. nonce = last_8_bytes(R.x) || last_8_bytes(S.x)
     6. AES-EAX-256 decrypt
     """
-    try:
-        from Cryptodome.Cipher import AES as AES_Cryptodome
-    except ImportError:
-        try:
-            from Crypto.Cipher import AES as AES_Cryptodome
-        except ImportError:
-            print(
-                "Error: pycryptodomex required for AES-EAX. "
-                "Install with: pip install pycryptodomex",
-                file=sys.stderr,
-            )
-            return None
-
+    from Cryptodome.Cipher import AES as AES_Cryptodome
     from cryptography.hazmat.primitives.hashes import SHA256
     from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
