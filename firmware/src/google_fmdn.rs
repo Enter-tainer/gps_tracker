@@ -27,7 +27,7 @@ use sha2::{Digest, Sha256};
 
 use nrf_softdevice::{raw, RawError, Softdevice};
 
-use crate::adv_scheduler::{AdvPriority, ADV_SCHEDULER};
+use crate::adv_scheduler::{AdvPriority, ALTERNATION_SECS, ADV_SCHEDULER};
 use crate::display;
 use crate::secp160r1;
 use crate::system_info::SYSTEM_INFO;
@@ -407,7 +407,7 @@ pub async fn fmdn_task(_sd: &'static Softdevice) {
 
             // Acquire advertising resource.
             set_diag_state(FmdnDiagState::WaitingBleIdle);
-            let guard = ADV_SCHEDULER.acquire(AdvPriority::FindMyAdv).await;
+            let guard = ADV_SCHEDULER.acquire(AdvPriority::FmdnAdv).await;
 
             if !is_enabled() {
                 drop(guard);
@@ -517,9 +517,11 @@ pub async fn fmdn_task(_sd: &'static Softdevice) {
             set_diag_state(FmdnDiagState::Advertising);
             defmt::info!("FMDN: advertising (masked_ts={})", current_masked_ts);
 
-            // Wait until preempted or rotation timer fires.
+            // Wait until preempted, alternation slice expires, or rotation fires.
+            // Use short slices to allow FindMy alternation.
             let sleep_secs = secs_until_next_rotation(unix_ts);
-            let rotation_timer = Timer::after(Duration::from_secs(sleep_secs + 1));
+            let adv_secs = core::cmp::min(sleep_secs + 1, ALTERNATION_SECS);
+            let rotation_timer = Timer::after(Duration::from_secs(adv_secs));
 
             match select(guard.wait_preempted(), rotation_timer).await {
                 Either::First(()) => {

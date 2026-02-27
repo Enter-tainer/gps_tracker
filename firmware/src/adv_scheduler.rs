@@ -2,7 +2,8 @@
 //!
 //! The nRF SoftDevice S140 supports only one advertising set handle.
 //! This module arbitrates access between connectable (main BLE) and
-//! non-connectable (Find My) advertising using a cooperative preemption model.
+//! non-connectable (Find My / FMDN) advertising using a cooperative
+//! preemption model with round-robin alternation for background tasks.
 //!
 //! # Design
 //!
@@ -10,6 +11,8 @@
 //! - Higher-priority callers preempt lower-priority holders via signal.
 //! - `AdvGuard::wait_preempted().await` lets holders react to preemption.
 //! - `drop(guard)` releases the resource and wakes the next waiter.
+//! - Background tasks (FindMy / FMDN) alternate via round-robin: when one
+//!   releases, the other is granted first if waiting.
 
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::Mutex;
@@ -17,13 +20,19 @@ use embassy_sync::signal::Signal;
 
 use core::cell::RefCell;
 
-const PRIORITY_COUNT: usize = 2;
+const PRIORITY_COUNT: usize = 3;
+
+/// Time slice for background advertising alternation (seconds).
+/// Each background task (FindMy / FMDN) advertises for this duration
+/// before yielding to allow the other task a turn.
+pub const ALTERNATION_SECS: u64 = 5;
 
 /// Advertising priority (lower value = higher priority).
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AdvPriority {
     MainAdv = 0,
     FindMyAdv = 1,
+    FmdnAdv = 2,
 }
 
 impl AdvPriority {
@@ -53,8 +62,8 @@ impl AdvScheduler {
                 current_holder: None,
                 waiting: [false; PRIORITY_COUNT],
             })),
-            grant_signals: [Signal::new(), Signal::new()],
-            preempt_signals: [Signal::new(), Signal::new()],
+            grant_signals: [Signal::new(), Signal::new(), Signal::new()],
+            preempt_signals: [Signal::new(), Signal::new(), Signal::new()],
         }
     }
 
@@ -81,7 +90,7 @@ impl AdvScheduler {
                         true
                     }
                     _ => {
-                        // Lower priority: queue up.
+                        // Lower or equal priority: queue up.
                         st.waiting[priority as usize] = true;
                         true
                     }
@@ -107,12 +116,26 @@ impl AdvScheduler {
             }
             st.current_holder = None;
 
-            // Grant to highest-priority waiter.
-            for p in 0..PRIORITY_COUNT {
-                if st.waiting[p] {
-                    st.waiting[p] = false;
-                    st.current_holder = Some(AdvPriority::from_index(p));
-                    self.grant_signals[p].signal(());
+            // Always check MainAdv (highest priority) first.
+            if st.waiting[AdvPriority::MainAdv as usize] {
+                st.waiting[AdvPriority::MainAdv as usize] = false;
+                st.current_holder = Some(AdvPriority::MainAdv);
+                self.grant_signals[AdvPriority::MainAdv as usize].signal(());
+                return;
+            }
+
+            // For background tasks, prefer the OTHER background task (round-robin).
+            let (first, second) = match priority {
+                AdvPriority::FindMyAdv => (AdvPriority::FmdnAdv, AdvPriority::FindMyAdv),
+                AdvPriority::FmdnAdv => (AdvPriority::FindMyAdv, AdvPriority::FmdnAdv),
+                _ => (AdvPriority::FindMyAdv, AdvPriority::FmdnAdv),
+            };
+
+            for p in [first, second] {
+                if st.waiting[p as usize] {
+                    st.waiting[p as usize] = false;
+                    st.current_holder = Some(p);
+                    self.grant_signals[p as usize].signal(());
                     return;
                 }
             }

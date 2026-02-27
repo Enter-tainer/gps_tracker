@@ -723,20 +723,20 @@ fn render_fmdn_page(
         .ok();
 
     let status = fmdn_status_text();
-    draw_line(display, text_style, text_settings, 0, "FMDN:", status);
+    draw_line(display, text_style, text_settings, 1, "FMDN:", status);
 
     let diag = fmdn_diag_text();
-    draw_line(display, text_style, text_settings, 1, "Diag:", diag);
+    draw_line(display, text_style, text_settings, 2, "Diag:", diag);
 
     let rotation = fmdn_rotation_text(info);
-    draw_line(display, text_style, text_settings, 2, "EID: ", rotation);
+    draw_line(display, text_style, text_settings, 3, "EID: ", rotation);
 
     let mut gps_state = String::<32>::new();
     gps_state.push_str(gps_state_label(info.gps_state)).ok();
-    draw_line(display, text_style, text_settings, 3, "GPS: ", gps_state);
+    draw_line(display, text_style, text_settings, 4, "GPS: ", gps_state);
 
     let date_text = format_date(info);
-    draw_line(display, text_style, text_settings, 4, "Date: ", date_text);
+    draw_line(display, text_style, text_settings, 5, "Date: ", date_text);
 
     let time_text = if info.date_time_valid {
         format_time(info)
@@ -745,7 +745,7 @@ fn render_fmdn_page(
         na.push_str("N/A").ok();
         na
     };
-    draw_line(display, text_style, text_settings, 5, "Time: ", time_text);
+    draw_line(display, text_style, text_settings, 6, "Time: ", time_text);
 
     let _ = display.flush();
 }
