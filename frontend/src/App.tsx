@@ -1206,6 +1206,16 @@ export default function App() {
                 <CardDescription>Google Find My Device Network EIK management.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
+                {fmdnStatus !== null && (
+                  <div className="space-y-1">
+                    <Badge variant={fmdnStatus.enabled ? "default" : "muted"}>
+                      {fmdnStatus.enabled ? "FMDN Active" : "FMDN Inactive"}
+                    </Badge>
+                    <div className="text-xs text-muted-foreground">
+                      Diag: {fmdnDiagLabels[fmdnStatus.diagState] ?? `Unknown (${fmdnStatus.diagState})`}
+                    </div>
+                  </div>
+                )}
                 <div className="flex flex-wrap gap-2">
                   <Button variant="outline" size="sm" onClick={handleFmdnGenerate} disabled={fmdnBusy}>
                     Generate EIK
@@ -1253,16 +1263,6 @@ export default function App() {
                       <Download className="h-4 w-4" />
                       Export JSON
                     </Button>
-                  </div>
-                )}
-                {fmdnStatus !== null && (
-                  <div className="space-y-1">
-                    <Badge variant={fmdnStatus.enabled ? "default" : "muted"}>
-                      {fmdnStatus.enabled ? "FMDN Active" : "FMDN Inactive"}
-                    </Badge>
-                    <div className="text-xs text-muted-foreground">
-                      Diag: {fmdnDiagLabels[fmdnStatus.diagState] ?? `Unknown (${fmdnStatus.diagState})`}
-                    </div>
                   </div>
                 )}
               </CardContent>
