@@ -2,6 +2,8 @@ use crate::battery;
 use crate::bmp280;
 #[cfg(feature = "findmy")]
 use crate::findmy;
+#[cfg(feature = "google-fmdn")]
+use crate::google_fmdn;
 use crate::gps;
 use crate::gps::AgnssMessage;
 use crate::storage;
@@ -24,6 +26,12 @@ const CMD_WRITE_FINDMY_KEYS: u8 = 0x0C;
 const CMD_READ_FINDMY_KEYS: u8 = 0x0D;
 #[cfg(feature = "findmy")]
 const CMD_GET_FINDMY_STATUS: u8 = 0x0E;
+#[cfg(feature = "google-fmdn")]
+const CMD_WRITE_FMDN_EIK: u8 = 0x0F;
+#[cfg(feature = "google-fmdn")]
+const CMD_READ_FMDN_EIK: u8 = 0x10;
+#[cfg(feature = "google-fmdn")]
+const CMD_GET_FMDN_STATUS: u8 = 0x11;
 
 const MAX_CMD_PAYLOAD: usize = 570;
 const MAX_RESPONSE_PAYLOAD: usize = 256;
@@ -147,6 +155,12 @@ impl FileTransferProtocol {
             CMD_READ_FINDMY_KEYS => self.handle_read_findmy_keys().await,
             #[cfg(feature = "findmy")]
             CMD_GET_FINDMY_STATUS => self.handle_get_findmy_status().await,
+            #[cfg(feature = "google-fmdn")]
+            CMD_WRITE_FMDN_EIK => self.handle_write_fmdn_eik(payload).await,
+            #[cfg(feature = "google-fmdn")]
+            CMD_READ_FMDN_EIK => self.handle_read_fmdn_eik().await,
+            #[cfg(feature = "google-fmdn")]
+            CMD_GET_FMDN_STATUS => self.handle_get_fmdn_status().await,
             _ => Some(self.encode_empty_response()),
         };
 
@@ -417,6 +431,48 @@ impl FileTransferProtocol {
         // Response: [enabled: 1B]
         self.response[2] = if findmy::is_enabled() { 0x01 } else { 0x00 };
         Some(self.encode_response(1))
+    }
+
+    #[cfg(feature = "google-fmdn")]
+    async fn handle_write_fmdn_eik(&mut self, payload: &[u8]) -> Option<usize> {
+        if payload.len() != storage::FMDN_EIK_SIZE {
+            defmt::warn!(
+                "WRITE_FMDN_EIK: bad size {} (expected {})",
+                payload.len(),
+                storage::FMDN_EIK_SIZE
+            );
+            return Some(self.encode_empty_response());
+        }
+        let mut eik = [0u8; storage::FMDN_EIK_SIZE];
+        eik.copy_from_slice(payload);
+        if !storage::write_fmdn_eik(&eik).await {
+            defmt::warn!("WRITE_FMDN_EIK: SD write failed");
+            return Some(self.encode_empty_response());
+        }
+        // Activate immediately.
+        google_fmdn::init(&eik);
+        google_fmdn::set_enabled(true);
+        defmt::info!("WRITE_FMDN_EIK: OK");
+        self.response[2] = 0x01; // success flag
+        Some(self.encode_response(1))
+    }
+
+    #[cfg(feature = "google-fmdn")]
+    async fn handle_read_fmdn_eik(&mut self) -> Option<usize> {
+        let Some(eik) = storage::read_fmdn_eik().await else {
+            defmt::info!("READ_FMDN_EIK: no EIK on SD");
+            return Some(self.encode_empty_response());
+        };
+        self.response[2..2 + storage::FMDN_EIK_SIZE].copy_from_slice(&eik);
+        Some(self.encode_response(storage::FMDN_EIK_SIZE))
+    }
+
+    #[cfg(feature = "google-fmdn")]
+    async fn handle_get_fmdn_status(&mut self) -> Option<usize> {
+        // Response: [enabled: 1B] [diag_state: 1B]
+        self.response[2] = if google_fmdn::is_enabled() { 0x01 } else { 0x00 };
+        self.response[3] = google_fmdn::diag_state() as u8;
+        Some(self.encode_response(2))
     }
 
     fn encode_response(&mut self, payload_len: usize) -> usize {

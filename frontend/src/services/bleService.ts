@@ -39,6 +39,16 @@ type FindMyStatusPromise = {
   reject: (error: Error) => void;
 };
 
+type FmdnEikPromise = {
+  resolve: (result: { success: boolean; eik?: Uint8Array }) => void;
+  reject: (error: Error) => void;
+};
+
+type FmdnStatusPromise = {
+  resolve: (result: { enabled: boolean; diagState: number }) => void;
+  reject: (error: Error) => void;
+};
+
 type PromiseMap = {
   listDir: ListDirPromise | null;
   openFile: OpenFilePromise | null;
@@ -54,6 +64,9 @@ type PromiseMap = {
   writeFindMyKeys: FindMyKeysPromise | null;
   readFindMyKeys: FindMyKeysPromise | null;
   getFindMyStatus: FindMyStatusPromise | null;
+  writeFmdnEik: FmdnEikPromise | null;
+  readFmdnEik: FmdnEikPromise | null;
+  getFmdnStatus: FmdnStatusPromise | null;
 };
 
 export function createBleService(logger: Logger) {
@@ -81,7 +94,10 @@ export function createBleService(logger: Logger) {
     gpsKeepAlive: null,
     writeFindMyKeys: null,
     readFindMyKeys: null,
-    getFindMyStatus: null
+    getFindMyStatus: null,
+    writeFmdnEik: null,
+    readFmdnEik: null,
+    getFmdnStatus: null
   };
 
   async function connect() {
@@ -432,6 +448,54 @@ export function createBleService(logger: Logger) {
       } else {
         logger.error("GET_FINDMY_STATUS_RSP: empty payload.");
         promise.reject(new Error("Empty GET_FINDMY_STATUS response"));
+      }
+      return;
+    }
+
+    if (currentPromises.writeFmdnEik) {
+      const promise = currentPromises.writeFmdnEik;
+      currentPromises.writeFmdnEik = null;
+
+      if (payloadLen >= 1 && payload.getUint8(0) === 0x01) {
+        logger.log("WRITE_FMDN_EIK_RSP: success.");
+        promise.resolve({ success: true });
+      } else {
+        logger.error("WRITE_FMDN_EIK_RSP: failed.");
+        promise.resolve({ success: false });
+      }
+      return;
+    }
+
+    if (currentPromises.readFmdnEik) {
+      const promise = currentPromises.readFmdnEik;
+      currentPromises.readFmdnEik = null;
+
+      if (payloadLen === CONSTANTS.FMDN_EIK_SIZE) {
+        const eik = new Uint8Array(payload.buffer, payload.byteOffset, payloadLen);
+        logger.log("READ_FMDN_EIK_RSP: got EIK.");
+        promise.resolve({ success: true, eik: new Uint8Array(eik) });
+      } else if (payloadLen === 0) {
+        logger.log("READ_FMDN_EIK_RSP: no EIK on device.");
+        promise.resolve({ success: false });
+      } else {
+        logger.error(`READ_FMDN_EIK_RSP: unexpected length ${payloadLen}.`);
+        promise.reject(new Error("Unexpected READ_FMDN_EIK response"));
+      }
+      return;
+    }
+
+    if (currentPromises.getFmdnStatus) {
+      const promise = currentPromises.getFmdnStatus;
+      currentPromises.getFmdnStatus = null;
+
+      if (payloadLen >= 2) {
+        const enabled = payload.getUint8(0) === 0x01;
+        const diagState = payload.getUint8(1);
+        logger.log(`GET_FMDN_STATUS_RSP: enabled=${enabled}, diagState=${diagState}.`);
+        promise.resolve({ enabled, diagState });
+      } else {
+        logger.error("GET_FMDN_STATUS_RSP: payload too short.");
+        promise.reject(new Error("GET_FMDN_STATUS response too short"));
       }
       return;
     }
@@ -1213,6 +1277,107 @@ export function createBleService(logger: Logger) {
     });
   }
 
+  async function writeFmdnEik(eikData: Uint8Array) {
+    if (!isConnected) {
+      return Promise.reject(new Error("Not connected"));
+    }
+
+    logger.log("Writing FMDN EIK to device...");
+
+    return new Promise<{ success: boolean }>((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        if (currentPromises.writeFmdnEik) {
+          currentPromises.writeFmdnEik = null;
+          reject(new Error("Timeout waiting for WRITE_FMDN_EIK response"));
+        }
+      }, 5000);
+
+      currentPromises.writeFmdnEik = {
+        resolve: (result) => { clearTimeout(timeoutId); resolve(result); },
+        reject: (error) => { clearTimeout(timeoutId); reject(error); }
+      };
+
+      const payloadLength = eikData.byteLength;
+      const buffer = new ArrayBuffer(1 + 2 + payloadLength);
+      const view = new DataView(buffer);
+      view.setUint8(0, CONSTANTS.CMD_ID.WRITE_FMDN_EIK);
+      view.setUint16(1, payloadLength, true);
+      new Uint8Array(buffer, 3).set(eikData);
+
+      sendBleData(buffer).catch((error) => {
+        clearTimeout(timeoutId);
+        currentPromises.writeFmdnEik = null;
+        reject(error as Error);
+      });
+    });
+  }
+
+  async function readFmdnEik() {
+    if (!isConnected) {
+      return Promise.reject(new Error("Not connected"));
+    }
+
+    logger.log("Reading FMDN EIK from device...");
+
+    return new Promise<{ success: boolean; eik?: Uint8Array }>((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        if (currentPromises.readFmdnEik) {
+          currentPromises.readFmdnEik = null;
+          reject(new Error("Timeout waiting for READ_FMDN_EIK response"));
+        }
+      }, 5000);
+
+      currentPromises.readFmdnEik = {
+        resolve: (result) => { clearTimeout(timeoutId); resolve(result); },
+        reject: (error) => { clearTimeout(timeoutId); reject(error); }
+      };
+
+      const buffer = new ArrayBuffer(1 + 2);
+      const view = new DataView(buffer);
+      view.setUint8(0, CONSTANTS.CMD_ID.READ_FMDN_EIK);
+      view.setUint16(1, 0, true);
+
+      sendBleData(buffer).catch((error) => {
+        clearTimeout(timeoutId);
+        currentPromises.readFmdnEik = null;
+        reject(error as Error);
+      });
+    });
+  }
+
+  async function getFmdnStatus() {
+    if (!isConnected) {
+      return Promise.reject(new Error("Not connected"));
+    }
+
+    logger.log("Querying FMDN status...");
+
+    return new Promise<{ enabled: boolean; diagState: number }>((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        if (currentPromises.getFmdnStatus) {
+          currentPromises.getFmdnStatus = null;
+          reject(new Error("Timeout waiting for GET_FMDN_STATUS response"));
+        }
+      }, 5000);
+
+      currentPromises.getFmdnStatus = {
+        resolve: (result) => { clearTimeout(timeoutId); resolve(result); },
+        reject: (error) => { clearTimeout(timeoutId); reject(error); }
+      };
+
+      const buffer = new ArrayBuffer(1 + 2);
+      const view = new DataView(buffer);
+      view.setUint8(0, CONSTANTS.CMD_ID.GET_FMDN_STATUS);
+      view.setUint16(1, 0, true);
+
+      sendBleData(buffer).catch((error) => {
+        clearTimeout(timeoutId);
+        currentPromises.getFmdnStatus = null;
+        reject(error as Error);
+      });
+    });
+  }
+
   return {
     connect,
     disconnect,
@@ -1232,7 +1397,10 @@ export function createBleService(logger: Logger) {
     setGpsKeepAlive,
     writeFindMyKeys,
     readFindMyKeys,
-    getFindMyStatus
+    getFindMyStatus,
+    writeFmdnEik,
+    readFmdnEik,
+    getFmdnStatus
   };
 }
 

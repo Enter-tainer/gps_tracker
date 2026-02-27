@@ -25,6 +25,9 @@ Source of truth is the C++ code; docs are secondary.
 - `0x0C` WRITE_FINDMY_KEYS (requires `findmy` feature)
 - `0x0D` READ_FINDMY_KEYS (requires `findmy` feature)
 - `0x0E` GET_FINDMY_STATUS (requires `findmy` feature)
+- `0x0F` WRITE_FMDN_EIK (requires `google-fmdn` feature)
+- `0x10` READ_FMDN_EIK (requires `google-fmdn` feature)
+- `0x11` GET_FMDN_STATUS (requires `google-fmdn` feature)
 
 ## Common limits
 - `MAX_PATH_LENGTH = 64` bytes.
@@ -131,6 +134,29 @@ Version detection: Frontend checks payload length (50 = V1, 63 = V2).
 ### GET_FINDMY_STATUS (0x0E)
 - Payload: empty.
 - Response payload: 1 byte. `0x01` = enabled, `0x00` = disabled.
+
+## Google FMDN commands (requires `google-fmdn` feature)
+
+- `0x0F` WRITE_FMDN_EIK
+- `0x10` READ_FMDN_EIK
+- `0x11` GET_FMDN_STATUS
+
+### WRITE_FMDN_EIK (0x0F)
+- Payload: 32 bytes (EIK).
+- If payload length != 32: empty response.
+- On SD write failure: empty response.
+- On success: response payload = `0x01` (1 byte). Also initializes FMDN module and enables advertising immediately.
+
+### READ_FMDN_EIK (0x10)
+- Payload: empty.
+- Response payload on success: 32 bytes (EIK).
+- Response payload on failure (no file): empty.
+
+### GET_FMDN_STATUS (0x11)
+- Payload: empty.
+- Response payload: 2 bytes. `Enabled (1)` + `DiagState (1)`.
+  - Enabled: `0x01` = enabled, `0x00` = disabled.
+  - DiagState: `0`=Disabled, `1`=WaitingGpsTime, `2`=WaitingBleIdle, `3`=EidReady, `4`=Advertising, `5`=SetAddrFailed, `6`=AdvConfigureFailed, `7`=AdvStartFailed.
 
 ## Known doc mismatches (vs docs/uart_file_proto.md)
 - START_AGNSS_WRITE does not use a total-size payload; any payload is ignored.

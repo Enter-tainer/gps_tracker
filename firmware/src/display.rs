@@ -17,19 +17,14 @@ use embedded_graphics::prelude::*;
 use embedded_graphics::text::{Baseline, Text, TextStyleBuilder};
 use embedded_graphics::text::renderer::TextRenderer;
 use heapless::String;
+use ssd1306::{I2CDisplayInterface, Ssd1306};
 use ssd1306::mode::BufferedGraphicsMode;
 use ssd1306::prelude::{DisplayConfig, DisplayRotation, DisplaySize128x64, I2CInterface};
-use ssd1306::{I2CDisplayInterface, Ssd1306};
-
-use crate::battery::estimate_battery_level;
-use crate::gps;
-use crate::system_info::{GpsState, SystemInfo, SYSTEM_INFO};
-use crate::timezone::TzCache;
 
 // Ferris logo bitmap: 64x42 pixels, 1-bit per pixel (MSB first)
 // Each row is 8 bytes (64 bits), 42 rows total = 336 bytes
 const FERRIS_WIDTH: u32 = 64;
-#[allow(dead_code)] // kept for documentation alongside FERRIS_WIDTH
+#[allow(dead_code)]
 const FERRIS_HEIGHT: u32 = 42;
 const FERRIS_LOGO: [u8; 336] = [
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Row 0
@@ -81,7 +76,7 @@ const LOGO_DISPLAY_MS: u64 = 2000;
 // USB_ICON bitmap: 32x32 pixels, 1-bit per pixel (MSB first)
 // Each row is 4 bytes (32 bits), 32 rows total = 128 bytes
 const USB_ICON_WIDTH: u32 = 32;
-#[allow(dead_code)] // kept for documentation alongside USB_ICON_WIDTH
+#[allow(dead_code)]
 const USB_ICON_HEIGHT: u32 = 32;
 const USB_ICON: [u8; 128] = [
     0xFF, 0xFF, 0xFF, 0xFF, // Row 0
@@ -118,6 +113,11 @@ const USB_ICON: [u8; 128] = [
     0xFF, 0xFF, 0xFF, 0xFF, // Row 31
 ];
 
+use crate::battery::estimate_battery_level;
+use crate::gps;
+use crate::system_info::{GpsState, SystemInfo, SYSTEM_INFO};
+use crate::timezone::TzCache;
+
 const DISPLAY_UPDATE_INTERVAL_MS: u64 = 100;
 const DISPLAY_TIMEOUT_MS: u64 = 30_000;
 const SCREEN_WIDTH: i32 = 128;
@@ -130,6 +130,7 @@ type Display = Ssd1306<I2CInterface<SharedI2c>, DisplaySize128x64, BufferedGraph
 enum DisplayPage {
     Main,
     FindMy,
+    GoogleFmdn,
 }
 
 #[derive(Clone, Copy)]
@@ -154,6 +155,8 @@ pub enum DisplayCommand {
     UsbMode,
     SetFindMyAddress([u8; 6]),
     ClearFindMyAddress,
+    SetFmdnAddress([u8; 6]),
+    ClearFmdnAddress,
 }
 
 static DISPLAY_COMMANDS: Channel<CriticalSectionRawMutex, DisplayCommand, 8> = Channel::new();
@@ -182,6 +185,7 @@ pub async fn display_task(i2c: SharedI2c) {
     let mut last_activity = Instant::now();
     let mut usb_mode = false;
     let mut findmy_addr: Option<[u8; 6]> = None;
+    let mut fmdn_addr: Option<[u8; 6]> = None;
     let mut current_page = DisplayPage::Main;
     let mut findmy_time_anchor: Option<DisplayTimeAnchor> = None;
     let mut tz_cache = TzCache::new();
@@ -190,13 +194,17 @@ pub async fn display_task(i2c: SharedI2c) {
     let text_settings = TextStyleBuilder::new().baseline(Baseline::Top).build();
 
     // Render first frame after logo
-    refresh_display(
+    let mut info = { *SYSTEM_INFO.lock().await };
+    info.keep_alive_remaining_s = gps::get_keep_alive_remaining_s().await;
+    render_current_page(
         &mut display,
         &text_style,
         text_settings,
+        &info,
         &mut tz_cache,
         current_page,
         findmy_addr,
+        fmdn_addr,
         &mut findmy_time_anchor,
     )
     .await;
@@ -217,6 +225,7 @@ pub async fn display_task(i2c: SharedI2c) {
                         &mut last_activity,
                         &mut usb_mode,
                         &mut findmy_addr,
+                        &mut fmdn_addr,
                         &mut current_page,
                         &mut findmy_time_anchor,
                         &mut tz_cache,
@@ -235,6 +244,7 @@ pub async fn display_task(i2c: SharedI2c) {
                             &mut last_activity,
                             &mut usb_mode,
                             &mut findmy_addr,
+                            &mut fmdn_addr,
                             &mut current_page,
                             &mut findmy_time_anchor,
                             &mut tz_cache,
@@ -247,13 +257,17 @@ pub async fn display_task(i2c: SharedI2c) {
                     if usb_mode {
                         render_usb_mode(&mut display, &text_style, text_settings);
                     } else {
-                        refresh_display(
+                        let mut info = { *SYSTEM_INFO.lock().await };
+                        info.keep_alive_remaining_s = gps::get_keep_alive_remaining_s().await;
+                        render_current_page(
                             &mut display,
                             &text_style,
                             text_settings,
+                            &info,
                             &mut tz_cache,
                             current_page,
                             findmy_addr,
+                            fmdn_addr,
                             &mut findmy_time_anchor,
                         )
                         .await;
@@ -269,6 +283,7 @@ pub async fn display_task(i2c: SharedI2c) {
                 &mut last_activity,
                 &mut usb_mode,
                 &mut findmy_addr,
+                &mut fmdn_addr,
                 &mut current_page,
                 &mut findmy_time_anchor,
                 &mut tz_cache,
@@ -286,6 +301,7 @@ pub async fn display_task(i2c: SharedI2c) {
                 &mut last_activity,
                 &mut usb_mode,
                 &mut findmy_addr,
+                &mut fmdn_addr,
                 &mut current_page,
                 &mut findmy_time_anchor,
                 &mut tz_cache,
@@ -304,6 +320,7 @@ async fn handle_command(
     last_activity: &mut Instant,
     usb_mode: &mut bool,
     findmy_addr: &mut Option<[u8; 6]>,
+    fmdn_addr: &mut Option<[u8; 6]>,
     current_page: &mut DisplayPage,
     findmy_time_anchor: &mut Option<DisplayTimeAnchor>,
     tz_cache: &mut TzCache,
@@ -318,9 +335,18 @@ async fn handle_command(
                 if *usb_mode {
                     render_usb_mode(display, text_style, text_settings);
                 } else {
-                    refresh_display(
-                        display, text_style, text_settings, tz_cache,
-                        *current_page, *findmy_addr, findmy_time_anchor,
+                    let mut info = *SYSTEM_INFO.lock().await;
+                    info.keep_alive_remaining_s = gps::get_keep_alive_remaining_s().await;
+                    render_current_page(
+                        display,
+                        text_style,
+                        text_settings,
+                        &info,
+                        tz_cache,
+                        *current_page,
+                        *findmy_addr,
+                        *fmdn_addr,
+                        findmy_time_anchor,
                     )
                     .await;
                 }
@@ -336,14 +362,41 @@ async fn handle_command(
             match *current_page {
                 DisplayPage::Main => {
                     *current_page = DisplayPage::FindMy;
-                    refresh_display(
-                        display, text_style, text_settings, tz_cache,
-                        *current_page, *findmy_addr, findmy_time_anchor,
+                    let mut info = *SYSTEM_INFO.lock().await;
+                    info.keep_alive_remaining_s = gps::get_keep_alive_remaining_s().await;
+                    render_current_page(
+                        display,
+                        text_style,
+                        text_settings,
+                        &info,
+                        tz_cache,
+                        *current_page,
+                        *findmy_addr,
+                        *fmdn_addr,
+                        findmy_time_anchor,
                     )
                     .await;
                     *last_activity = Instant::now();
                 }
                 DisplayPage::FindMy => {
+                    *current_page = DisplayPage::GoogleFmdn;
+                    let mut info = *SYSTEM_INFO.lock().await;
+                    info.keep_alive_remaining_s = gps::get_keep_alive_remaining_s().await;
+                    render_current_page(
+                        display,
+                        text_style,
+                        text_settings,
+                        &info,
+                        tz_cache,
+                        *current_page,
+                        *findmy_addr,
+                        *fmdn_addr,
+                        findmy_time_anchor,
+                    )
+                    .await;
+                    *last_activity = Instant::now();
+                }
+                DisplayPage::GoogleFmdn => {
                     *current_page = DisplayPage::Main;
                     turn_display_off(display, display_on);
                 }
@@ -355,9 +408,18 @@ async fn handle_command(
             if *usb_mode {
                 render_usb_mode(display, text_style, text_settings);
             } else {
-                refresh_display(
-                    display, text_style, text_settings, tz_cache,
-                    *current_page, *findmy_addr, findmy_time_anchor,
+                let mut info = *SYSTEM_INFO.lock().await;
+                info.keep_alive_remaining_s = gps::get_keep_alive_remaining_s().await;
+                render_current_page(
+                    display,
+                    text_style,
+                    text_settings,
+                    &info,
+                    tz_cache,
+                    *current_page,
+                    *findmy_addr,
+                    *fmdn_addr,
+                    findmy_time_anchor,
                 )
                 .await;
             }
@@ -377,9 +439,18 @@ async fn handle_command(
         DisplayCommand::SetFindMyAddress(addr) => {
             *findmy_addr = Some(addr);
             if *display_on && !*usb_mode && *current_page == DisplayPage::FindMy {
-                refresh_display(
-                    display, text_style, text_settings, tz_cache,
-                    *current_page, *findmy_addr, findmy_time_anchor,
+                let mut info = *SYSTEM_INFO.lock().await;
+                info.keep_alive_remaining_s = gps::get_keep_alive_remaining_s().await;
+                render_current_page(
+                    display,
+                    text_style,
+                    text_settings,
+                    &info,
+                    tz_cache,
+                    *current_page,
+                    *findmy_addr,
+                    *fmdn_addr,
+                    findmy_time_anchor,
                 )
                 .await;
             }
@@ -387,9 +458,56 @@ async fn handle_command(
         DisplayCommand::ClearFindMyAddress => {
             *findmy_addr = None;
             if *display_on && !*usb_mode && *current_page == DisplayPage::FindMy {
-                refresh_display(
-                    display, text_style, text_settings, tz_cache,
-                    *current_page, *findmy_addr, findmy_time_anchor,
+                let mut info = *SYSTEM_INFO.lock().await;
+                info.keep_alive_remaining_s = gps::get_keep_alive_remaining_s().await;
+                render_current_page(
+                    display,
+                    text_style,
+                    text_settings,
+                    &info,
+                    tz_cache,
+                    *current_page,
+                    *findmy_addr,
+                    *fmdn_addr,
+                    findmy_time_anchor,
+                )
+                .await;
+            }
+        }
+        DisplayCommand::SetFmdnAddress(addr) => {
+            *fmdn_addr = Some(addr);
+            if *display_on && !*usb_mode && *current_page == DisplayPage::GoogleFmdn {
+                let mut info = *SYSTEM_INFO.lock().await;
+                info.keep_alive_remaining_s = gps::get_keep_alive_remaining_s().await;
+                render_current_page(
+                    display,
+                    text_style,
+                    text_settings,
+                    &info,
+                    tz_cache,
+                    *current_page,
+                    *findmy_addr,
+                    *fmdn_addr,
+                    findmy_time_anchor,
+                )
+                .await;
+            }
+        }
+        DisplayCommand::ClearFmdnAddress => {
+            *fmdn_addr = None;
+            if *display_on && !*usb_mode && *current_page == DisplayPage::GoogleFmdn {
+                let mut info = *SYSTEM_INFO.lock().await;
+                info.keep_alive_remaining_s = gps::get_keep_alive_remaining_s().await;
+                render_current_page(
+                    display,
+                    text_style,
+                    text_settings,
+                    &info,
+                    tz_cache,
+                    *current_page,
+                    *findmy_addr,
+                    *fmdn_addr,
+                    findmy_time_anchor,
                 )
                 .await;
             }
@@ -464,6 +582,7 @@ async fn render_current_page(
     tz_cache: &mut TzCache,
     page: DisplayPage,
     findmy_addr: Option<[u8; 6]>,
+    fmdn_addr: Option<[u8; 6]>,
     findmy_time_anchor: &mut Option<DisplayTimeAnchor>,
 ) {
     match page {
@@ -472,32 +591,10 @@ async fn render_current_page(
             let findmy_time = resolve_findmy_display_time(info, findmy_time_anchor);
             render_findmy_page(display, text_style, text_settings, info, findmy_addr, findmy_time)
         }
+        DisplayPage::GoogleFmdn => {
+            render_fmdn_page(display, text_style, text_settings, info, fmdn_addr)
+        }
     }
-}
-
-/// Fetch current system info + keep-alive and render the active page.
-async fn refresh_display(
-    display: &mut Display,
-    text_style: &MonoTextStyle<'_, BinaryColor>,
-    text_settings: embedded_graphics::text::TextStyle,
-    tz_cache: &mut TzCache,
-    current_page: DisplayPage,
-    findmy_addr: Option<[u8; 6]>,
-    findmy_time_anchor: &mut Option<DisplayTimeAnchor>,
-) {
-    let mut info = *SYSTEM_INFO.lock().await;
-    info.keep_alive_remaining_s = gps::get_keep_alive_remaining_s().await;
-    render_current_page(
-        display,
-        text_style,
-        text_settings,
-        &info,
-        tz_cache,
-        current_page,
-        findmy_addr,
-        findmy_time_anchor,
-    )
-    .await;
 }
 
 fn render_main_page(
@@ -646,10 +743,6 @@ fn render_findmy_page(
     draw_line(display, text_style, text_settings, 1, "FM:", status);
     draw_line(display, text_style, text_settings, 2, "MAC:", mac);
 
-    let mut gps_state = String::<32>::new();
-    gps_state.push_str(gps_state_label(info.gps_state)).ok();
-    draw_line(display, text_style, text_settings, 3, "GPS: ", gps_state);
-
     let (date_text, time_text, estimated_time) = if info.date_time_valid {
         (format_date(info), format_time(info), false)
     } else if let Some(unix_ts) = findmy_time.unix_ts {
@@ -666,12 +759,12 @@ fn render_findmy_page(
         (na_date, na_time, false)
     };
 
-    draw_line(display, text_style, text_settings, 4, "Date: ", date_text);
+    draw_line(display, text_style, text_settings, 3, "Date: ", date_text);
     draw_line(
         display,
         text_style,
         text_settings,
-        5,
+        4,
         if estimated_time { "Time*: " } else { "Time: " },
         time_text,
     );
@@ -679,18 +772,132 @@ fn render_findmy_page(
     let _ = display.flush();
 }
 
-fn render_usb_mode(
+fn render_fmdn_page(
     display: &mut Display,
     text_style: &MonoTextStyle<'_, BinaryColor>,
     text_settings: embedded_graphics::text::TextStyle,
+    info: &SystemInfo,
+    fmdn_addr: Option<[u8; 6]>,
 ) {
     let _ = display.clear(BinaryColor::Off);
+
+    // Battery on right side of line 0 (consistent with other pages).
+    let mut battery = String::<16>::new();
+    if info.battery_voltage >= 0.0 {
+        let percent = estimate_battery_level(info.battery_voltage * 1000.0);
+        let _ = write!(battery, "{:.0}%", percent);
+    } else {
+        battery.push_str("N/A").ok();
+    }
+    let battery_width = text_width(text_style, &battery);
+    let battery_x = SCREEN_WIDTH - 1 - battery_width;
+    Text::with_text_style(&battery, Point::new(battery_x, 0), *text_style, text_settings)
+        .draw(display)
+        .ok();
+
+    let status = fmdn_diag_text();
+    draw_line(display, text_style, text_settings, 1, "FMDN:", status);
+
+    let mac = format_findmy_mac(fmdn_addr);
+    draw_line(display, text_style, text_settings, 2, "MAC:", mac);
+
+    let date_text = format_date(info);
+    draw_line(display, text_style, text_settings, 3, "Date: ", date_text);
+
+    let time_text = if info.date_time_valid {
+        format_time(info)
+    } else {
+        let mut na = String::<32>::new();
+        na.push_str("N/A").ok();
+        na
+    };
+    draw_line(display, text_style, text_settings, 4, "Time: ", time_text);
+
+    let rotation = fmdn_rotation_text(info);
+    draw_line(display, text_style, text_settings, 5, "EID: ", rotation);
+
+    let _ = display.flush();
+}
+
+#[cfg(feature = "google-fmdn")]
+fn fmdn_diag_text() -> String<32> {
+    let mut out = String::<32>::new();
+    match crate::google_fmdn::diag_state() {
+        crate::google_fmdn::FmdnDiagState::Disabled => {
+            out.push_str("Disabled").ok();
+        }
+        crate::google_fmdn::FmdnDiagState::WaitingGpsTime => {
+            out.push_str("Wait GPS time").ok();
+        }
+        crate::google_fmdn::FmdnDiagState::WaitingBleIdle => {
+            out.push_str("Wait BLE idle").ok();
+        }
+        crate::google_fmdn::FmdnDiagState::EidReady => {
+            out.push_str("EID ready").ok();
+        }
+        crate::google_fmdn::FmdnDiagState::Advertising => {
+            out.push_str("Broadcasting").ok();
+        }
+        crate::google_fmdn::FmdnDiagState::SetAddrFailed => {
+            out.push_str("Set addr fail").ok();
+        }
+        crate::google_fmdn::FmdnDiagState::AdvConfigureFailed => {
+            out.push_str("Adv cfg fail").ok();
+        }
+        crate::google_fmdn::FmdnDiagState::AdvStartFailed => {
+            out.push_str("Adv start fail").ok();
+        }
+    }
+    out
+}
+
+#[cfg(not(feature = "google-fmdn"))]
+fn fmdn_diag_text() -> String<32> {
+    let mut out = String::<32>::new();
+    out.push_str("N/A").ok();
+    out
+}
+
+#[cfg(feature = "google-fmdn")]
+fn fmdn_rotation_text(info: &SystemInfo) -> String<32> {
+    let mut out = String::<32>::new();
+    if !crate::google_fmdn::is_enabled() {
+        out.push_str("N/A").ok();
+        return out;
+    }
+    if let Some(unix_ts) = info_unix_ts(info) {
+        // EID rotation every 1024 seconds.
+        let period = 1024u64;
+        let remaining = period - (unix_ts % period);
+        let _ = write!(out, "rot {}s", remaining);
+    } else {
+        out.push_str("no time").ok();
+    }
+    out
+}
+
+#[cfg(not(feature = "google-fmdn"))]
+fn fmdn_rotation_text(_info: &SystemInfo) -> String<32> {
+    let mut out = String::<32>::new();
+    out.push_str("N/A").ok();
+    out
+}
+
+fn render_usb_mode(
+    display: &mut Display,
+    _text_style: &MonoTextStyle<'_, BinaryColor>,
+    _text_settings: embedded_graphics::text::TextStyle,
+) {
+    let _ = display.clear(BinaryColor::Off);
+
+    let text_style = MonoTextStyle::new(&FONT_6X9, BinaryColor::On);
+    let text_settings = TextStyleBuilder::new().baseline(Baseline::Top).build();
 
     // Top text: "USB Mass Storage"
     let title = "USB Mass Storage";
     let title_width = title.len() as i32 * 6;
     let title_x = (128 - title_width) / 2;
-    Text::with_text_style(title, Point::new(title_x, 2), *text_style, text_settings)
+    Text::with_text_style(title, Point::new(title_x, 2), text_style, text_settings)
         .draw(display)
         .ok();
 
@@ -705,7 +912,7 @@ fn render_usb_mode(
     let status = "Connected";
     let status_width = status.len() as i32 * 6;
     let status_x = (128 - status_width) / 2;
-    Text::with_text_style(status, Point::new(status_x, 48), *text_style, text_settings)
+    Text::with_text_style(status, Point::new(status_x, 48), text_style, text_settings)
         .draw(display)
         .ok();
 
@@ -713,7 +920,7 @@ fn render_usb_mode(
     let hint = "Safe to transfer";
     let hint_width = hint.len() as i32 * 6;
     let hint_x = (128 - hint_width) / 2;
-    Text::with_text_style(hint, Point::new(hint_x, 57), *text_style, text_settings)
+    Text::with_text_style(hint, Point::new(hint_x, 57), text_style, text_settings)
         .draw(display)
         .ok();
 

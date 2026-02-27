@@ -29,7 +29,7 @@ use sha2::{Digest, Sha256};
 
 use nrf_softdevice::{raw, RawError, Softdevice};
 
-use crate::adv_scheduler::{AdvPriority, ADV_SCHEDULER};
+use crate::adv_scheduler::{AdvPriority, ALTERNATION_SECS, ADV_SCHEDULER};
 use crate::display;
 use crate::storage;
 use crate::system_info::SYSTEM_INFO;
@@ -715,10 +715,12 @@ pub async fn findmy_task(_sd: &'static Softdevice) {
             set_diag_state(FindMyDiagState::Advertising);
             defmt::info!("FindMy: advertising (counter={})", current_counter);
 
-            // Wait until: preempted by main BLE, rotation timer fires, or disabled.
+            // Wait until: preempted by main BLE, alternation slice expires, or
+            // rotation timer fires.  Use short slices to allow FMDN alternation.
             let sleep_secs =
                 secs_until_next_rotation_from_unix(unix_ts).unwrap_or(KEY_ROTATION_SECS);
-            let rotation_timer = Timer::after(Duration::from_secs(sleep_secs + 1));
+            let adv_secs = core::cmp::min(sleep_secs + 1, ALTERNATION_SECS);
+            let rotation_timer = Timer::after(Duration::from_secs(adv_secs));
 
             match select(guard.wait_preempted(), rotation_timer).await {
                 Either::First(()) => {
