@@ -86,7 +86,8 @@ def _get_android_id(cache: dict) -> str:
 
 def _request_oauth_token() -> str:
     """Open Chrome for interactive Google login, extract oauth_token cookie."""
-    import undetected_chromedriver as uc
+    from selenium import webdriver
+    from selenium.webdriver.chrome.options import Options as ChromeOptions
     from selenium.webdriver.support.ui import WebDriverWait
 
     print("Opening Chrome for Google login...", file=sys.stderr)
@@ -95,11 +96,33 @@ def _request_oauth_token() -> str:
         file=sys.stderr,
     )
 
-    options = uc.ChromeOptions()
-    options.add_argument("--no-first-run")
-    options.add_argument("--no-default-browser-check")
+    uc_import_error = None
+    driver = None
 
-    driver = uc.Chrome(options=options)
+    # Prefer undetected-chromedriver when it imports correctly. On Python
+    # 3.12+, some versions fail because they import stdlib distutils.
+    try:
+        import undetected_chromedriver as uc
+
+        options = uc.ChromeOptions()
+        options.add_argument("--no-first-run")
+        options.add_argument("--no-default-browser-check")
+        driver = uc.Chrome(options=options)
+    except Exception as exc:
+        uc_import_error = exc
+
+    if driver is None:
+        if uc_import_error is not None:
+            print(
+                "undetected-chromedriver unavailable; using Selenium fallback.",
+                file=sys.stderr,
+            )
+        options = ChromeOptions()
+        options.add_argument("--no-first-run")
+        options.add_argument("--no-default-browser-check")
+        options.add_argument("--disable-blink-features=AutomationControlled")
+        driver = webdriver.Chrome(options=options)
+
     try:
         driver.get("https://accounts.google.com/EmbeddedSetup")
 
@@ -456,6 +479,7 @@ def _parse_device_list(data: bytes) -> list[dict]:
 
         # Extract location reports
         locations = []
+        timestamps = []
         for _, info_bytes in device_fields.get(4, []):
             if not isinstance(info_bytes, bytes):
                 continue
@@ -471,7 +495,6 @@ def _parse_device_list(data: bytes) -> list[dict]:
                         locations.append(loc_bytes)
 
                 # networkLocationTimestamps (field 6, repeated)
-                timestamps = []
                 for _, ts_bytes in loc_fields.get(6, []):
                     if isinstance(ts_bytes, bytes):
                         ts_fields = _decode_protobuf_fields(ts_bytes)
