@@ -450,10 +450,12 @@ def add_subcommands(subparsers) -> None:
         default=24,
         help="Hours to look back (default: 24)",
     )
+    from gps_tracker_tools.fmdn_fetch import DEFAULT_TOKEN_CACHE
+
     fetch.add_argument(
         "--token-cache",
-        default="~/.config/gps-tracker/google_tokens.json",
-        help="Path to token cache file",
+        default=DEFAULT_TOKEN_CACHE,
+        help=f"Path to token cache file (default: {DEFAULT_TOKEN_CACHE})",
     )
     fetch.add_argument(
         "-o", "--output", help="Save results to JSON file"

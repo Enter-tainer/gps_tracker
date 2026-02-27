@@ -15,6 +15,8 @@ import json
 import sys
 
 from gps_tracker_tools import findmy, fmdn, casic, gps_format, uf2
+from gps_tracker_tools.findmy import DEFAULT_ANISETTE_URL, DEFAULT_AUTH_PATH
+from gps_tracker_tools.fmdn_fetch import DEFAULT_TOKEN_CACHE
 from gps_tracker_tools.gpx import dedupe_reports, reports_to_gpx, write_gpx
 
 
@@ -168,17 +170,18 @@ Examples:
     )
     p_fetch.add_argument(
         "--auth",
-        help="Apple auth.json path",
+        default=DEFAULT_AUTH_PATH,
+        help=f"Apple auth.json path (default: {DEFAULT_AUTH_PATH})",
     )
     p_fetch.add_argument(
         "--anisette-url",
-        default="http://localhost:6969",
-        help="Anisette v3 server URL",
+        default=DEFAULT_ANISETTE_URL,
+        help=f"Anisette v3 server URL (default: {DEFAULT_ANISETTE_URL})",
     )
     p_fetch.add_argument(
         "--token-cache",
-        default="~/.config/gps-tracker/google_tokens.json",
-        help="Google token cache path",
+        default=DEFAULT_TOKEN_CACHE,
+        help=f"Google token cache path (default: {DEFAULT_TOKEN_CACHE})",
     )
     p_fetch.add_argument(
         "--gpx",

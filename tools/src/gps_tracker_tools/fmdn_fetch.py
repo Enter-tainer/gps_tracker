@@ -353,6 +353,12 @@ SPOT_HEADERS = {
     "Grpc-Accept-Encoding": "gzip",
 }
 
+# MCU tracker identification (ref: GoogleFindMyTools CreateBleDevice/config.py)
+MCU_FAST_PAIR_MODEL_ID = "003200"
+
+# Upload window: 4 days of precomputed key IDs
+MAX_TRUNCATED_EID_SECONDS = 4 * 24 * 3600
+
 
 def _spot_request(method: str, payload: bytes, spot_token: str) -> bytes:
     """Make a gRPC request to the Spot API."""
@@ -374,6 +380,102 @@ def _spot_request(method: str, payload: bytes, spot_token: str) -> bytes:
             )
             return b""
         return _extract_grpc_payload(response.content)
+
+
+def _build_upload_key_ids_request(
+    canonic_id: str,
+    pair_date: int,
+    eik: bytes,
+) -> bytes:
+    """Build UploadPrecomputedPublicKeyIdsRequest protobuf.
+
+    UploadPrecomputedPublicKeyIdsRequest {
+      repeated DevicePublicKeyIds deviceEids = 1 {
+        CanonicId canonicId = 1 { string id = 1; }
+        PublicKeyIdList clientList = 2 {
+          repeated PublicKeyIdInfo publicKeyIdInfo = 1 {
+            Time timestamp = 1 { uint32 seconds = 1; }
+            TruncatedEID publicKeyId = 2 { bytes truncatedEid = 1; }
+          }
+        }
+        int32 pairDate = 3;
+      }
+    }
+    """
+    now = int(time.time())
+    start_ts = (now - 3 * 3600) & ~((1 << K) - 1)  # 3 hours back, aligned
+    end_ts = now + MAX_TRUNCATED_EID_SECONDS
+
+    # Build repeated PublicKeyIdInfo entries
+    key_id_entries = b""
+    ts = start_ts
+    while ts <= end_ts:
+        eid_result = compute_eid(eik, ts)
+        truncated_eid = eid_result["eid"][:10]
+
+        # Time { seconds = 1 }
+        time_msg = _encode_field(1, 0, _encode_varint(ts))
+        # TruncatedEID { truncatedEid = 1 }
+        trunc_msg = _encode_field(1, 2, truncated_eid)
+
+        # PublicKeyIdInfo { timestamp=1, publicKeyId=2 }
+        info_msg = (
+            _encode_field(1, 2, time_msg)
+            + _encode_field(2, 2, trunc_msg)
+        )
+        # PublicKeyIdList.publicKeyIdInfo (field 1, repeated)
+        key_id_entries += _encode_field(1, 2, info_msg)
+
+        ts += EID_ROTATION_SECS
+
+    # CanonicId { id = 1 }
+    canonic_msg = _encode_field(1, 2, canonic_id.encode())
+    # PublicKeyIdList (wraps repeated entries)
+    client_list_msg = key_id_entries
+
+    # DevicePublicKeyIds { canonicId=1, clientList=2, pairDate=3 }
+    device_eids = (
+        _encode_field(1, 2, canonic_msg)
+        + _encode_field(2, 2, client_list_msg)
+        + _encode_field(3, 0, _encode_varint(pair_date))
+    )
+
+    # UploadPrecomputedPublicKeyIdsRequest { deviceEids = 1 }
+    return _encode_field(1, 2, device_eids)
+
+
+def _upload_precomputed_key_ids(
+    eik: bytes,
+    devices: list[dict],
+    spot_token: str,
+) -> None:
+    """Upload precomputed key IDs for MCU tracker devices.
+
+    This tells Google's network what EIDs to expect from our custom tags,
+    enabling crowdsourced location report collection.
+    """
+    mcu_devices = [d for d in devices if d.get("is_mcu_tracker")]
+    if not mcu_devices:
+        print(
+            "No MCU tracker devices found to upload key IDs for.",
+            file=sys.stderr,
+        )
+        return
+
+    for device in mcu_devices:
+        canonic_id = device["canonic_id"]
+        pair_date = device.get("pair_date", 0)
+        name = device.get("name", "Unknown")
+
+        print(
+            f"  Uploading key IDs for '{name}' ({canonic_id})...",
+            file=sys.stderr,
+        )
+
+        payload = _build_upload_key_ids_request(canonic_id, pair_date, eik)
+        _spot_request(
+            "UploadPrecomputedPublicKeyIds", payload, spot_token
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -457,8 +559,10 @@ def _parse_device_list(data: bytes) -> list[dict]:
                             "utf-8", errors="replace"
                         )
 
-        # Extract device info -> registration -> encryptedUserSecrets
+        # Extract device info -> registration fields
         encrypted_eik = b""
+        fast_pair_model_id = ""
+        pair_date = 0
         for _, info_bytes in device_fields.get(4, []):
             if not isinstance(info_bytes, bytes):
                 continue
@@ -467,6 +571,8 @@ def _parse_device_list(data: bytes) -> list[dict]:
                 if not isinstance(reg_bytes, bytes):
                     continue
                 reg_fields = _decode_protobuf_fields(reg_bytes)
+
+                # encryptedUserSecrets (field 19)
                 for _, secrets_bytes in reg_fields.get(19, []):
                     if not isinstance(secrets_bytes, bytes):
                         continue
@@ -476,6 +582,18 @@ def _parse_device_list(data: bytes) -> list[dict]:
                     for _, eik_val in secrets_fields.get(1, []):
                         if isinstance(eik_val, bytes):
                             encrypted_eik = eik_val
+
+                # fastPairModelId (field 21)
+                for _, val in reg_fields.get(21, []):
+                    if isinstance(val, bytes):
+                        fast_pair_model_id = val.decode(
+                            "utf-8", errors="replace"
+                        )
+
+                # pairDate (field 23)
+                for _, val in reg_fields.get(23, []):
+                    if isinstance(val, int):
+                        pair_date = val
 
         # Extract location reports
         locations = []
@@ -507,6 +625,10 @@ def _parse_device_list(data: bytes) -> list[dict]:
                 "name": name,
                 "canonic_id": canonic_id,
                 "encrypted_eik": encrypted_eik,
+                "fast_pair_model_id": fast_pair_model_id,
+                "pair_date": pair_date,
+                "is_mcu_tracker": fast_pair_model_id
+                == MCU_FAST_PAIR_MODEL_ID,
                 "raw_locations": locations,
                 "location_timestamps": timestamps,
             }
@@ -819,6 +941,7 @@ def fetch_fmdn_reports(
     # Get authentication tokens
     print("Authenticating with Google...", file=sys.stderr)
     adm_token = _get_adm_token(cache)
+    spot_token = _get_spot_token(cache)
     _save_token_cache(token_cache, cache)
 
     # List devices to get location reports
@@ -841,8 +964,12 @@ def fetch_fmdn_reports(
         file=sys.stderr,
     )
 
-    # Find the device matching our EIK
-    # Since we already have the EIK, we decrypt location reports directly
+    # Upload precomputed key IDs for MCU tracker devices
+    # This tells Google's network what EIDs to collect reports for
+    print("Uploading precomputed key IDs...", file=sys.stderr)
+    _upload_precomputed_key_ids(eik, devices, spot_token)
+
+    # Decrypt location reports
     all_results = []
 
     for device in devices:

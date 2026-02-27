@@ -29,6 +29,9 @@ import struct
 import sys
 import time
 
+DEFAULT_AUTH_PATH = "~/.config/gps-tracker/auth.json"
+DEFAULT_ANISETTE_URL = "http://localhost:6969"
+
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -436,9 +439,7 @@ def cmd_fetch(args):
     """Derive keys, fetch reports from Apple, decrypt."""
     priv, sk0, epoch = load_key_material(args)
 
-    auth_path = args.auth or os.path.join(
-        os.path.dirname(__file__), "auth.json"
-    )
+    auth_path = os.path.expanduser(args.auth or DEFAULT_AUTH_PATH)
     if not os.path.exists(auth_path):
         print(
             f"Error: auth.json not found at {auth_path}\n"
@@ -587,11 +588,15 @@ def add_subcommands(subparsers) -> None:
         default=24,
         help="Hours to look back (default: 24)",
     )
-    p_fetch.add_argument("--auth", help="Path to auth.json")
+    p_fetch.add_argument(
+        "--auth",
+        default=DEFAULT_AUTH_PATH,
+        help=f"Path to auth.json (default: {DEFAULT_AUTH_PATH})",
+    )
     p_fetch.add_argument(
         "--anisette-url",
-        default="http://localhost:6969",
-        help="Anisette v3 server URL (default: http://localhost:6969)",
+        default=DEFAULT_ANISETTE_URL,
+        help=f"Anisette v3 server URL (default: {DEFAULT_ANISETTE_URL})",
     )
     p_fetch.add_argument(
         "-o", "--output", help="Save results to JSON file"
