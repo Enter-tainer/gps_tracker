@@ -16,6 +16,7 @@ mod findmy;
 mod google_fmdn;
 mod gps;
 #[cfg(feature = "google-fmdn")]
+#[allow(dead_code)]
 mod secp160r1;
 mod protocol;
 mod storage;

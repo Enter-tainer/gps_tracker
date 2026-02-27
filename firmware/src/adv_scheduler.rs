@@ -35,14 +35,6 @@ pub enum AdvPriority {
     FmdnAdv = 2,
 }
 
-impl AdvPriority {
-    fn from_index(index: usize) -> Self {
-        match index {
-            0 => Self::MainAdv,
-            _ => Self::FindMyAdv,
-        }
-    }
-}
 
 struct SchedulerState {
     current_holder: Option<AdvPriority>,
