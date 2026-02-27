@@ -3,8 +3,8 @@ Google FMDN location report fetching and decryption.
 
 Implements the full flow:
 1. Google OAuth authentication (Chrome → oauth_token → AAS token → ADM/Spot tokens)
-2. Spot API (gRPC over HTTP/2) for key retrieval
-3. Nova API for device listing and location requests
+2. Nova API for device listing and location reports
+3. Spot API: upload precomputed key IDs for MCU trackers (enables crowdsourced reports)
 4. EID-based location report decryption (SECP160R1 + HKDF-SHA256 + AES-EAX-256)
 
 Reference: GoogleFindMyTools (https://github.com/leonboe1/GoogleFindMyTools)
