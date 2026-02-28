@@ -1,21 +1,24 @@
 """
-Google FMDN location report fetching and decryption.
+Google FMDN location report fetching, decryption, and device registration.
 
 Implements the full flow:
 1. Google OAuth authentication (Chrome → oauth_token → AAS token → ADM/Spot tokens)
 2. Nova API for device listing and location reports
 3. Spot API: upload precomputed key IDs for MCU trackers (enables crowdsourced reports)
-4. EID-based location report decryption (SECP160R1 + HKDF-SHA256 + AES-EAX-256)
+4. Spot API: register BLE device (CreateBleDevice) with encrypted EIK
+5. EID-based location report decryption (SECP160R1 + HKDF-SHA256 + AES-EAX-256)
 
 Reference: GoogleFindMyTools (https://github.com/leonboe1/GoogleFindMyTools)
 """
 
+import base64
 import hashlib
 import json
 import os
 import struct
 import sys
 import time
+import uuid
 from pathlib import Path
 
 from gps_tracker_tools.fmdn import (
@@ -30,6 +33,9 @@ from gps_tracker_tools.fmdn import (
     SECP160R1_P,
     _sqrt_mod,
     compute_eid,
+    derive_recovery_key,
+    derive_ring_key,
+    derive_tracking_key,
     scalar_mul,
 )
 
@@ -421,6 +427,462 @@ def _build_upload_key_ids_request(
 
     # UploadPrecomputedPublicKeyIdsRequest { deviceEids = 1 }
     return _encode_field(1, 2, device_eids)
+
+
+def _encode_signed_varint(value: int) -> bytes:
+    """Encode a signed int32 as a protobuf varint (two's complement 64-bit)."""
+    if value < 0:
+        value = (1 << 64) + value
+    return _encode_varint(value)
+
+
+# ---------------------------------------------------------------------------
+# Owner Key retrieval (Chrome vault + Spot API)
+# ---------------------------------------------------------------------------
+
+
+def _build_security_domain_url() -> str:
+    """Build the Google Security Domain unlock URL for vault key extraction.
+
+    Constructs EncryptionUnlockRequestExtras protobuf:
+      field 1 (varint): operation = 1
+      field 2 (message): SecurityDomain { name="finder_hw", unknown=0 }
+      field 6 (string): sessionId = random UUID
+    """
+    session_id = str(uuid.uuid4())
+
+    security_domain = _encode_field(
+        1, 2, b"finder_hw"
+    ) + _encode_field(2, 0, _encode_varint(0))
+
+    extras = (
+        _encode_field(1, 0, _encode_varint(1))
+        + _encode_field(2, 2, security_domain)
+        + _encode_field(6, 2, session_id.encode())
+    )
+
+    encoded = base64.b64encode(extras).decode()
+    return (
+        "https://accounts.google.com/encryption/unlock/android?kdi="
+        + encoded
+    )
+
+
+def _parse_vault_keys(vault_keys_json: str) -> bytes:
+    """Extract finder_hw shared key from vault keys JSON."""
+    data = json.loads(vault_keys_json)
+
+    if "finder_hw" not in data:
+        raise ValueError("No 'finder_hw' key found in vault keys")
+
+    for item in data["finder_hw"]:
+        key_data = item["key"]
+        return bytes(key_data[str(i)] for i in range(len(key_data)))
+
+    raise ValueError("Empty finder_hw key array")
+
+
+def _get_shared_key(cache: dict) -> bytes:
+    """Get vault shared key via Chrome automation + JS injection.
+
+    Opens Chrome for user to sign in, navigates to the security domain
+    unlock page, and intercepts vault keys via injected JavaScript.
+    """
+    if "shared_key" in cache:
+        return bytes.fromhex(cache["shared_key"])
+
+    from selenium import webdriver
+    from selenium.webdriver.chrome.options import Options as ChromeOptions
+    from selenium.webdriver.support import expected_conditions as ec
+    from selenium.webdriver.support.ui import WebDriverWait
+
+    print(
+        "Opening Chrome to retrieve vault shared key...",
+        file=sys.stderr,
+    )
+    print(
+        "Please sign in and enter your screen lock PIN/password.",
+        file=sys.stderr,
+    )
+
+    options = ChromeOptions()
+    options.add_argument("--no-first-run")
+    options.add_argument("--no-default-browser-check")
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    driver = webdriver.Chrome(options=options)
+
+    try:
+        driver.get("https://accounts.google.com/")
+
+        WebDriverWait(driver, 300).until(
+            ec.url_contains("https://myaccount.google.com")
+        )
+        print(
+            "Signed in. Opening security domain page...",
+            file=sys.stderr,
+        )
+
+        security_url = _build_security_domain_url()
+        driver.get(security_url)
+
+        # Inject JS interface to capture vault keys
+        driver.execute_script(
+            """
+            window.mm = {
+                setVaultSharedKeys: function(str, vaultKeys) {
+                    alert(JSON.stringify({
+                        method: 'setVaultSharedKeys',
+                        vaultKeys: vaultKeys
+                    }));
+                },
+                closeView: function() {
+                    alert(JSON.stringify({ method: 'closeView' }));
+                }
+            };
+            """
+        )
+
+        while True:
+            try:
+                WebDriverWait(driver, 0.5).until(
+                    ec.alert_is_present()
+                )
+                alert = driver.switch_to.alert
+                message = alert.text
+                alert.accept()
+
+                data = json.loads(message)
+
+                if data["method"] == "setVaultSharedKeys":
+                    shared_key = _parse_vault_keys(
+                        data["vaultKeys"]
+                    )
+                    cache["shared_key"] = shared_key.hex()
+                    print(
+                        "Vault shared key retrieved.",
+                        file=sys.stderr,
+                    )
+                    return shared_key
+                elif data["method"] == "closeView":
+                    break
+            except Exception:
+                pass
+    finally:
+        driver.quit()
+
+    raise RuntimeError("Failed to retrieve vault shared key")
+
+
+def _build_eid_info_request() -> bytes:
+    """Build GetEidInfoForE2eeDevicesRequest protobuf.
+
+    GetEidInfoForE2eeDevicesRequest {
+      int32 ownerKeyVersion = 1;  // -1
+      bool hasOwnerKeyVersion = 2;  // true
+    }
+    """
+    return _encode_field(
+        1, 0, _encode_signed_varint(-1)
+    ) + _encode_field(2, 0, _encode_varint(1))
+
+
+def _parse_eid_info_response(data: bytes) -> tuple[bytes, int]:
+    """Parse GetEidInfoForE2eeDevicesResponse.
+
+    Response structure:
+      field 4: EncryptedOwnerKeyAndMetadata {
+        bytes encryptedOwnerKey = 1;
+        int32 ownerKeyVersion = 2;
+      }
+
+    Returns (encrypted_owner_key, owner_key_version).
+    """
+    fields = _decode_protobuf_fields(data)
+
+    for _, metadata_bytes in fields.get(4, []):
+        if not isinstance(metadata_bytes, bytes):
+            continue
+        meta_fields = _decode_protobuf_fields(metadata_bytes)
+
+        encrypted_owner_key = b""
+        owner_key_version = 0
+
+        for _, val in meta_fields.get(1, []):
+            if isinstance(val, bytes):
+                encrypted_owner_key = val
+
+        for _, val in meta_fields.get(2, []):
+            if isinstance(val, int):
+                owner_key_version = val
+
+        if encrypted_owner_key:
+            return encrypted_owner_key, owner_key_version
+
+    raise ValueError(
+        "No encrypted owner key found in EID info response"
+    )
+
+
+def _get_owner_key(cache: dict, spot_token: str) -> bytes:
+    """Get owner key by combining shared key + GetEidInfo API.
+
+    Flow:
+    1. Get shared_key (Chrome vault extraction, cached)
+    2. Call Spot API GetEidInfoForE2eeDevices → encrypted_owner_key
+    3. AES-GCM decrypt: owner_key = decrypt(shared_key, encrypted_owner_key)
+    """
+    if "owner_key" in cache:
+        return bytes.fromhex(cache["owner_key"])
+
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+    shared_key = _get_shared_key(cache)
+
+    print("Retrieving encrypted owner key...", file=sys.stderr)
+    request_payload = _build_eid_info_request()
+    response = _spot_request(
+        "GetEidInfoForE2eeDevices", request_payload, spot_token
+    )
+
+    if not response:
+        raise RuntimeError(
+            "Empty response from GetEidInfoForE2eeDevices"
+        )
+
+    encrypted_owner_key, version = _parse_eid_info_response(response)
+    print(f"  Owner key version: {version}", file=sys.stderr)
+
+    # Decrypt: IV (12 bytes) || ciphertext || tag (16 bytes)
+    iv = encrypted_owner_key[:12]
+    ciphertext_and_tag = encrypted_owner_key[12:]
+    aes_gcm = AESGCM(shared_key)
+    owner_key = aes_gcm.decrypt(iv, ciphertext_and_tag, None)
+
+    cache["owner_key"] = owner_key.hex()
+    cache["owner_key_version"] = version
+    print(
+        f"  Owner key retrieved ({len(owner_key)} bytes).",
+        file=sys.stderr,
+    )
+    return owner_key
+
+
+# ---------------------------------------------------------------------------
+# Device registration (CreateBleDevice)
+# ---------------------------------------------------------------------------
+
+
+def _flip_bits(data: bytes) -> bytes:
+    """Flip all bits in each byte (XOR 0xFF).
+
+    Applied to encrypted EIK to prevent Android devices from
+    directly decrypting it; only the server with owner_key can reverse.
+    """
+    return bytes(b ^ 0xFF for b in data)
+
+
+def _encrypt_eik_for_registration(
+    owner_key: bytes, eik: bytes
+) -> bytes:
+    """Encrypt EIK with owner_key via AES-GCM, then flip bits.
+
+    Returns: flip_bits(IV || ciphertext || tag) = 60 bytes
+    """
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+    iv = os.urandom(12)
+    aes_gcm = AESGCM(owner_key)
+    ciphertext = aes_gcm.encrypt(iv, eik, None)
+    encrypted = iv + ciphertext  # 12 + 32 + 16 = 60 bytes
+    return _flip_bits(encrypted)
+
+
+def _build_register_request(
+    eik: bytes,
+    owner_key: bytes,
+    pair_date: int,
+    name: str = "GPS Tracker µC",
+) -> bytes:
+    """Build RegisterBleDeviceRequest protobuf.
+
+    See PLAN.md section 1.2 for full field mapping.
+    """
+    encrypted_eik = _encrypt_eik_for_registration(owner_key, eik)
+
+    ring_key = derive_ring_key(eik)
+    recovery_key = derive_recovery_key(eik)
+    tracking_key = derive_tracking_key(eik)
+
+    # Description (field 10)
+    description = _encode_field(
+        1, 2, name.encode()
+    ) + _encode_field(
+        2, 0, _encode_varint(1)  # DEVICE_TYPE_BEACON
+    )
+
+    # Capabilities (field 11)
+    capabilities = (
+        _encode_field(1, 0, _encode_varint(1))  # isAdvertising
+        + _encode_field(5, 0, _encode_varint(1))  # capableComponents
+        + _encode_field(
+            6, 0, _encode_varint(1)
+        )  # trackableComponents
+    )
+
+    # EncryptedUserSecrets
+    creation_date = _encode_field(1, 0, _encode_varint(pair_date))
+    encrypted_user_secrets = (
+        _encode_field(1, 2, encrypted_eik)
+        + _encode_field(3, 0, _encode_varint(1))  # ownerKeyVersion
+        + _encode_field(4, 2, os.urandom(44))  # encryptedAccountKey
+        + _encode_field(8, 2, creation_date)  # creationDate
+        + _encode_field(
+            11, 2, os.urandom(60)
+        )  # encryptedSha256AccountKeyPublicAddress
+    )
+
+    # PublicKeyIdList: 4 days of precomputed key IDs
+    key_id_entries = b""
+    ts = pair_date
+    end_ts = pair_date + MAX_TRUNCATED_EID_SECONDS
+
+    while ts < end_ts:
+        eid_result = compute_eid(eik, ts)
+        truncated_eid = eid_result["eid"][:10]
+
+        time_msg = _encode_field(1, 0, _encode_varint(ts))
+        trunc_msg = _encode_field(1, 2, truncated_eid)
+
+        info_msg = _encode_field(1, 2, time_msg) + _encode_field(
+            2, 2, trunc_msg
+        )
+        key_id_entries += _encode_field(1, 2, info_msg)
+
+        ts += EID_ROTATION_SECS
+
+    # E2EEPublicKeyRegistration (field 16)
+    e2ee_registration = (
+        _encode_field(
+            1, 0, _encode_varint(10)
+        )  # rotationExponent = K
+        + _encode_field(3, 2, encrypted_user_secrets)
+        + _encode_field(4, 2, key_id_entries)
+        + _encode_field(
+            5, 0, _encode_varint(pair_date)
+        )  # pairingDate
+    )
+
+    # Full RegisterBleDeviceRequest
+    return (
+        _encode_field(
+            7, 2, MCU_FAST_PAIR_MODEL_ID.encode()
+        )  # fastPairModelId
+        + _encode_field(10, 2, description)
+        + _encode_field(11, 2, capabilities)
+        + _encode_field(16, 2, e2ee_registration)
+        + _encode_field(17, 2, b"gps_tracker")  # manufacturerName
+        + _encode_field(21, 2, ring_key)
+        + _encode_field(22, 2, recovery_key)
+        + _encode_field(24, 2, tracking_key)
+        + _encode_field(
+            25, 2, "\u00b5C".encode()
+        )  # modelName = "µC"
+    )
+
+
+def register_device(
+    eik: bytes,
+    token_cache: str = DEFAULT_TOKEN_CACHE,
+    name: str = "GPS Tracker \u00b5C",
+) -> dict:
+    """Register a BLE device with Google FMDN.
+
+    The EIK must already be provisioned to the device (via WebUI+BLE).
+    This registers it with Google's server so Android devices will
+    collect and report its location.
+
+    Args:
+        eik: 32-byte Ephemeral Identity Key
+        token_cache: Path to token cache file
+        name: Device display name
+
+    Returns:
+        Dict with registration info.
+    """
+    cache = _load_token_cache(token_cache)
+
+    print("Authenticating...", file=sys.stderr)
+    spot_token = _get_spot_token(cache)
+    _save_token_cache(token_cache, cache)
+
+    print("Retrieving owner key...", file=sys.stderr)
+    owner_key = _get_owner_key(cache, spot_token)
+    _save_token_cache(token_cache, cache)
+
+    pair_date = int(time.time())
+    print(f"Registering device '{name}'...", file=sys.stderr)
+
+    request_payload = _build_register_request(
+        eik, owner_key, pair_date, name
+    )
+    response = _spot_request(
+        "CreateBleDevice", request_payload, spot_token
+    )
+
+    result = {
+        "status": "registered",
+        "name": name,
+        "pair_date": pair_date,
+        "eik": eik.hex(),
+    }
+
+    if response:
+        try:
+            resp_fields = _decode_protobuf_fields(response)
+            result["response_size"] = len(response)
+        except Exception:
+            pass
+
+    _save_token_cache(token_cache, cache)
+    print("Device registered successfully!", file=sys.stderr)
+    return result
+
+
+def upload_precomputed_keys(
+    eik: bytes,
+    token_cache: str = DEFAULT_TOKEN_CACHE,
+) -> None:
+    """Standalone upload of precomputed key IDs for registered devices.
+
+    Tells Google's network what EIDs to expect from our tracker,
+    enabling crowdsourced location report collection.
+    Should be run periodically (at least every 4 days).
+    """
+    cache = _load_token_cache(token_cache)
+
+    print("Authenticating...", file=sys.stderr)
+    adm_token = _get_adm_token(cache)
+    spot_token = _get_spot_token(cache)
+    _save_token_cache(token_cache, cache)
+
+    print("Listing devices...", file=sys.stderr)
+    request_payload = _build_list_devices_request()
+    response = _nova_request(
+        "nbe_list_devices", request_payload, adm_token
+    )
+
+    if not response:
+        print("Error: No response from Nova API.", file=sys.stderr)
+        return
+
+    devices = _parse_device_list(response)
+    print(f"Found {len(devices)} device(s).", file=sys.stderr)
+
+    print("Uploading precomputed key IDs...", file=sys.stderr)
+    _upload_precomputed_key_ids(eik, devices, spot_token)
+
+    _save_token_cache(token_cache, cache)
+    print("Done.", file=sys.stderr)
 
 
 def _upload_precomputed_key_ids(

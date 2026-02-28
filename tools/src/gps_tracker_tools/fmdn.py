@@ -319,6 +319,31 @@ def cmd_key_ids(args):
         print(json_str)
 
 
+def cmd_register(args):
+    """Register a BLE device with Google FMDN."""
+    from gps_tracker_tools.fmdn_fetch import register_device
+
+    eik = load_eik(args.keys)
+    result = register_device(
+        eik=eik,
+        token_cache=args.token_cache,
+        name=args.name,
+    )
+
+    print(json.dumps(result, indent=2))
+
+
+def cmd_upload_keys(args):
+    """Upload precomputed key IDs to Google (standalone)."""
+    from gps_tracker_tools.fmdn_fetch import upload_precomputed_keys
+
+    eik = load_eik(args.keys)
+    upload_precomputed_keys(
+        eik=eik,
+        token_cache=args.token_cache,
+    )
+
+
 def cmd_fetch(args):
     """Fetch and decrypt FMDN location reports from Google."""
     from gps_tracker_tools.fmdn_fetch import fetch_fmdn_reports
@@ -465,6 +490,43 @@ def add_subcommands(subparsers) -> None:
     )
     fetch.set_defaults(func=cmd_fetch)
 
+    from gps_tracker_tools.fmdn_fetch import DEFAULT_TOKEN_CACHE as dtc
+
+    # register
+    reg = subparsers.add_parser(
+        "register",
+        help="Register a BLE device with Google FMDN",
+    )
+    reg.add_argument(
+        "-k", "--keys", required=True, help="EIK JSON file"
+    )
+    reg.add_argument(
+        "--token-cache",
+        default=dtc,
+        help=f"Path to token cache file (default: {dtc})",
+    )
+    reg.add_argument(
+        "--name",
+        default="GPS Tracker \u00b5C",
+        help='Device display name (default: "GPS Tracker µC")',
+    )
+    reg.set_defaults(func=cmd_register)
+
+    # upload-keys
+    upk = subparsers.add_parser(
+        "upload-keys",
+        help="Upload precomputed key IDs (standalone, 4-day window)",
+    )
+    upk.add_argument(
+        "-k", "--keys", required=True, help="EIK JSON file"
+    )
+    upk.add_argument(
+        "--token-cache",
+        default=dtc,
+        help=f"Path to token cache file (default: {dtc})",
+    )
+    upk.set_defaults(func=cmd_upload_keys)
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -482,6 +544,12 @@ def main():
 
   # Fetch location reports from Google
   gt fmdn fetch -k eik.json -H 24 --gpx track.gpx -o results.json
+
+  # Register device with Google FMDN
+  gt fmdn register -k eik.json --name "My Tracker"
+
+  # Upload precomputed key IDs (standalone)
+  gt fmdn upload-keys -k eik.json
 """,
     )
     sub = parser.add_subparsers(dest="command", required=True)
