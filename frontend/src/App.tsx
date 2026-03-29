@@ -1142,6 +1142,93 @@ export default function App() {
             <Card className="animate-fade-up">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
+                  <Bluetooth className="h-5 w-5 text-primary" />
+                  Connection
+                </CardTitle>
+                <CardDescription>Pair, wake, and sync with the GPS tracker.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="flex flex-wrap gap-3">
+                  <Button onClick={handleConnect} disabled={!isBluetoothSupported || isConnecting}>
+                    <Power className="h-4 w-4" />
+                    {isConnected ? "Disconnect" : "Connect"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={handleQueryStatus}
+                    disabled={!isConnected || isConnecting}
+                  >
+                    <Activity className="h-4 w-4" />
+                    Query Status
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={handleAgnss}
+                    disabled={!isConnected || isAgnssBusy}
+                  >
+                    <Satellite className="h-4 w-4" />
+                    Download + Send AGNSS
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={handleGpsWakeup}
+                    disabled={!isConnected}
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                    GPS Wakeup
+                  </Button>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number"
+                      min={1}
+                      max={720}
+                      value={keepAliveMinutes}
+                      onChange={(e) => {
+                        const v = Math.max(1, Math.min(720, Number(e.target.value) || 1));
+                        setKeepAliveMinutes(v);
+                      }}
+                      disabled={!isConnected || isKeepAliveActive}
+                      className="h-9 w-20 rounded-md border border-border bg-white/70 px-2 text-sm text-center"
+                    />
+                    <span className="text-sm text-muted-foreground">min</span>
+                  </div>
+                  <Button
+                    variant={isKeepAliveActive ? "destructive" : "outline"}
+                    onClick={handleKeepAlive}
+                    disabled={!isConnected}
+                  >
+                    <Timer className="h-4 w-4" />
+                    {isKeepAliveActive
+                      ? `Cancel (${keepAliveRemainingText})`
+                      : "GPS Keep Alive"}
+                  </Button>
+                </div>
+
+                <div className="grid gap-3">
+                  <div className="rounded-lg border border-border/70 bg-white/70 px-4 py-3 text-sm">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Status
+                    </div>
+                    <div className="mt-1 text-base font-medium text-foreground">{statusMessage}</div>
+                  </div>
+                  {agnssStatus && (
+                    <div className="rounded-lg border border-border/70 bg-white/60 px-4 py-3 text-sm">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        AGNSS
+                      </div>
+                      <div className="mt-1 text-sm text-foreground">{agnssStatus}</div>
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="animate-fade-up">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
                   <Key className="h-5 w-5 text-primary" />
                   Find My
                 </CardTitle>
@@ -1265,93 +1352,6 @@ export default function App() {
                     </div>
                   </div>
                 )}
-              </CardContent>
-            </Card>
-
-            <Card className="animate-fade-up">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Bluetooth className="h-5 w-5 text-primary" />
-                  Connection
-                </CardTitle>
-                <CardDescription>Pair, wake, and sync with the GPS tracker.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <div className="flex flex-wrap gap-3">
-                  <Button onClick={handleConnect} disabled={!isBluetoothSupported || isConnecting}>
-                    <Power className="h-4 w-4" />
-                    {isConnected ? "Disconnect" : "Connect"}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={handleQueryStatus}
-                    disabled={!isConnected || isConnecting}
-                  >
-                    <Activity className="h-4 w-4" />
-                    Query Status
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    onClick={handleAgnss}
-                    disabled={!isConnected || isAgnssBusy}
-                  >
-                    <Satellite className="h-4 w-4" />
-                    Download + Send AGNSS
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={handleGpsWakeup}
-                    disabled={!isConnected}
-                  >
-                    <RefreshCw className="h-4 w-4" />
-                    GPS Wakeup
-                  </Button>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-3">
-                  <div className="flex items-center gap-1">
-                    <input
-                      type="number"
-                      min={1}
-                      max={720}
-                      value={keepAliveMinutes}
-                      onChange={(e) => {
-                        const v = Math.max(1, Math.min(720, Number(e.target.value) || 1));
-                        setKeepAliveMinutes(v);
-                      }}
-                      disabled={!isConnected || isKeepAliveActive}
-                      className="h-9 w-20 rounded-md border border-border bg-white/70 px-2 text-sm text-center"
-                    />
-                    <span className="text-sm text-muted-foreground">min</span>
-                  </div>
-                  <Button
-                    variant={isKeepAliveActive ? "destructive" : "outline"}
-                    onClick={handleKeepAlive}
-                    disabled={!isConnected}
-                  >
-                    <Timer className="h-4 w-4" />
-                    {isKeepAliveActive
-                      ? `Cancel (${keepAliveRemainingText})`
-                      : "GPS Keep Alive"}
-                  </Button>
-                </div>
-
-                <div className="grid gap-3">
-                  <div className="rounded-lg border border-border/70 bg-white/70 px-4 py-3 text-sm">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                      Status
-                    </div>
-                    <div className="mt-1 text-base font-medium text-foreground">{statusMessage}</div>
-                  </div>
-                  {agnssStatus && (
-                    <div className="rounded-lg border border-border/70 bg-white/60 px-4 py-3 text-sm">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                        AGNSS
-                      </div>
-                      <div className="mt-1 text-sm text-foreground">{agnssStatus}</div>
-                    </div>
-                  )}
-                </div>
               </CardContent>
             </Card>
           </aside>
