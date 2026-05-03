@@ -1215,7 +1215,7 @@ export default function App() {
                     <div className="mt-1 text-base font-medium text-foreground">{statusMessage}</div>
                   </div>
                   {agnssStatus && (
-                    <div className="rounded-lg border border-border/70 bg-white/60 px-4 py-3 text-sm">
+                    <div className="rounded-lg border border-border/60 bg-white/60 px-4 py-3 text-sm">
                       <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                         AGNSS
                       </div>
@@ -1225,7 +1225,9 @@ export default function App() {
                 </div>
               </CardContent>
             </Card>
+          </aside>
 
+          <div className="order-3 space-y-6 lg:order-2 lg:col-start-2 self-start">
             <Card className="animate-fade-up">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -1354,7 +1356,7 @@ export default function App() {
                 )}
               </CardContent>
             </Card>
-          </aside>
+          </div>
         </div>
 
         <Card className="mt-6 animate-fade-up">
