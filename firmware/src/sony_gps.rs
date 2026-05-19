@@ -22,7 +22,7 @@
 //! ```text
 //! Service:  8000DD00-DD00-FFFF-FFFF-FFFFFFFFFFFF
 //! ├── DD01  Notify       (camera → remote: location request)
-//! ├── DD11  Write        (remote → camera: GPS/time data, 96 bytes)
+//! ├── DD11  Write        (remote → camera: GPS/time data, 95 bytes)
 //! ├── DD21  Read         (location capabilities)
 //! ├── DD30  Read/Write   (allow location: 0x01 = yes)
 //! └── DD31  Read/Write   (enable location: 0x01 = yes)
@@ -59,14 +59,14 @@ const RECONNECT_DELAY: Duration = Duration::from_secs(30);
 /// How long to wait between GPS fix checks when no fix is available.
 const NO_FIX_RETRY_DELAY: Duration = Duration::from_secs(5);
 
-// ─── Sony GPS Data Packet (96 bytes) ────────────────────────────────────
+// ─── Sony GPS Data Packet (95 bytes) ────────────────────────────────────
 
 /// Fixed magic prefix prepended to every GPS data packet.
 const SONY_GEO_PREFIX: [u8; 11] = [0x00, 0x5d, 0x08, 0x02, 0xfc, 0x03, 0x00, 0x00, 0x10, 0x10, 0x10];
 
-/// Build a 96-byte Sony GPS data packet from system info.
-fn build_geo_packet(lat: f64, lon: f64, year: u16, month: u8, day: u8, hour: u8, minute: u8, second: u8) -> [u8; 96] {
-    let mut buf = [0u8; 96];
+/// Build a 95-byte Sony GPS data packet from system info.
+fn build_geo_packet(lat: f64, lon: f64, year: u16, month: u8, day: u8, hour: u8, minute: u8, second: u8) -> [u8; 95] {
+    let mut buf = [0u8; 95];
 
     // Bytes 0-10: fixed magic prefix
     buf[..11].copy_from_slice(&SONY_GEO_PREFIX);
@@ -92,9 +92,10 @@ fn build_geo_packet(lat: f64, lon: f64, year: u16, month: u8, day: u8, hour: u8,
     // Bytes 26-90: zero padding (65 bytes)
     // Already zero from initialization.
 
-    // Bytes 91-92: UTC offset in minutes as big-endian u16
-    // China Standard Time = UTC+8 = 480 minutes
-    let offset: u16 = 480;
+    // Bytes 91-92: UTC offset in minutes as big-endian u16.
+    // GPS time from NMEA is already UTC, so offset is 0
+    // (matches furble's behavior).
+    let offset: u16 = 0;
     buf[91..93].copy_from_slice(&offset.to_be_bytes());
 
     // Bytes 93-95: zero padding (2 bytes)
@@ -175,9 +176,9 @@ struct SonyLocationClient {
     #[characteristic(uuid = "dd31", read, write)]
     enable: u8,
 
-    /// DD11: GPS/time data packet (96 bytes, write without response)
+    /// DD11: GPS/time data packet (95 bytes, write without response)
     #[characteristic(uuid = "dd11", write, write_without_response)]
-    location_data: [u8; 96],
+    location_data: [u8; 95],
 }
 
 // ─── Sony GPS Task ──────────────────────────────────────────────────────
