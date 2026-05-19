@@ -28,10 +28,20 @@
 //! └── DD31  Read/Write   (enable location: 0x01 = yes)
 //! ```
 
-use embassy_time::{Duration, Timer};
-use nrf_softdevice::ble::{central, gatt_client, Address};
-use nrf_softdevice::{raw, Softdevice};
+use core::cell::Cell;
 
+use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
+use embassy_sync::signal::Signal;
+use embassy_time::{Duration, Timer};
+use nrf_softdevice::ble::security::{IoCapabilities, SecurityHandler};
+use nrf_softdevice::ble::{
+    central, gatt_client, Address, AddressType, Connection, EncryptError, EncryptionInfo, IdentityKey, MasterId,
+    SecurityMode,
+};
+use nrf_softdevice::{raw, Softdevice};
+use static_cell::StaticCell;
+
+use crate::storage;
 use crate::system_info::SYSTEM_INFO;
 
 // ─── Sony Advertisement Constants ───────────────────────────────────────
@@ -58,6 +68,149 @@ const RECONNECT_DELAY: Duration = Duration::from_secs(30);
 
 /// How long to wait between GPS fix checks when no fix is available.
 const NO_FIX_RETRY_DELAY: Duration = Duration::from_secs(5);
+
+// ─── BLE Security (bonding) ────────────────────────────────────────────
+
+/// Keys for a bonded Sony camera, stored in RAM for the session lifetime.
+#[derive(Debug, Clone, Copy)]
+struct Peer {
+    master_id: MasterId,
+    key: EncryptionInfo,
+    peer_id: IdentityKey,
+}
+
+/// Security handler for Sony camera Just Works bonding.
+///
+/// - First connection: pairs, stores keys in RAM, camera remembers the tracker
+/// - Subsequent connections: re-encrypts with stored keys → no pairing dialog
+struct SonyBonder {
+    peer: Cell<Option<Peer>>,
+    secured: Signal<ThreadModeRawMutex, bool>,
+}
+
+impl SonyBonder {
+    const fn new() -> Self {
+        Self {
+            peer: Cell::new(None),
+            secured: Signal::new(),
+        }
+    }
+
+    /// Load bond data from SD card into the in-RAM cache.
+    async fn load_from_sd(&self) {
+        let Some(raw) = storage::read_sony_bond().await else {
+            defmt::info!("[sony_gps] no bond file on SD");
+            return;
+        };
+        let Some(peer) = Peer::from_raw(&raw) else {
+            defmt::warn!("[sony_gps] invalid bond file on SD, discarding");
+            return;
+        };
+        defmt::info!("[sony_gps] loaded bond from SD");
+        self.peer.set(Some(peer));
+    }
+
+    /// If bond data was received during pairing, persist it to SD card.
+    async fn save_bond_to_sd(&self) {
+        let Some(peer) = self.peer.get() else {
+            return; // No bond to save (re-encryption path).
+        };
+        let raw = peer.to_raw();
+        if storage::write_sony_bond(&raw).await {
+            defmt::info!("[sony_gps] bond saved to SD");
+        } else {
+            defmt::warn!("[sony_gps] failed to save bond to SD");
+        }
+    }
+}
+
+impl SecurityHandler for SonyBonder {
+    fn io_capabilities(&self) -> IoCapabilities {
+        IoCapabilities::None // Just Works
+    }
+
+    fn can_bond(&self, _conn: &Connection) -> bool {
+        true
+    }
+
+    fn on_bonded(&self, _conn: &Connection, master_id: MasterId, key: EncryptionInfo, peer_id: IdentityKey) {
+        defmt::info!("[sony_gps] bonded with camera");
+        self.peer.set(Some(Peer { master_id, key, peer_id }));
+    }
+
+    fn on_security_update(&self, _conn: &Connection, security_mode: SecurityMode) {
+        let secure = !matches!(security_mode, SecurityMode::NoAccess | SecurityMode::Open);
+        self.secured.signal(secure);
+    }
+
+    fn get_peripheral_key(&self, conn: &Connection) -> Option<(MasterId, EncryptionInfo)> {
+        self.peer.get().and_then(|peer| {
+            peer.peer_id.is_match(conn.peer_address()).then_some((peer.master_id, peer.key))
+        })
+    }
+
+    fn get_key(&self, _conn: &Connection, master_id: MasterId) -> Option<EncryptionInfo> {
+        self.peer.get().and_then(|peer| (master_id == peer.master_id).then_some(peer.key))
+    }
+}
+
+// ─── Bond serialization ──────────────────────────────────────────────────
+//
+// On-disk binary format (SONY.BND, 50 bytes):
+//   [0..2)   ediv:      u16 LE
+//   [2..10)  rand:      [u8; 8]
+//   [10..26) ltk:       [u8; 16]
+//   [26..27) enc_flags: u8
+//   [27..43) irk:       [u8; 16]
+//   [43..44) addr_type: u8
+//   [44..50) addr:      [u8; 6]
+
+impl Peer {
+    fn to_raw(&self) -> [u8; storage::SONY_BOND_SIZE] {
+        let mut buf = [0u8; storage::SONY_BOND_SIZE];
+        buf[..2].copy_from_slice(&self.master_id.ediv.to_le_bytes());
+        buf[2..10].copy_from_slice(&self.master_id.rand);
+        buf[10..26].copy_from_slice(&self.key.ltk);
+        buf[26] = self.key.flags;
+        buf[27..43].copy_from_slice(&self.peer_id.irk.as_raw().irk);
+        buf[43] = self.peer_id.addr.flags;
+        buf[44..50].copy_from_slice(&self.peer_id.addr.bytes);
+        buf
+    }
+
+    fn from_raw(buf: &[u8; storage::SONY_BOND_SIZE]) -> Option<Self> {
+        let ediv = u16::from_le_bytes(buf[..2].try_into().ok()?);
+        let mut rand = [0u8; 8];
+        rand.copy_from_slice(&buf[2..10]);
+        let mut ltk = [0u8; 16];
+        ltk.copy_from_slice(&buf[10..26]);
+        let enc_flags = buf[26];
+        let mut irk = [0u8; 16];
+        irk.copy_from_slice(&buf[27..43]);
+        let addr_flags = buf[43];
+        let mut addr_bytes = [0u8; 6];
+        addr_bytes.copy_from_slice(&buf[44..50]);
+
+        Some(Peer {
+            master_id: MasterId { ediv, rand },
+            key: EncryptionInfo {
+                ltk,
+                flags: enc_flags,
+            },
+            peer_id: IdentityKey {
+                irk: nrf_softdevice::ble::IdentityResolutionKey::from_raw(
+                    raw::ble_gap_irk_t { irk },
+                ),
+                addr: Address::new(
+                    AddressType::try_from(addr_flags >> 1).ok()?,
+                    addr_bytes,
+                ),
+            },
+        })
+    }
+}
+
+static SONY_BONDER: StaticCell<SonyBonder> = StaticCell::new();
 
 // ─── Sony GPS Data Packet (95 bytes) ────────────────────────────────────
 
@@ -194,6 +347,13 @@ struct SonyLocationClient {
 pub async fn sony_gps_task(sd: &'static Softdevice) {
     defmt::info!("[sony_gps] task started");
 
+    let bonder = SONY_BONDER.init(SonyBonder::new());
+
+    // Load previously bonded camera keys from SD card so reconnection
+    // can encrypt silently (no pairing dialog).
+    defmt::info!("[sony_gps] loading bond from SD...");
+    bonder.load_from_sd().await;
+
     let mut camera_addr: Option<Address> = None;
 
     loop {
@@ -280,20 +440,11 @@ pub async fn sony_gps_task(sd: &'static Softdevice) {
             ..Default::default()
         };
 
-        let conn = match central::connect(sd, &connect_config).await {
+        bonder.secured.reset();
+
+        let conn = match central::connect_with_security(sd, &connect_config, bonder).await {
             Ok(c) => {
                 defmt::info!("[sony_gps] connected to camera");
-
-                // Initiate pairing (Just Works — Sony cameras don't require a PIN).
-                // Even though we don't use a SecurityHandler, the SoftDevice with
-                // central_sec_count=1 will handle the pairing automatically.
-                if let Err(e) = c.request_pairing() {
-                    defmt::warn!("[sony_gps] pairing request failed: {:?}", e);
-                    // Continue anyway — the camera might initiate pairing itself
-                    // when we try to read/write characteristics.
-                } else {
-                    defmt::info!("[sony_gps] pairing initiated");
-                }
                 c
             }
             Err(e) => {
@@ -302,6 +453,46 @@ pub async fn sony_gps_task(sd: &'static Softdevice) {
                 continue;
             }
         };
+
+        // ── Establish encrypted link ─────────────────────────────────────
+        //
+        // Try re-encrypting with stored keys first. If the camera was bonded
+        // in a previous session, encrypt() uses saved keys → link encrypts
+        // silently (no pairing dialog).
+        //
+        // If no stored keys (first connection, or reboot), fall back to
+        // request_pairing(). The camera shows a dialog once; subsequent
+        // reconnects are seamless.
+        let encrypted = match conn.encrypt() {
+            Ok(()) => {
+                // Encryption procedure in progress, wait for completion
+                bonder.secured.wait().await
+            }
+            Err(EncryptError::PeerKeysNotFound) => {
+                defmt::info!("[sony_gps] no stored keys, requesting pairing");
+                if let Err(e) = conn.request_pairing() {
+                    defmt::warn!("[sony_gps] pairing request failed: {:?}", e);
+                }
+                bonder.secured.wait().await
+            }
+            Err(e) => {
+                defmt::warn!("[sony_gps] encrypt error: {:?}, falling back to pairing", e);
+                if let Err(e) = conn.request_pairing() {
+                    defmt::warn!("[sony_gps] pairing request failed: {:?}", e);
+                }
+                bonder.secured.wait().await
+            }
+        };
+
+        if encrypted {
+            defmt::info!("[sony_gps] link encrypted");
+            // Bond data is set by the on_bonded callback (fires in the same
+            // event batch as on_security_update). Persist to SD so reboots
+            // don't require re-pairing.
+            bonder.save_bond_to_sd().await;
+        } else {
+            defmt::warn!("[sony_gps] encryption failed, proceeding anyway");
+        }
 
         // ── Discover Location Service ───────────────────────────────
         defmt::info!("[sony_gps] discovering location service...");
