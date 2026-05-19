@@ -18,6 +18,8 @@ mod gps;
 #[cfg(feature = "google-fmdn")]
 #[allow(dead_code)]
 mod secp160r1;
+#[cfg(feature = "sony-gps")]
+mod sony_gps;
 mod protocol;
 mod storage;
 mod system_info;
@@ -252,21 +254,21 @@ async fn main(spawner: Spawner) {
             accuracy: raw::NRF_CLOCK_LF_ACCURACY_500_PPM as u8,
         }),
         conn_gap: Some(raw::ble_gap_conn_cfg_t {
-            conn_count: 1,
-            event_length: 24,
+            conn_count: 2, // 1 for phone app + 1 for Sony camera
+            event_length: 32,
         }),
         conn_gatt: Some(raw::ble_gatt_conn_cfg_t { att_mtu: 247 }),
         conn_gatts: Some(raw::ble_gatts_conn_cfg_t {
             hvn_tx_queue_size: 8,
         }),
-        common_vs_uuid: Some(raw::ble_common_cfg_vs_uuid_t { vs_uuid_count: 1 }),
+        common_vs_uuid: Some(raw::ble_common_cfg_vs_uuid_t { vs_uuid_count: 2 }), // NUS + Sony location service
         gap_role_count: Some(raw::ble_gap_cfg_role_count_t {
             // S140 7.3.0 supports only one advertising set handle.
             // Find My and connectable BLE must time-share this single handle.
             adv_set_count: 1,
             periph_role_count: 1,
-            central_role_count: 0,
-            central_sec_count: 0,
+            central_role_count: 1,  // for Sony camera connection
+            central_sec_count: 1,   // Sony camera requires pairing/bonding
             _bitfield_1: raw::ble_gap_cfg_role_count_t::new_bitfield_1(0),
         }),
         gap_device_name: Some(raw::ble_gap_cfg_device_name_t {
@@ -435,6 +437,10 @@ async fn main(spawner: Spawner) {
             spawner.spawn(bmp280::bmp280_task(i2c_bmp)).unwrap();
             spawner.spawn(display::display_task(i2c_display)).unwrap();
         }
+
+        // Sony GPS sharing: scan and connect to Sony cameras, send GPS data
+        #[cfg(feature = "sony-gps")]
+        spawner.spawn(sony_gps::sony_gps_task(sd)).unwrap();
     } else {
         let button = Input::new(button_pin, Pull::Up);
         spawner.spawn(button::usb_only_button_task(button)).unwrap();

@@ -15,7 +15,7 @@ embassy-embedded-hal = "0.5.0"
 
 # --- 蓝牙 (SoftDevice) ---
 # s140 是 nRF52840 的蓝牙协议栈
-nrf-softdevice = { git = "https://github.com/embassy-rs/nrf-softdevice", rev = "5949a5b1445cc907745c6449a35577e4544cd255", features = ["defmt", "nrf52840", "s140", "ble-peripheral", "ble-central", "ble-gatt-server", "critical-section-impl"] }
+nrf-softdevice = { git = "https://github.com/embassy-rs/nrf-softdevice", rev = "5949a5b1445cc907745c6449a35577e4544cd255", features = ["defmt", "nrf52840", "s140", "ble-peripheral", "ble-central", "ble-gatt-server", "ble-gatt-client", "critical-section-impl"] }
 nrf-softdevice-s140 = { git = "https://github.com/embassy-rs/nrf-softdevice", rev = "5949a5b1445cc907745c6449a35577e4544cd255" }
 
 # --- 常用嵌入式库 ---
@@ -54,10 +54,11 @@ aes = { version = "0.8", default-features = false, optional = true }
 
 # 优化配置：发布模式下尽可能优化体积和速度
 [features]
-default = ["i2c-spi", "findmy", "google-fmdn"]
+default = ["i2c-spi", "findmy", "google-fmdn", "sony-gps"]
 i2c-spi = []
 findmy = ["dep:p224", "dep:sha2"]
 google-fmdn = ["dep:aes", "dep:sha2"]
+sony-gps = []
 host-test = []
 extended_addressing = ["usbd-storage/extended_addressing"]
 
