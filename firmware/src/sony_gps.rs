@@ -32,15 +32,16 @@ use core::cell::Cell;
 
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::signal::Signal;
-use embassy_time::{Duration, Timer};
+use embassy_time::{Duration, Timer, with_timeout};
 use nrf_softdevice::ble::security::{IoCapabilities, SecurityHandler};
 use nrf_softdevice::ble::{
-    central, gatt_client, Address, AddressType, Connection, EncryptError, EncryptionInfo, IdentityKey, MasterId,
-    SecurityMode,
+    Address, AddressType, Connection, EncryptError, EncryptionInfo, IdentityKey, MasterId,
+    SecurityMode, central, gatt_client,
 };
-use nrf_softdevice::{raw, Softdevice};
+use nrf_softdevice::{Softdevice, raw};
 use static_cell::StaticCell;
 
+use crate::adv_scheduler::{ADV_SCHEDULER, AdvPriority};
 use crate::storage;
 use crate::system_info::SYSTEM_INFO;
 
@@ -52,8 +53,20 @@ const SONY_COMPANY_ID: u16 = 0x012d;
 /// Manufacturer data type value indicating a camera.
 const SONY_CAMERA_TYPE: u16 = 0x0003;
 
-/// mode22 bits we require: pairing supported + pairing enabled + remote enabled.
-const SONY_MODE22_REQUIRED: u8 = 0x80 | 0x40 | 0x02;
+const SONY_MODE22_PAIRING_SUPPORTED: u8 = 0x80;
+const SONY_MODE22_PAIRING_ENABLED: u8 = 0x40;
+const SONY_MODE22_LOCATION_SUPPORTED: u8 = 0x20;
+const SONY_MODE22_LOCATION_ENABLED: u8 = 0x10;
+const SONY_MODE22_REMOTE_ENABLED: u8 = 0x02;
+
+/// mode22 bits used for first-time pairing discovery.
+const SONY_MODE22_PAIRING_REQUIRED: u8 =
+    SONY_MODE22_PAIRING_SUPPORTED | SONY_MODE22_PAIRING_ENABLED | SONY_MODE22_REMOTE_ENABLED;
+
+/// mode22 bits that indicate an already-paired camera is still a useful
+/// connection target even when it no longer advertises pairing mode.
+const SONY_MODE22_SERVICE_BITS: u8 =
+    SONY_MODE22_REMOTE_ENABLED | SONY_MODE22_LOCATION_SUPPORTED | SONY_MODE22_LOCATION_ENABLED;
 
 // ─── Timing ─────────────────────────────────────────────────────────────
 
@@ -68,6 +81,14 @@ const RECONNECT_DELAY: Duration = Duration::from_secs(30);
 
 /// How long to wait between GPS fix checks when no fix is available.
 const NO_FIX_RETRY_DELAY: Duration = Duration::from_secs(5);
+
+const SCAN_WATCHDOG: Duration = Duration::from_secs(SCAN_DURATION_SECS as u64 + 2);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
+const SECURITY_TIMEOUT: Duration = Duration::from_secs(20);
+const DISCOVER_TIMEOUT: Duration = Duration::from_secs(15);
+const SONY_LOCATION_PACKET_SIZE: u16 = 95;
+const ATT_WRITE_OVERHEAD: u16 = 3;
+const SONY_REQUIRED_ATT_MTU: u16 = SONY_LOCATION_PACKET_SIZE + ATT_WRITE_OVERHEAD;
 
 // ─── BLE Security (bonding) ────────────────────────────────────────────
 
@@ -104,6 +125,7 @@ impl SonyBonder {
         };
         let Some(peer) = Peer::from_raw(&raw) else {
             defmt::warn!("[sony_gps] invalid bond file on SD, discarding");
+            let _ = storage::delete_sony_bond().await;
             return;
         };
         defmt::info!("[sony_gps] loaded bond from SD");
@@ -122,6 +144,23 @@ impl SonyBonder {
             defmt::warn!("[sony_gps] failed to save bond to SD");
         }
     }
+
+    fn has_bond(&self) -> bool {
+        self.peer.get().is_some()
+    }
+
+    async fn clear_bond(&self) {
+        self.peer.set(None);
+        if storage::delete_sony_bond().await {
+            defmt::info!("[sony_gps] bond cleared from SD");
+        } else {
+            defmt::warn!("[sony_gps] failed to clear bond from SD");
+        }
+    }
+
+    fn peer_address(&self) -> Option<Address> {
+        self.peer.get().map(|peer| peer.peer_id.addr)
+    }
 }
 
 impl SecurityHandler for SonyBonder {
@@ -133,24 +172,39 @@ impl SecurityHandler for SonyBonder {
         true
     }
 
-    fn on_bonded(&self, _conn: &Connection, master_id: MasterId, key: EncryptionInfo, peer_id: IdentityKey) {
+    fn on_bonded(
+        &self,
+        _conn: &Connection,
+        master_id: MasterId,
+        key: EncryptionInfo,
+        peer_id: IdentityKey,
+    ) {
         defmt::info!("[sony_gps] bonded with camera");
-        self.peer.set(Some(Peer { master_id, key, peer_id }));
+        self.peer.set(Some(Peer {
+            master_id,
+            key,
+            peer_id,
+        }));
     }
 
     fn on_security_update(&self, _conn: &Connection, security_mode: SecurityMode) {
         let secure = !matches!(security_mode, SecurityMode::NoAccess | SecurityMode::Open);
+        defmt::info!("[sony_gps] security update: secure={}", secure);
         self.secured.signal(secure);
     }
 
     fn get_peripheral_key(&self, conn: &Connection) -> Option<(MasterId, EncryptionInfo)> {
         self.peer.get().and_then(|peer| {
-            peer.peer_id.is_match(conn.peer_address()).then_some((peer.master_id, peer.key))
+            peer.peer_id
+                .is_match(conn.peer_address())
+                .then_some((peer.master_id, peer.key))
         })
     }
 
     fn get_key(&self, _conn: &Connection, master_id: MasterId) -> Option<EncryptionInfo> {
-        self.peer.get().and_then(|peer| (master_id == peer.master_id).then_some(peer.key))
+        self.peer
+            .get()
+            .and_then(|peer| (master_id == peer.master_id).then_some(peer.key))
     }
 }
 
@@ -198,13 +252,10 @@ impl Peer {
                 flags: enc_flags,
             },
             peer_id: IdentityKey {
-                irk: nrf_softdevice::ble::IdentityResolutionKey::from_raw(
-                    raw::ble_gap_irk_t { irk },
-                ),
-                addr: Address::new(
-                    AddressType::try_from(addr_flags >> 1).ok()?,
-                    addr_bytes,
-                ),
+                irk: nrf_softdevice::ble::IdentityResolutionKey::from_raw(raw::ble_gap_irk_t {
+                    irk,
+                }),
+                addr: Address::new(AddressType::try_from(addr_flags >> 1).ok()?, addr_bytes),
             },
         })
     }
@@ -212,13 +263,54 @@ impl Peer {
 
 static SONY_BONDER: StaticCell<SonyBonder> = StaticCell::new();
 
+async fn wait_for_security_update(bonder: &SonyBonder) -> Option<bool> {
+    match with_timeout(SECURITY_TIMEOUT, bonder.secured.wait()).await {
+        Ok(secure) => Some(secure),
+        Err(_) => {
+            defmt::warn!("[sony_gps] security update timeout");
+            None
+        }
+    }
+}
+
+async fn drop_failed_security(
+    conn: &Connection,
+    bonder: &SonyBonder,
+    had_bond: bool,
+    reason: &'static str,
+) {
+    if had_bond {
+        defmt::warn!("[sony_gps] stale bond detected: {=str}", reason);
+        bonder.clear_bond().await;
+    } else {
+        defmt::warn!("[sony_gps] pairing/security failed: {=str}", reason);
+    }
+    let _ = conn.disconnect();
+}
+
+async fn drop_security_timeout(conn: &Connection, reason: &'static str) {
+    defmt::warn!("[sony_gps] security timeout, keeping bond: {=str}", reason);
+    let _ = conn.disconnect();
+}
+
 // ─── Sony GPS Data Packet (95 bytes) ────────────────────────────────────
 
 /// Fixed magic prefix prepended to every GPS data packet.
-const SONY_GEO_PREFIX: [u8; 11] = [0x00, 0x5d, 0x08, 0x02, 0xfc, 0x03, 0x00, 0x00, 0x10, 0x10, 0x10];
+const SONY_GEO_PREFIX: [u8; 11] = [
+    0x00, 0x5d, 0x08, 0x02, 0xfc, 0x03, 0x00, 0x00, 0x10, 0x10, 0x10,
+];
 
 /// Build a 95-byte Sony GPS data packet from system info.
-fn build_geo_packet(lat: f64, lon: f64, year: u16, month: u8, day: u8, hour: u8, minute: u8, second: u8) -> [u8; 95] {
+fn build_geo_packet(
+    lat: f64,
+    lon: f64,
+    year: u16,
+    month: u8,
+    day: u8,
+    hour: u8,
+    minute: u8,
+    second: u8,
+) -> [u8; 95] {
     let mut buf = [0u8; 95];
 
     // Bytes 0-10: fixed magic prefix
@@ -271,13 +363,20 @@ struct SonyAdvData {
     mode22: u8,
 }
 
-/// Check if a BLE advertisement report is from a Sony camera ready for pairing.
+struct SonyAdvMatch {
+    addr: Address,
+    pairable: bool,
+    mode22: u8,
+}
+
+/// Check if a BLE advertisement report is from a Sony camera.
 ///
-/// Returns the device address if it matches, `None` otherwise.
-fn check_sony_adv(report: &raw::ble_gap_evt_adv_report_t) -> Option<Address> {
-    let data = unsafe {
-        core::slice::from_raw_parts(report.data.p_data, report.data.len as usize)
-    };
+/// For first pairing we prefer `pairable`, but after a camera has bonded it may
+/// stop setting the pairing-enabled bit while still advertising the Sony camera
+/// service bits. Returning those reports lets us recover the address if the
+/// local address cache is missing.
+fn check_sony_adv(report: &raw::ble_gap_evt_adv_report_t) -> Option<SonyAdvMatch> {
+    let data = unsafe { core::slice::from_raw_parts(report.data.p_data, report.data.len as usize) };
 
     // Walk through BLE AD elements looking for Manufacturer Specific Data (type 0xFF)
     let mut offset = 0;
@@ -293,11 +392,16 @@ fn check_sony_adv(report: &raw::ble_gap_evt_adv_report_t) -> Option<Address> {
             if mfr_data.len() >= core::mem::size_of::<SonyAdvData>() {
                 // Safety: SonyAdvData is packed and we checked the length
                 let adv: &SonyAdvData = unsafe { &*(mfr_data.as_ptr() as *const SonyAdvData) };
-                if adv.company_id == SONY_COMPANY_ID
-                    && adv.camera_type == SONY_CAMERA_TYPE
-                    && (adv.mode22 & SONY_MODE22_REQUIRED) == SONY_MODE22_REQUIRED
-                {
-                    return Some(Address::from_raw(report.peer_addr));
+                if adv.company_id == SONY_COMPANY_ID && adv.camera_type == SONY_CAMERA_TYPE {
+                    let pairable =
+                        (adv.mode22 & SONY_MODE22_PAIRING_REQUIRED) == SONY_MODE22_PAIRING_REQUIRED;
+                    if pairable || (adv.mode22 & SONY_MODE22_SERVICE_BITS) != 0 {
+                        return Some(SonyAdvMatch {
+                            addr: Address::from_raw(report.peer_addr),
+                            pairable,
+                            mode22: adv.mode22,
+                        });
+                    }
                 }
             }
             // Only one Manufacturer Data element per advertisement, we can break
@@ -318,7 +422,7 @@ fn check_sony_adv(report: &raw::ble_gap_evt_adv_report_t) -> Option<Address> {
 /// - `gatt_client::discover::<SonyLocationClient>(&conn)` — discover service + characteristics
 /// - `client.allow_read()` / `client.allow_write(&val)` — DD30
 /// - `client.enable_read()` / `client.enable_write(&val)` — DD31
-/// - `client.location_data_write_without_response(&buf)` — DD11
+/// - `client.location_data_write(&buf)` — DD11
 #[nrf_softdevice::gatt_client(uuid = "8000dd00-dd00-ffff-ffff-ffffffffffff")]
 struct SonyLocationClient {
     /// DD30: allow location injection (write 0x01 to enable)
@@ -329,7 +433,7 @@ struct SonyLocationClient {
     #[characteristic(uuid = "dd31", read, write)]
     enable: u8,
 
-    /// DD11: GPS/time data packet (95 bytes, write without response)
+    /// DD11: GPS/time data packet (95 bytes)
     #[characteristic(uuid = "dd11", write, write_without_response)]
     location_data: [u8; 95],
 }
@@ -353,8 +457,24 @@ pub async fn sony_gps_task(sd: &'static Softdevice) {
     // can encrypt silently (no pairing dialog).
     defmt::info!("[sony_gps] loading bond from SD...");
     bonder.load_from_sd().await;
-
-    let mut camera_addr: Option<Address> = None;
+    let mut bond_verified = false;
+    let mut cached_camera_addr = bonder.peer_address();
+    match cached_camera_addr {
+        Some(addr) => {
+            defmt::info!(
+                "[sony_gps] cached camera address from bond: {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+                addr.bytes[5],
+                addr.bytes[4],
+                addr.bytes[3],
+                addr.bytes[2],
+                addr.bytes[1],
+                addr.bytes[0]
+            );
+        }
+        None => {
+            defmt::info!("[sony_gps] no cached camera address");
+        }
+    }
 
     loop {
         // ── Wait for valid GPS fix ──────────────────────────────────
@@ -371,53 +491,94 @@ pub async fn sony_gps_task(sd: &'static Softdevice) {
         }
 
         // ── Scan for Sony camera ────────────────────────────────────
-        defmt::info!("[sony_gps] scanning for Sony cameras...");
-
-        let scan_config = central::ScanConfig {
-            active: true,
-            interval: 160,  // 100ms
-            window: 80,     // 50ms
-            timeout: SCAN_DURATION_SECS * 100, // units of 10ms
-            ..Default::default()
-        };
-
-        let scan_result = central::scan(sd, &scan_config, |report| {
-            if let Some(addr) = check_sony_adv(report) {
+        let guard = ADV_SCHEDULER.acquire(AdvPriority::SonyCentral).await;
+        let target_addr = match cached_camera_addr {
+            Some(addr) => {
                 defmt::info!(
-                    "[sony_gps] found Sony camera: {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-                    addr.bytes[5], addr.bytes[4], addr.bytes[3],
-                    addr.bytes[2], addr.bytes[1], addr.bytes[0]
+                    "[sony_gps] using saved camera address: {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+                    addr.bytes[5],
+                    addr.bytes[4],
+                    addr.bytes[3],
+                    addr.bytes[2],
+                    addr.bytes[1],
+                    addr.bytes[0]
                 );
-                // The closure captures `camera_addr` by mutable reference.
-                // When scan() returns, the borrow is released.
-                camera_addr = Some(addr);
-                return Some(());
+                addr
             }
-            None
-        })
-        .await;
-
-        match scan_result {
-            Ok(()) => {
-                // camera_addr was set in the scan callback
-            }
-            Err(central::ScanError::Timeout) => {
-                defmt::info!("[sony_gps] scan timeout, no Sony camera found");
-                Timer::after(RECONNECT_DELAY).await;
-                continue;
-            }
-            Err(e) => {
-                defmt::warn!("[sony_gps] scan error: {:?}", e);
-                Timer::after(RECONNECT_DELAY).await;
-                continue;
-            }
-        }
-
-        let addr = match camera_addr {
-            Some(ref a) => a,
             None => {
-                Timer::after(RECONNECT_DELAY).await;
-                continue;
+                let mut camera_addr: Option<Address> = None;
+
+                defmt::info!("[sony_gps] scanning for Sony cameras...");
+
+                let scan_config = central::ScanConfig {
+                    active: true,
+                    interval: 160,                     // 100ms
+                    window: 80,                        // 50ms
+                    timeout: SCAN_DURATION_SECS * 100, // units of 10ms
+                    ..Default::default()
+                };
+
+                let scan_result = with_timeout(
+                    SCAN_WATCHDOG,
+                    central::scan(sd, &scan_config, |report| {
+                        if let Some(matched) = check_sony_adv(report) {
+                            let addr = matched.addr;
+                            defmt::info!(
+                                "[sony_gps] found Sony camera: {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}, pairable={}, mode22=0x{:02x}",
+                                addr.bytes[5],
+                                addr.bytes[4],
+                                addr.bytes[3],
+                                addr.bytes[2],
+                                addr.bytes[1],
+                                addr.bytes[0],
+                                matched.pairable,
+                                matched.mode22,
+                            );
+                            // The closure captures `camera_addr` by mutable reference.
+                            // When scan() returns, the borrow is released.
+                            camera_addr = Some(addr);
+                            return Some(());
+                        }
+                        None
+                    }),
+                )
+                .await;
+
+                match scan_result {
+                    Ok(Ok(())) => {
+                        // camera_addr was set in the scan callback
+                    }
+                    Ok(Err(central::ScanError::Timeout)) => {
+                        defmt::info!("[sony_gps] scan timeout, no Sony camera found");
+                        drop(guard);
+                        Timer::after(RECONNECT_DELAY).await;
+                        continue;
+                    }
+                    Ok(Err(e)) => {
+                        defmt::warn!("[sony_gps] scan error: {:?}", e);
+                        drop(guard);
+                        Timer::after(RECONNECT_DELAY).await;
+                        continue;
+                    }
+                    Err(_) => {
+                        defmt::warn!("[sony_gps] scan watchdog timeout");
+                        drop(guard);
+                        Timer::after(RECONNECT_DELAY).await;
+                        continue;
+                    }
+                }
+
+                match camera_addr {
+                    Some(addr) => {
+                        cached_camera_addr = Some(addr);
+                        addr
+                    }
+                    None => {
+                        drop(guard);
+                        Timer::after(RECONNECT_DELAY).await;
+                        continue;
+                    }
+                }
             }
         };
 
@@ -425,15 +586,20 @@ pub async fn sony_gps_task(sd: &'static Softdevice) {
         defmt::info!("[sony_gps] connecting to camera...");
 
         let conn_params = raw::ble_gap_conn_params_t {
-            min_conn_interval: 12,   // 15ms
-            max_conn_interval: 24,   // 30ms
+            min_conn_interval: 12, // 15ms
+            max_conn_interval: 24, // 30ms
             slave_latency: 0,
-            conn_sup_timeout: 400,   // 4s
+            conn_sup_timeout: 400, // 4s
         };
 
         let connect_config = central::ConnectConfig {
+            att_mtu: if bond_verified && bonder.has_bond() {
+                Some(SONY_REQUIRED_ATT_MTU)
+            } else {
+                Some(raw::BLE_GATT_ATT_MTU_DEFAULT as u16)
+            },
             scan_config: central::ScanConfig {
-                whitelist: Some(&[addr]),
+                whitelist: Some(&[&target_addr]),
                 ..Default::default()
             },
             conn_params,
@@ -442,13 +608,25 @@ pub async fn sony_gps_task(sd: &'static Softdevice) {
 
         bonder.secured.reset();
 
-        let conn = match central::connect_with_security(sd, &connect_config, bonder).await {
-            Ok(c) => {
+        let conn = match with_timeout(
+            CONNECT_TIMEOUT,
+            central::connect_with_security(sd, &connect_config, bonder),
+        )
+        .await
+        {
+            Ok(Ok(c)) => {
                 defmt::info!("[sony_gps] connected to camera");
                 c
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 defmt::warn!("[sony_gps] connect error: {:?}", e);
+                drop(guard);
+                Timer::after(RECONNECT_DELAY).await;
+                continue;
+            }
+            Err(_) => {
+                defmt::warn!("[sony_gps] connect timeout");
+                drop(guard);
                 Timer::after(RECONNECT_DELAY).await;
                 continue;
             }
@@ -463,52 +641,128 @@ pub async fn sony_gps_task(sd: &'static Softdevice) {
         // If no stored keys (first connection, or reboot), fall back to
         // request_pairing(). The camera shows a dialog once; subsequent
         // reconnects are seamless.
+        let had_bond = bonder.has_bond();
         let encrypted = match conn.encrypt() {
             Ok(()) => {
+                defmt::info!("[sony_gps] encryption started with stored bond");
                 // Encryption procedure in progress, wait for completion
-                bonder.secured.wait().await
+                match wait_for_security_update(bonder).await {
+                    Some(secure) => secure,
+                    None => {
+                        drop_security_timeout(&conn, "stored-bond encryption").await;
+                        bond_verified = false;
+                        drop(guard);
+                        Timer::after(RECONNECT_DELAY).await;
+                        continue;
+                    }
+                }
             }
             Err(EncryptError::PeerKeysNotFound) => {
                 defmt::info!("[sony_gps] no stored keys, requesting pairing");
                 if let Err(e) = conn.request_pairing() {
                     defmt::warn!("[sony_gps] pairing request failed: {:?}", e);
+                    drop_failed_security(&conn, bonder, false, "pairing request failed").await;
+                    bond_verified = false;
+                    drop(guard);
+                    Timer::after(RECONNECT_DELAY).await;
+                    continue;
                 }
-                bonder.secured.wait().await
+                match wait_for_security_update(bonder).await {
+                    Some(secure) => secure,
+                    None => {
+                        drop_security_timeout(&conn, "pairing").await;
+                        bond_verified = false;
+                        drop(guard);
+                        Timer::after(RECONNECT_DELAY).await;
+                        continue;
+                    }
+                }
             }
             Err(e) => {
                 defmt::warn!("[sony_gps] encrypt error: {:?}, falling back to pairing", e);
                 if let Err(e) = conn.request_pairing() {
                     defmt::warn!("[sony_gps] pairing request failed: {:?}", e);
+                    drop_failed_security(&conn, bonder, had_bond, "pairing request failed").await;
+                    if had_bond {
+                        cached_camera_addr = None;
+                    }
+                    bond_verified = false;
+                    drop(guard);
+                    Timer::after(RECONNECT_DELAY).await;
+                    continue;
                 }
-                bonder.secured.wait().await
+                match wait_for_security_update(bonder).await {
+                    Some(secure) => secure,
+                    None => {
+                        drop_security_timeout(&conn, "pairing fallback").await;
+                        bond_verified = false;
+                        drop(guard);
+                        Timer::after(RECONNECT_DELAY).await;
+                        continue;
+                    }
+                }
             }
         };
 
         if encrypted {
-            defmt::info!("[sony_gps] link encrypted");
+            let current_mtu = conn.att_mtu();
+            defmt::info!("[sony_gps] link encrypted, mtu={}", current_mtu);
             // Bond data is set by the on_bonded callback (fires in the same
             // event batch as on_security_update). Persist to SD so reboots
             // don't require re-pairing.
-            bonder.save_bond_to_sd().await;
+            if had_bond {
+                defmt::debug!("[sony_gps] existing bond verified, skip SD save");
+            } else {
+                bonder.save_bond_to_sd().await;
+            }
+            bond_verified = true;
+            cached_camera_addr = bonder.peer_address().or(Some(target_addr));
+            if current_mtu < SONY_REQUIRED_ATT_MTU {
+                defmt::info!(
+                    "[sony_gps] encrypted with mtu={}, reconnecting for mtu>={}",
+                    current_mtu,
+                    SONY_REQUIRED_ATT_MTU
+                );
+                let _ = conn.disconnect();
+                drop(guard);
+                Timer::after_millis(500).await;
+                continue;
+            }
         } else {
-            defmt::warn!("[sony_gps] encryption failed, proceeding anyway");
+            bond_verified = false;
+            drop_failed_security(&conn, bonder, had_bond, "link not encrypted").await;
+            if had_bond {
+                cached_camera_addr = None;
+            }
+            drop(guard);
+            Timer::after(RECONNECT_DELAY).await;
+            continue;
         }
 
         // ── Discover Location Service ───────────────────────────────
         defmt::info!("[sony_gps] discovering location service...");
 
-        let client: SonyLocationClient = match gatt_client::discover(&conn).await {
-            Ok(c) => {
-                defmt::info!("[sony_gps] location service discovered");
-                c
-            }
-            Err(e) => {
-                defmt::warn!("[sony_gps] discover error: {:?}", e);
-                let _ = conn.disconnect();
-                Timer::after(RECONNECT_DELAY).await;
-                continue;
-            }
-        };
+        let client: SonyLocationClient =
+            match with_timeout(DISCOVER_TIMEOUT, gatt_client::discover(&conn)).await {
+                Ok(Ok(c)) => {
+                    defmt::info!("[sony_gps] location service discovered");
+                    c
+                }
+                Ok(Err(e)) => {
+                    defmt::warn!("[sony_gps] discover error: {:?}", e);
+                    let _ = conn.disconnect();
+                    drop(guard);
+                    Timer::after(RECONNECT_DELAY).await;
+                    continue;
+                }
+                Err(_) => {
+                    defmt::warn!("[sony_gps] discover timeout");
+                    let _ = conn.disconnect();
+                    drop(guard);
+                    Timer::after(RECONNECT_DELAY).await;
+                    continue;
+                }
+            };
 
         // ── Enable location injection ───────────────────────────────
         defmt::info!("[sony_gps] enabling location injection...");
@@ -572,7 +826,7 @@ pub async fn sony_gps_task(sd: &'static Softdevice) {
 
             let packet = build_geo_packet(lat, lon, year, month, day, hour, minute, second);
 
-            match client.location_data_write_without_response(&packet).await {
+            match client.location_data_write(&packet).await {
                 Ok(()) => {
                     // Log with integer representation to avoid defmt float formatting issues
                     defmt::trace!(
@@ -595,6 +849,7 @@ pub async fn sony_gps_task(sd: &'static Softdevice) {
         }
 
         // ── Cleanup ─────────────────────────────────────────────────
+        drop(guard);
         defmt::info!("[sony_gps] disconnected from camera");
         // Loop back to scanning
     }

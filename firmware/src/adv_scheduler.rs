@@ -14,13 +14,13 @@
 //! - Background tasks (FindMy / FMDN) alternate via round-robin: when one
 //!   releases, the other is granted first if waiting.
 
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::Mutex;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 
 use core::cell::RefCell;
 
-const PRIORITY_COUNT: usize = 3;
+const PRIORITY_COUNT: usize = 4;
 
 /// Time slice for background advertising alternation (seconds).
 /// Each background task (FindMy / FMDN) advertises for this duration
@@ -30,11 +30,11 @@ pub const ALTERNATION_SECS: u64 = 5;
 /// Advertising priority (lower value = higher priority).
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AdvPriority {
-    MainAdv = 0,
-    FindMyAdv = 1,
-    FmdnAdv = 2,
+    SonyCentral = 0,
+    MainAdv = 1,
+    FindMyAdv = 2,
+    FmdnAdv = 3,
 }
-
 
 struct SchedulerState {
     current_holder: Option<AdvPriority>,
@@ -54,8 +54,8 @@ impl AdvScheduler {
                 current_holder: None,
                 waiting: [false; PRIORITY_COUNT],
             })),
-            grant_signals: [Signal::new(), Signal::new(), Signal::new()],
-            preempt_signals: [Signal::new(), Signal::new(), Signal::new()],
+            grant_signals: [Signal::new(), Signal::new(), Signal::new(), Signal::new()],
+            preempt_signals: [Signal::new(), Signal::new(), Signal::new(), Signal::new()],
         }
     }
 
@@ -75,10 +75,10 @@ impl AdvScheduler {
                         // Already granted to us by release(). Claim it.
                         false
                     }
-                    Some(holder) if priority == AdvPriority::MainAdv => {
-                        // Only MainAdv may preempt background advertisers.
-                        // Background tasks (FindMy / FMDN) must not preempt
-                        // each other; they rely on voluntary 5-second yielding.
+                    Some(holder) if priority < holder => {
+                        // Higher-priority roles preempt lower-priority holders.
+                        // Background tasks (FindMy / FMDN) do not preempt each
+                        // other; they rely on voluntary 5-second yielding.
                         self.preempt_signals[holder as usize].signal(());
                         st.waiting[priority as usize] = true;
                         true
@@ -110,12 +110,14 @@ impl AdvScheduler {
             }
             st.current_holder = None;
 
-            // Always check MainAdv (highest priority) first.
-            if st.waiting[AdvPriority::MainAdv as usize] {
-                st.waiting[AdvPriority::MainAdv as usize] = false;
-                st.current_holder = Some(AdvPriority::MainAdv);
-                self.grant_signals[AdvPriority::MainAdv as usize].signal(());
-                return;
+            // Check foreground BLE roles first.
+            for p in [AdvPriority::SonyCentral, AdvPriority::MainAdv] {
+                if st.waiting[p as usize] {
+                    st.waiting[p as usize] = false;
+                    st.current_holder = Some(p);
+                    self.grant_signals[p as usize].signal(());
+                    return;
+                }
             }
 
             // For background tasks, prefer the OTHER background task (round-robin).

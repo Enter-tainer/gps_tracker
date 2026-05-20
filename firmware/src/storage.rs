@@ -255,6 +255,18 @@ pub async fn write_sony_bond(data: &[u8; SONY_BOND_SIZE]) -> bool {
     logger.write_sony_bond(data)
 }
 
+/// Delete Sony bond data from SD card (`/SONY.BND`).
+pub async fn delete_sony_bond() -> bool {
+    let mut logger = SD_LOGGER.lock().await;
+    let Some(logger) = logger.as_mut() else {
+        return false;
+    };
+    let _ = logger
+        .volume_mgr
+        .delete_file_in_dir(logger.root_dir, "SONY.BND");
+    true
+}
+
 /// Read FindMy key material from SD card (`/FINDMY.KEY`).
 pub async fn read_findmy_keys() -> Option<[u8; FINDMY_KEY_SIZE]> {
     let mut logger = SD_LOGGER.lock().await;
