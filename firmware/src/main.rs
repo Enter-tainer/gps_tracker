@@ -18,6 +18,8 @@ mod gps;
 #[cfg(feature = "google-fmdn")]
 #[allow(dead_code)]
 mod secp160r1;
+#[cfg(feature = "sony-gps")]
+mod sony_gps;
 mod protocol;
 mod storage;
 mod system_info;
@@ -33,7 +35,15 @@ use embassy_executor::Spawner;
 use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
 use embassy_nrf::interrupt::Priority;
 use embassy_nrf::usb::vbus_detect::SoftwareVbusDetect;
+#[cfg(feature = "usb-serial-log")]
+use embassy_nrf::usb;
+#[cfg(not(feature = "usb-serial-log"))]
+use {defmt_rtt as _, panic_probe as _};
+#[cfg(feature = "usb-serial-log")]
+use {defmt_embassy_usbserial as _, panic_probe as _};
 use embassy_nrf::{bind_interrupts, buffered_uarte, peripherals, saadc, spim, twim, uarte};
+#[cfg(feature = "usb-serial-log")]
+use embassy_nrf::Peri;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
@@ -41,7 +51,6 @@ use embassy_sync::signal::Signal;
 use embassy_time::Timer;
 use static_cell::StaticCell;
 
-use {defmt_rtt as _, panic_probe as _};
 use nrf_softdevice::ble::SecurityMode;
 use nrf_softdevice::{raw, RawError, SocEvent, Softdevice};
 
@@ -50,6 +59,8 @@ bind_interrupts!(struct Irqs {
     TWISPI0 => twim::InterruptHandler<peripherals::TWISPI0>;
     SPIM3 => spim::InterruptHandler<peripherals::SPI3>;
     SAADC => saadc::InterruptHandler;
+    #[cfg(feature = "usb-serial-log")]
+    USBD => usb::InterruptHandler<peripherals::USBD>;
 });
 
 // DMA buffers must live in RAM for UARTE/TWIM.
@@ -184,6 +195,25 @@ async fn usb_mode_task() {
     }
 }
 
+#[cfg(feature = "usb-serial-log")]
+#[embassy_executor::task]
+async fn usb_serial_log_task(
+    usbd: Peri<'static, peripherals::USBD>,
+    vbus: &'static SoftwareVbusDetect,
+) {
+    use embassy_usb::Config;
+
+    let driver = usb::Driver::new(usbd, Irqs, vbus);
+    let mut config = Config::new(0xCAFE, 0x4002);
+    config.serial_number = Some("defmt");
+    config.max_packet_size_0 = 64;
+    config.composite_with_iads = true;
+    config.device_class = 0xEF;
+    config.device_sub_class = 0x02;
+    config.device_protocol = 0x01;
+    defmt_embassy_usbserial::run(driver, config).await
+}
+
 fn init_usb_power_events(vbus: &SoftwareVbusDetect) -> bool {
     unsafe {
         let _ = raw::sd_power_usbdetected_enable(1);
@@ -252,21 +282,21 @@ async fn main(spawner: Spawner) {
             accuracy: raw::NRF_CLOCK_LF_ACCURACY_500_PPM as u8,
         }),
         conn_gap: Some(raw::ble_gap_conn_cfg_t {
-            conn_count: 1,
-            event_length: 24,
+            conn_count: 2, // 1 for phone app + 1 for Sony camera
+            event_length: 32,
         }),
         conn_gatt: Some(raw::ble_gatt_conn_cfg_t { att_mtu: 247 }),
         conn_gatts: Some(raw::ble_gatts_conn_cfg_t {
             hvn_tx_queue_size: 8,
         }),
-        common_vs_uuid: Some(raw::ble_common_cfg_vs_uuid_t { vs_uuid_count: 1 }),
+        common_vs_uuid: Some(raw::ble_common_cfg_vs_uuid_t { vs_uuid_count: 2 }), // NUS + Sony location service
         gap_role_count: Some(raw::ble_gap_cfg_role_count_t {
             // S140 7.3.0 supports only one advertising set handle.
             // Find My and connectable BLE must time-share this single handle.
             adv_set_count: 1,
             periph_role_count: 1,
-            central_role_count: 0,
-            central_sec_count: 0,
+            central_role_count: 1,  // for Sony camera connection
+            central_sec_count: 1,   // Sony camera requires pairing/bonding
             _bitfield_1: raw::ble_gap_cfg_role_count_t::new_bitfield_1(0),
         }),
         gap_device_name: Some(raw::ble_gap_cfg_device_name_t {
@@ -311,6 +341,9 @@ async fn main(spawner: Spawner) {
         spawner.spawn(usb_msc::usb_msc_task(usbd, vbus)).unwrap();
         #[cfg(not(feature = "i2c-spi"))]
         defmt::warn!("USB MSC disabled (feature i2c-spi off)");
+    } else {
+        #[cfg(feature = "usb-serial-log")]
+        spawner.spawn(usb_serial_log_task(usbd, vbus)).unwrap();
     }
     if let Some(server) = server {
         spawner.spawn(ble::ble_task(sd, server)).unwrap();
@@ -435,6 +468,10 @@ async fn main(spawner: Spawner) {
             spawner.spawn(bmp280::bmp280_task(i2c_bmp)).unwrap();
             spawner.spawn(display::display_task(i2c_display)).unwrap();
         }
+
+        // Sony GPS sharing: scan and connect to Sony cameras, send GPS data
+        #[cfg(feature = "sony-gps")]
+        spawner.spawn(sony_gps::sony_gps_task(sd)).unwrap();
     } else {
         let button = Input::new(button_pin, Pull::Up);
         spawner.spawn(button::usb_only_button_task(button)).unwrap();

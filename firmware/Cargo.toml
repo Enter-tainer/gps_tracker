@@ -1,4 +1,4 @@
-[package]
+﻿[package]
 name = "gps-tracker-firmware"
 version = "0.1.0"
 edition = "2024"
@@ -12,10 +12,12 @@ embassy-nrf = { version = "0.9.0", default-features = false, features = ["rt", "
 embassy-sync = { version = "0.7.2", features = ["defmt"] }
 embassy-futures = { version = "0.1" }
 embassy-embedded-hal = "0.5.0"
+embassy-usb = { version = "0.5", optional = true }
+defmt-embassy-usbserial = { version = "0.2.1", optional = true }
 
 # --- 蓝牙 (SoftDevice) ---
 # s140 是 nRF52840 的蓝牙协议栈
-nrf-softdevice = { git = "https://github.com/embassy-rs/nrf-softdevice", rev = "5949a5b1445cc907745c6449a35577e4544cd255", features = ["defmt", "nrf52840", "s140", "ble-peripheral", "ble-central", "ble-gatt-server", "critical-section-impl"] }
+nrf-softdevice = { git = "https://github.com/embassy-rs/nrf-softdevice", rev = "5949a5b1445cc907745c6449a35577e4544cd255", features = ["defmt", "nrf52840", "s140", "ble-peripheral", "ble-central", "ble-gatt-server", "ble-gatt-client", "ble-sec", "critical-section-impl"] }
 nrf-softdevice-s140 = { git = "https://github.com/embassy-rs/nrf-softdevice", rev = "5949a5b1445cc907745c6449a35577e4544cd255" }
 
 # --- 常用嵌入式库 ---
@@ -54,13 +56,14 @@ aes = { version = "0.8", default-features = false, optional = true }
 
 # 优化配置：发布模式下尽可能优化体积和速度
 [features]
-default = ["i2c-spi", "findmy", "google-fmdn"]
+default = ["i2c-spi", "findmy", "google-fmdn", "sony-gps", "usb-serial-log"]
 i2c-spi = []
 findmy = ["dep:p224", "dep:sha2"]
 google-fmdn = ["dep:aes", "dep:sha2"]
+sony-gps = []
 host-test = []
 extended_addressing = ["usbd-storage/extended_addressing"]
-
+usb-serial-log = ["dep:defmt-embassy-usbserial", "dep:embassy-usb"]
 [profile.release]
 codegen-units = 1
 debug = 2

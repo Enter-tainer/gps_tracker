@@ -2,18 +2,18 @@ use core::cmp;
 use core::sync::atomic::{AtomicU16, Ordering};
 
 use embassy_executor::task;
-use embassy_futures::select::{select, Either};
+use embassy_futures::select::{Either, select};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
 use heapless::Vec;
+use nrf_softdevice::Softdevice;
 use nrf_softdevice::ble::advertisement_builder::{
     Flag, LegacyAdvertisementBuilder, LegacyAdvertisementPayload, ServiceList,
 };
-use nrf_softdevice::ble::{gatt_server, peripheral, Connection, PhySet};
-use nrf_softdevice::Softdevice;
+use nrf_softdevice::ble::{Connection, PhySet, gatt_server, peripheral};
 
-use crate::adv_scheduler::{AdvPriority, ADV_SCHEDULER};
+use crate::adv_scheduler::{ADV_SCHEDULER, AdvPriority};
 use crate::protocol::FileTransferProtocol;
 
 pub const DEVICE_NAME: &str = "MGT GPS Tracker";
@@ -100,25 +100,34 @@ pub async fn ble_task(sd: &'static Softdevice, server: &'static Server) {
         };
 
         let mut conn = match select(
-            peripheral::advertise_connectable(sd, adv, &config),
-            ADV_REQUEST_SIGNAL.wait(),
+            select(
+                peripheral::advertise_connectable(sd, adv, &config),
+                ADV_REQUEST_SIGNAL.wait(),
+            ),
+            guard.wait_preempted(),
         )
         .await
         {
-            Either::First(Ok(conn)) => conn,
-            Either::First(Err(peripheral::AdvertiseError::Timeout)) => {
+            Either::First(Either::First(Ok(conn))) => conn,
+            Either::First(Either::First(Err(peripheral::AdvertiseError::Timeout))) => {
                 defmt::info!("BLE advertising timeout");
                 drop(guard);
                 continue;
             }
-            Either::First(Err(err)) => {
+            Either::First(Either::First(Err(err))) => {
                 defmt::warn!("BLE advertise error: {:?}", err);
                 drop(guard);
                 continue;
             }
-            Either::Second(()) => {
+            Either::First(Either::Second(())) => {
                 drop(guard);
                 pending_timeout = take_adv_request();
+                continue;
+            }
+            Either::Second(()) => {
+                defmt::info!("BLE advertising preempted");
+                drop(guard);
+                pending_timeout = Some(timeout);
                 continue;
             }
         };
@@ -193,7 +202,10 @@ async fn ble_send(conn: &Connection, server: &Server, data: &[u8]) {
     while offset < data.len() {
         let chunk_len = cmp::min(max_payload, data.len() - offset);
         let mut chunk: Vec<u8, MAX_GATT_PAYLOAD> = Vec::new();
-        if chunk.extend_from_slice(&data[offset..offset + chunk_len]).is_err() {
+        if chunk
+            .extend_from_slice(&data[offset..offset + chunk_len])
+            .is_err()
+        {
             break;
         }
         if let Err(err) = server.nus.tx_notify(conn, &chunk) {
@@ -211,9 +223,5 @@ fn request_advertising(timeout_10ms: u16) {
 
 fn take_adv_request() -> Option<u16> {
     let timeout = ADV_REQUEST_TIMEOUT.swap(0, Ordering::AcqRel);
-    if timeout == 0 {
-        None
-    } else {
-        Some(timeout)
-    }
+    if timeout == 0 { None } else { Some(timeout) }
 }
