@@ -1,4 +1,4 @@
-"""GPX export utilities shared across Apple Find My and Google FMDN modules."""
+"""GPX export utilities shared by location-report tools."""
 
 import datetime
 import math

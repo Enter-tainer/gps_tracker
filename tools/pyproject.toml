@@ -1,17 +1,11 @@
 [project]
 name = "gps-tracker-tools"
 version = "0.1.0"
-description = "CLI tools for gps_tracker: Apple Find My, Google FMDN, CASIC protocol, GPS format, UF2 build"
+description = "CLI tools for gps_tracker: Apple Find My, CASIC protocol, GPS format, UF2 build"
 requires-python = ">=3.11"
 dependencies = [
     "cryptography>=42.0",
     "requests>=2.31",
-    "gpsoauth>=1.1.1",
-    "selenium>=4.15",
-    "httpx[http2]>=0.27",
-    "protobuf>=5.28",
-    "pycryptodomex>=3.20",
-    "ecdsa>=0.19",
 ]
 
 [project.scripts]

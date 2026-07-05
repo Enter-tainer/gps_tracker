@@ -12,12 +12,7 @@ mod casic;
 mod display;
 #[cfg(feature = "findmy")]
 mod findmy;
-#[cfg(feature = "google-fmdn")]
-mod google_fmdn;
 mod gps;
-#[cfg(feature = "google-fmdn")]
-#[allow(dead_code)]
-mod secp160r1;
 mod protocol;
 mod storage;
 mod system_info;
@@ -34,16 +29,16 @@ use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
 use embassy_nrf::interrupt::Priority;
 use embassy_nrf::usb::vbus_detect::SoftwareVbusDetect;
 use embassy_nrf::{bind_interrupts, buffered_uarte, peripherals, saadc, spim, twim, uarte};
+use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::Timer;
 use static_cell::StaticCell;
 
-use {defmt_rtt as _, panic_probe as _};
 use nrf_softdevice::ble::SecurityMode;
-use nrf_softdevice::{raw, RawError, SocEvent, Softdevice};
+use nrf_softdevice::{RawError, SocEvent, Softdevice, raw};
+use {defmt_rtt as _, panic_probe as _};
 
 bind_interrupts!(struct Irqs {
     UARTE0 => buffered_uarte::InterruptHandler<peripherals::UARTE0>;
@@ -102,8 +97,7 @@ fn take_usb_boot_flag() -> bool {
         defmt::info!("USB boot flag not set");
         return false;
     }
-    let clear =
-        RawError::convert(unsafe { raw::sd_power_gpregret_clr(0, USB_BOOT_FLAG as u32) });
+    let clear = RawError::convert(unsafe { raw::sd_power_gpregret_clr(0, USB_BOOT_FLAG as u32) });
     match clear {
         Ok(()) => defmt::info!("Cleared USB boot flag"),
         Err(err) => defmt::warn!("Clear USB boot flag failed: {:?}", err),
@@ -368,21 +362,6 @@ async fn main(spawner: Spawner) {
         spawner.spawn(findmy::findmy_task(sd)).unwrap();
     }
 
-    #[cfg(feature = "google-fmdn")]
-    {
-        // Load EIK from SD card (32 bytes).
-        if let Some(eik_data) = storage::read_fmdn_eik().await {
-            let mut eik = [0u8; 32];
-            eik.copy_from_slice(&eik_data[..32]);
-            google_fmdn::init(&eik);
-            google_fmdn::set_enabled(true);
-            defmt::info!("FMDN: loaded EIK from SD");
-        } else {
-            defmt::info!("FMDN: no EIK on SD, waiting for provisioning");
-        }
-        spawner.spawn(google_fmdn::fmdn_task(sd)).unwrap();
-    }
-
     let gps_en = Output::new(gps_en_pin, Level::Low, OutputDrive::Standard);
     if !usb_only {
         let gps_uart = {
@@ -442,7 +421,9 @@ async fn main(spawner: Spawner) {
 
     drop((serial2_rx, serial2_tx));
     #[cfg(not(feature = "i2c-spi"))]
-    drop((spi3, spi_sck, spi_miso, spi_mosi, spi_cs, twispi0, i2c_sda, i2c_scl));
+    drop((
+        spi3, spi_sck, spi_miso, spi_mosi, spi_cs, twispi0, i2c_sda, i2c_scl,
+    ));
 
     core::future::pending::<()>().await;
 }

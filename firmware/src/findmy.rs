@@ -19,17 +19,17 @@ use core::cell::RefCell;
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use embassy_executor::task;
-use embassy_futures::select::{select, Either};
-use embassy_sync::blocking_mutex::{raw::CriticalSectionRawMutex, Mutex as CsMutex};
+use embassy_futures::select::{Either, select};
+use embassy_sync::blocking_mutex::{Mutex as CsMutex, raw::CriticalSectionRawMutex};
 use embassy_time::{Duration, Instant, Timer};
 use p224::elliptic_curve::ops::Reduce;
 use p224::elliptic_curve::sec1::ToEncodedPoint;
 use p224::{FieldBytes, ProjectivePoint, Scalar};
 use sha2::{Digest, Sha256};
 
-use nrf_softdevice::{raw, RawError, Softdevice};
+use nrf_softdevice::{RawError, Softdevice, raw};
 
-use crate::adv_scheduler::{AdvPriority, ALTERNATION_SECS, ADV_SCHEDULER};
+use crate::adv_scheduler::{ADV_SCHEDULER, ALTERNATION_SECS, AdvPriority};
 use crate::display;
 use crate::storage;
 use crate::system_info::SYSTEM_INFO;
@@ -44,8 +44,7 @@ const FINDMY_ADV_INTERVAL_UNITS: u32 = 3200;
 /// Enable/disable Find My advertising at runtime.
 static FINDMY_ENABLED: AtomicBool = AtomicBool::new(false);
 static FINDMY_DIAG_STATE: AtomicU8 = AtomicU8::new(FindMyDiagState::Disabled as u8);
-static FINDMY_ADV_HANDLE: AtomicU8 =
-    AtomicU8::new(raw::BLE_GAP_ADV_SET_HANDLE_NOT_SET as u8);
+static FINDMY_ADV_HANDLE: AtomicU8 = AtomicU8::new(raw::BLE_GAP_ADV_SET_HANDLE_NOT_SET as u8);
 
 /// Master key material. Set once during initialization.
 struct MasterKeys {
@@ -422,8 +421,8 @@ async fn battery_percent() -> u8 {
     if info.battery_voltage < 0.0 {
         return 0;
     }
-    let percent = crate::battery::estimate_battery_level(info.battery_voltage * 1000.0)
-        .clamp(0.0, 100.0);
+    let percent =
+        crate::battery::estimate_battery_level(info.battery_voltage * 1000.0).clamp(0.0, 100.0);
     (percent + 0.5) as u8
 }
 
@@ -715,8 +714,8 @@ pub async fn findmy_task(_sd: &'static Softdevice) {
             set_diag_state(FindMyDiagState::Advertising);
             defmt::info!("FindMy: advertising (counter={})", current_counter);
 
-            // Wait until: preempted by main BLE, alternation slice expires, or
-            // rotation timer fires.  Use short slices to allow FMDN alternation.
+            // Wait until: preempted by main BLE, yield slice expires, or
+            // rotation timer fires.
             let sleep_secs =
                 secs_until_next_rotation_from_unix(unix_ts).unwrap_or(KEY_ROTATION_SECS);
             let adv_secs = core::cmp::min(sleep_secs + 1, ALTERNATION_SECS);

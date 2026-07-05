@@ -2,8 +2,7 @@
 //!
 //! The nRF SoftDevice S140 supports only one advertising set handle.
 //! This module arbitrates access between connectable (main BLE) and
-//! non-connectable (Find My / FMDN) advertising using a cooperative
-//! preemption model with round-robin alternation for background tasks.
+//! non-connectable Find My advertising using a cooperative preemption model.
 //!
 //! # Design
 //!
@@ -11,20 +10,16 @@
 //! - Higher-priority callers preempt lower-priority holders via signal.
 //! - `AdvGuard::wait_preempted().await` lets holders react to preemption.
 //! - `drop(guard)` releases the resource and wakes the next waiter.
-//! - Background tasks (FindMy / FMDN) alternate via round-robin: when one
-//!   releases, the other is granted first if waiting.
 
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::Mutex;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 
 use core::cell::RefCell;
 
-const PRIORITY_COUNT: usize = 3;
+const PRIORITY_COUNT: usize = 2;
 
-/// Time slice for background advertising alternation (seconds).
-/// Each background task (FindMy / FMDN) advertises for this duration
-/// before yielding to allow the other task a turn.
+/// Time slice for background advertising before yielding.
 pub const ALTERNATION_SECS: u64 = 5;
 
 /// Advertising priority (lower value = higher priority).
@@ -32,9 +27,7 @@ pub const ALTERNATION_SECS: u64 = 5;
 pub enum AdvPriority {
     MainAdv = 0,
     FindMyAdv = 1,
-    FmdnAdv = 2,
 }
-
 
 struct SchedulerState {
     current_holder: Option<AdvPriority>,
@@ -54,8 +47,8 @@ impl AdvScheduler {
                 current_holder: None,
                 waiting: [false; PRIORITY_COUNT],
             })),
-            grant_signals: [Signal::new(), Signal::new(), Signal::new()],
-            preempt_signals: [Signal::new(), Signal::new(), Signal::new()],
+            grant_signals: [Signal::new(), Signal::new()],
+            preempt_signals: [Signal::new(), Signal::new()],
         }
     }
 
@@ -77,8 +70,6 @@ impl AdvScheduler {
                     }
                     Some(holder) if priority == AdvPriority::MainAdv => {
                         // Only MainAdv may preempt background advertisers.
-                        // Background tasks (FindMy / FMDN) must not preempt
-                        // each other; they rely on voluntary 5-second yielding.
                         self.preempt_signals[holder as usize].signal(());
                         st.waiting[priority as usize] = true;
                         true
@@ -118,20 +109,10 @@ impl AdvScheduler {
                 return;
             }
 
-            // For background tasks, prefer the OTHER background task (round-robin).
-            let (first, second) = match priority {
-                AdvPriority::FindMyAdv => (AdvPriority::FmdnAdv, AdvPriority::FindMyAdv),
-                AdvPriority::FmdnAdv => (AdvPriority::FindMyAdv, AdvPriority::FmdnAdv),
-                _ => (AdvPriority::FindMyAdv, AdvPriority::FmdnAdv),
-            };
-
-            for p in [first, second] {
-                if st.waiting[p as usize] {
-                    st.waiting[p as usize] = false;
-                    st.current_holder = Some(p);
-                    self.grant_signals[p as usize].signal(());
-                    return;
-                }
+            if st.waiting[AdvPriority::FindMyAdv as usize] {
+                st.waiting[AdvPriority::FindMyAdv as usize] = false;
+                st.current_holder = Some(AdvPriority::FindMyAdv);
+                self.grant_signals[AdvPriority::FindMyAdv as usize].signal(());
             }
         });
     }
