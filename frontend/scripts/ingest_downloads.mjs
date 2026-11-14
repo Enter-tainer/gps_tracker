@@ -6,9 +6,9 @@ import { fileURLToPath } from "node:url";
 
 import {
   computeTrackStatsAndOverview,
-  encodeGpsPointsV2,
   parseGpxXmlToPoints
 } from "../src/services/gpsCodec.ts";
+import { encodeGpsl0Points } from "../src/services/gpsl0/index.ts";
 import {
   createEmptyFogPack,
   encodeFogPack,
@@ -118,7 +118,7 @@ function main() {
     process.exit(1);
   }
 
-  const r2TracksDir = path.join(outDir, "r2", "tracks");
+  const r2TracksDir = path.join(outDir, "r2", "tracks-gpsl0");
   const r2FogDir = path.join(outDir, "r2", "fog");
   const d1Dir = path.join(outDir, "d1");
   fs.mkdirSync(r2TracksDir, { recursive: true });
@@ -133,11 +133,12 @@ function main() {
   const tracks = [];
   const tileIndex = {};
   const d1TileRows = [];
+  const d1BlobRows = [];
   const fogPack = createEmptyFogPack();
 
   let skippedCount = 0;
   let totalRawBytes = 0;
-  let totalGpzBytes = 0;
+  let totalGpsl0Bytes = 0;
   const nowSec = Math.floor(Date.now() / 1000);
 
   for (const fileName of allFiles) {
@@ -171,10 +172,14 @@ function main() {
         .slice(0, 10);
     }
 
-    const gpzBytes = encodeGpsPointsV2(points);
-    const r2Key = `tracks/${identity.id}.gpz`;
-    fs.writeFileSync(path.join(r2TracksDir, `${identity.id}.gpz`), gpzBytes);
-    totalGpzBytes += gpzBytes.byteLength;
+    const gpsl0Bytes = encodeGpsl0Points(points);
+    const r2Key = `d1://track_blobs/${identity.id}`;
+    fs.writeFileSync(
+      path.join(r2TracksDir, `${identity.id}.gpsl0`),
+      gpsl0Bytes
+    );
+    totalGpsl0Bytes += gpsl0Bytes.byteLength;
+    d1BlobRows.push([identity.id, Buffer.from(gpsl0Bytes).toString("hex")]);
 
     const trackTiles = rasterizeTrackToFogTiles(points);
     mergeTrackTilesIntoFogPack(fogPack, trackTiles, true);
@@ -282,6 +287,12 @@ function main() {
     );
   }
 
+  for (const [trackId, hex] of d1BlobRows) {
+    sqlLines.push(
+      `INSERT OR REPLACE INTO track_blobs (track_id, data) VALUES (${sqlEscape(trackId)}, X'${hex}');`
+    );
+  }
+
   fs.writeFileSync(path.join(d1Dir, "seed.sql"), sqlLines.join("\n"));
 
   const mb = (b) => `${(b / (1024 * 1024)).toFixed(2)} MB`;
@@ -294,7 +305,7 @@ function main() {
   console.log(`Total Distance   : ${(stats.totalDistanceM / 1000).toFixed(1)} km`);
   console.log(`Elevation Gain   : ${stats.totalElevGainM.toLocaleString()} m`);
   console.log(`Raw GPX Size     : ${mb(totalRawBytes)}`);
-  console.log(`GPZ V2 Archive   : ${mb(totalGpzBytes)} (${((totalGpzBytes / Math.max(1, totalRawBytes)) * 100).toFixed(2)}% of raw XML)`);
+  console.log(`GPSL0 Archive    : ${mb(totalGpsl0Bytes)} (${((totalGpsl0Bytes / Math.max(1, totalRawBytes)) * 100).toFixed(2)}% of raw XML)`);
   console.log(`Z15 Fog Tiles    : ${fogPack.tileCount.toLocaleString()}`);
   console.log(`Z21 Explored     : ${fogPack.totalCells.toLocaleString()} cells (${fogPack.exploredAreaKm2} km2)`);
   console.log(`global-fog.bin   : ${mb(fogBin.byteLength)} raw / ${kb(fogBinGz.byteLength)} gzip`);

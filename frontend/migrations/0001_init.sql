@@ -35,3 +35,10 @@ CREATE TABLE IF NOT EXISTS track_tiles (
 ) WITHOUT ROWID;
 
 CREATE INDEX IF NOT EXISTS idx_track_tiles_track_id ON track_tiles(track_id);
+
+-- Separate rowid table so 10-22 KB GPSL0 BLOBs spill to SQLite overflow pages
+-- without bloating the `tracks` metadata B-Tree scanned by /api/bootstrap.
+CREATE TABLE IF NOT EXISTS track_blobs (
+  track_id TEXT PRIMARY KEY,
+  data BLOB NOT NULL
+);

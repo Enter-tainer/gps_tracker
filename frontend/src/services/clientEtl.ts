@@ -15,9 +15,9 @@ import {
 import {
   computeTrackStatsAndOverview,
   decodeGpsPoints,
-  encodeGpsPointsV2,
   parseGpxXmlToPoints
 } from "./gpsCodec.ts";
+import { encodeGpsl0Points } from "./gpsl0/index.ts";
 
 export type BrowserEtlInputFile =
   | File
@@ -39,7 +39,7 @@ export type BrowserTrackEtlOptions = {
 export type BrowserTrackEtlResult = {
   track: TrackMetadata;
   points: GpsPoint[];
-  gpzBytes: Uint8Array;
+  gpsl0Bytes: Uint8Array;
   tiles: CompactTrackTileTuple[];
   fogPack: FogPackData;
   fogBytes?: Uint8Array;
@@ -145,14 +145,14 @@ export async function runBrowserTrackEtl(
     throw new Error("文件中未解析出有效 GPS 轨迹点");
   }
 
-  onStage?.("浏览器压缩 GPZ V2 & 计算统计...");
+  onStage?.("浏览器压缩 GPSL0 & 计算统计...");
   const inferred = inferTrackIdentity(fileName, points, customTitle, customDate);
   const trackId =
     customId && customId.trim() ? sanitizeTrackId(customId) : inferred.id;
 
   const summary = computeTrackStatsAndOverview(points);
-  const gpzBytes = encodeGpsPointsV2(points);
-  const r2Key = `tracks/${trackId}.gpz`;
+  const gpsl0Bytes = encodeGpsl0Points(points);
+  const r2Key = `d1://track_blobs/${trackId}`;
 
   onStage?.("浏览器光栅化 Z15/Z21 迷雾位图...");
   const trackTiles = rasterizeTrackToFogTiles(points);
@@ -192,7 +192,7 @@ export async function runBrowserTrackEtl(
   return {
     track,
     points,
-    gpzBytes,
+    gpsl0Bytes,
     tiles,
     fogPack,
     fogBytes
@@ -201,18 +201,18 @@ export async function runBrowserTrackEtl(
 
 export async function uploadPreparedTrackToServer(params: {
   track: TrackMetadata;
-  gpzBytes: Uint8Array;
+  gpsl0Bytes: Uint8Array;
   tiles: CompactTrackTileTuple[];
   fogBytes?: Uint8Array;
 }): Promise<TrackMetadata> {
-  const { track, gpzBytes, tiles, fogBytes } = params;
+  const { track, gpsl0Bytes, tiles, fogBytes } = params;
   const meta: UploadTrackMetaPayload = { track, tiles };
 
   const form = new FormData();
   form.append(
-    "gpz",
-    new Blob([toArrayBuffer(gpzBytes)], { type: "application/octet-stream" }),
-    `${track.id}.gpz`
+    "gpsl0",
+    new Blob([toArrayBuffer(gpsl0Bytes)], { type: "application/octet-stream" }),
+    `${track.id}.gpsl0`
   );
   form.append("meta", JSON.stringify(meta));
   if (fogBytes) {

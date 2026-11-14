@@ -293,13 +293,13 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
           setItemStatus(
             i,
             isFinal
-              ? `上传预计算 GPZ (${(etl.gpzBytes.byteLength / 1024).toFixed(1)} KB) + 迷雾...`
-              : `上传预计算 GPZ (${(etl.gpzBytes.byteLength / 1024).toFixed(1)} KB) + ${etl.tiles.length} 个空间瓦片...`
+              ? `上传预计算 GPSL0 (${(etl.gpsl0Bytes.byteLength / 1024).toFixed(1)} KB) + 迷雾...`
+              : `上传预计算 GPSL0 (${(etl.gpsl0Bytes.byteLength / 1024).toFixed(1)} KB) + ${etl.tiles.length} 个空间瓦片...`
           );
 
           const savedTrack = await uploadPreparedTrackToServer({
             track: etl.track,
-            gpzBytes: etl.gpzBytes,
+            gpsl0Bytes: etl.gpsl0Bytes,
             tiles: etl.tiles,
             fogBytes: etl.fogBytes
           });
@@ -307,11 +307,11 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
           workingPack = etl.fogPack;
           onTrackUploaded(savedTrack, etl.points, etl.fogPack);
           logger.success(
-            `浏览器 ETL 入库成功: ${f.name} (${savedTrack.point_count} 点 · ${(etl.gpzBytes.byteLength / 1024).toFixed(1)} KB GPZ · ${etl.tiles.length} 瓦片)`
+            `浏览器 ETL 入库成功: ${f.name} (${savedTrack.point_count} 点 · ${(etl.gpsl0Bytes.byteLength / 1024).toFixed(1)} KB GPSL0 · ${etl.tiles.length} 瓦片)`
           );
           setItemStatus(
             i,
-            `成功 · ${(savedTrack.distance_m / 1000).toFixed(1)} km (${savedTrack.point_count} 点 · ${(etl.gpzBytes.byteLength / 1024).toFixed(1)} KB GPZ)`,
+            `成功 · ${(savedTrack.distance_m / 1000).toFixed(1)} km (${savedTrack.point_count} 点 · ${(etl.gpsl0Bytes.byteLength / 1024).toFixed(1)} KB GPSL0)`,
             true
           );
         } catch (err) {
@@ -535,7 +535,7 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
         setStatusMessage(`Uploading pre-computed ${fileName} to R2 & D1...`);
         const savedTrack = await uploadPreparedTrackToServer({
           track: etl.track,
-          gpzBytes: etl.gpzBytes,
+          gpsl0Bytes: etl.gpsl0Bytes,
           tiles: etl.tiles,
           fogBytes: etl.fogBytes
         });

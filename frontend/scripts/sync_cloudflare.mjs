@@ -29,14 +29,13 @@ function main() {
 
   const seedSql = path.join(DATA_DIR, "d1", "seed.sql");
   const fogFile = path.join(DATA_DIR, "r2", "fog", "global-fog.bin");
-  const tracksDir = path.join(DATA_DIR, "r2", "tracks");
 
   if (!fs.existsSync(seedSql) || !fs.existsSync(fogFile)) {
     console.error("local-data not found. Run `npm run ingest` first.");
     process.exit(1);
   }
 
-  console.log(`Syncing D1 migrations and seed data (${modeFlag})...`);
+  console.log(`Syncing D1 migrations and seed data (including GPSL0 track_blobs) (${modeFlag})...`);
   runWrangler(["d1", "migrations", "apply", D1_NAME, modeFlag]);
   runWrangler(["d1", "execute", D1_NAME, modeFlag, `--file=${seedSql}`]);
 
@@ -50,26 +49,6 @@ function main() {
     "--content-type=application/octet-stream",
     modeFlag
   ]);
-
-  const gpzFiles = fs
-    .readdirSync(tracksDir)
-    .filter((f) => f.endsWith(".gpz"))
-    .sort();
-  console.log(`Uploading ${gpzFiles.length} .gpz track archives to R2...`);
-  for (let i = 0; i < gpzFiles.length; i++) {
-    const file = gpzFiles[i];
-    const fullPath = path.join(tracksDir, file);
-    console.log(`[${i + 1}/${gpzFiles.length}] tracks/${file}`);
-    runWrangler([
-      "r2",
-      "object",
-      "put",
-      `${BUCKET_NAME}/tracks/${file}`,
-      `--file=${fullPath}`,
-      "--content-type=application/octet-stream",
-      modeFlag
-    ]);
-  }
 
   console.log("Cloudflare D1 + R2 sync completed!");
 }

@@ -174,18 +174,33 @@ async function handleGetFog(request: Request, env: Env): Promise<Response> {
   return new Response(obj.body as unknown as BodyInit, { headers });
 }
 
-async function handleGetTrackGpz(env: Env, id: string): Promise<Response> {
+function toBlobBytes(raw: unknown): Uint8Array | null {
+  if (!raw) return null;
+  if (raw instanceof ArrayBuffer) return new Uint8Array(raw);
+  if (ArrayBuffer.isView(raw)) {
+    return new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength);
+  }
+  if (Array.isArray(raw)) return new Uint8Array(raw);
+  return null;
+}
+
+async function handleGetTrackGpsl0(env: Env, id: string): Promise<Response> {
   const safeId = decodeURIComponent(id).replace(/[^a-zA-Z0-9_.-]/g, "");
-  const obj = await env.TRACKS_BUCKET.get(`tracks/${safeId}.gpz`);
-  if (!obj) {
+  const row = await env.TRACKS_DB.prepare(
+    `SELECT data FROM track_blobs WHERE track_id = ?`
+  )
+    .bind(safeId)
+    .first<{ data: unknown }>();
+
+  const bytes = toBlobBytes(row?.data);
+  if (!bytes) {
     return jsonResponse({ error: "Track archive not found" }, 404);
   }
 
-  return new Response(obj.body as unknown as BodyInit, {
+  return new Response(bytes as unknown as BodyInit, {
     headers: {
       "Content-Type": "application/octet-stream",
-      "Cache-Control": "private, max-age=86400",
-      ...(obj.httpEtag ? { ETag: obj.httpEtag } : {})
+      "Cache-Control": "private, max-age=86400"
     }
   });
 }
@@ -258,17 +273,18 @@ async function handleSpatialQuery(request: Request, env: Env): Promise<Response>
 
 /**
  * Pure I/O ingest endpoint: all GPX/GPZ decoding, RDP simplification,
- * GPZ V2 encoding, and Z15/Z21 fog bitmap merging are pre-computed in the browser
+ * GPSL0 encoding, and Z15/Z21 fog bitmap merging are pre-computed in the browser
  * so the Cloudflare Worker stays well under free-tier CPU limits.
+ * Track binaries (GPSL0) are stored atomically in D1 `track_blobs`.
  */
 async function handleUploadTrack(request: Request, env: Env): Promise<Response> {
   const form = await request.formData();
-  const gpzEntry = form.get("gpz");
+  const gpsl0Entry = form.get("gpsl0");
   const metaEntry = form.get("meta");
   const fogEntry = form.get("fog");
 
-  if (!gpzEntry || typeof gpzEntry === "string") {
-    return jsonResponse({ error: "Missing pre-encoded 'gpz' binary field" }, 400);
+  if (!gpsl0Entry || typeof gpsl0Entry === "string") {
+    return jsonResponse({ error: "Missing pre-encoded 'gpsl0' binary field" }, 400);
   }
   if (typeof metaEntry !== "string") {
     return jsonResponse({ error: "Missing 'meta' JSON payload field" }, 400);
@@ -287,7 +303,7 @@ async function handleUploadTrack(request: Request, env: Env): Promise<Response> 
   }
 
   const trackId = sanitizeTrackId(rawTrack.id);
-  const r2Key = `tracks/${trackId}.gpz`;
+  const r2Key = `d1://track_blobs/${trackId}`;
   const nowSec = Math.floor(Date.now() / 1000);
   const track: TrackMetadata = {
     ...rawTrack,
@@ -308,12 +324,8 @@ async function handleUploadTrack(request: Request, env: Env): Promise<Response> 
       )
     : [];
 
-  const gpzBuf = await (gpzEntry as File).arrayBuffer();
-  const r2Writes: Promise<unknown>[] = [
-    env.TRACKS_BUCKET.put(r2Key, gpzBuf, {
-      httpMetadata: { contentType: "application/octet-stream" }
-    })
-  ];
+  const gpsl0Buf = new Uint8Array(await (gpsl0Entry as File).arrayBuffer());
+  const r2Writes: Promise<unknown>[] = [];
 
   if (fogEntry && typeof fogEntry !== "string") {
     const fogBuf = await (fogEntry as File).arrayBuffer();
@@ -354,6 +366,9 @@ async function handleUploadTrack(request: Request, env: Env): Promise<Response> 
       JSON.stringify(track.overview_coords ?? []),
       track.created_at
     ),
+    env.TRACKS_DB.prepare(
+      `INSERT OR REPLACE INTO track_blobs (track_id, data) VALUES (?, ?)`
+    ).bind(track.id, gpsl0Buf),
     env.TRACKS_DB.prepare(`DELETE FROM track_tiles WHERE track_id = ?`).bind(
       track.id
     )
@@ -381,14 +396,14 @@ async function handleUploadTrack(request: Request, env: Env): Promise<Response> 
 
 async function handleDeleteTrack(env: Env, id: string): Promise<Response> {
   const safeId = decodeURIComponent(id).replace(/[^a-zA-Z0-9_.-]/g, "");
-  await Promise.all([
-    env.TRACKS_DB.batch([
-      env.TRACKS_DB.prepare(`DELETE FROM track_tiles WHERE track_id = ?`).bind(
-        safeId
-      ),
-      env.TRACKS_DB.prepare(`DELETE FROM tracks WHERE id = ?`).bind(safeId)
-    ]),
-    env.TRACKS_BUCKET.delete(`tracks/${safeId}.gpz`)
+  await env.TRACKS_DB.batch([
+    env.TRACKS_DB.prepare(`DELETE FROM track_tiles WHERE track_id = ?`).bind(
+      safeId
+    ),
+    env.TRACKS_DB.prepare(`DELETE FROM track_blobs WHERE track_id = ?`).bind(
+      safeId
+    ),
+    env.TRACKS_DB.prepare(`DELETE FROM tracks WHERE id = ?`).bind(safeId)
   ]);
   return jsonResponse({ ok: true, deletedId: safeId });
 }
@@ -415,9 +430,9 @@ export default {
       return handleUploadTrack(request, env);
     }
 
-    const gpzMatch = pathname.match(/^\/api\/tracks\/([^/]+)\/gpz$/);
-    if (gpzMatch && request.method === "GET") {
-      return handleGetTrackGpz(env, gpzMatch[1]);
+    const gpsl0Match = pathname.match(/^\/api\/tracks\/([^/]+)\/gpsl0$/);
+    if (gpsl0Match && request.method === "GET") {
+      return handleGetTrackGpsl0(env, gpsl0Match[1]);
     }
 
     const deleteMatch = pathname.match(/^\/api\/tracks\/([^/]+)$/);

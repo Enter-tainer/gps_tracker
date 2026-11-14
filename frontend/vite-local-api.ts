@@ -153,26 +153,26 @@ export function localTrackApiPlugin(frontendRoot: string): Plugin {
           return;
         }
 
-        const gpzMatch = urlPath.match(/^\/api\/tracks\/([^/]+)\/gpz$/);
-        if (gpzMatch && req.method === "GET") {
-          const safeId = decodeURIComponent(gpzMatch[1]).replace(
+        const gpsl0Match = urlPath.match(/^\/api\/tracks\/([^/]+)\/gpsl0$/);
+        if (gpsl0Match && req.method === "GET") {
+          const safeId = decodeURIComponent(gpsl0Match[1]).replace(
             /[^a-zA-Z0-9_.-]/g,
             ""
           );
-          const gpzFile = path.join(
+          const gpsl0File = path.join(
             dataDir,
             "r2",
-            "tracks",
-            `${safeId}.gpz`
+            "tracks-gpsl0",
+            `${safeId}.gpsl0`
           );
-          if (!fs.existsSync(gpzFile)) {
+          if (!fs.existsSync(gpsl0File)) {
             sendJson(res, 404, { error: "Track archive not found" });
             return;
           }
           res.statusCode = 200;
           res.setHeader("Content-Type", "application/octet-stream");
           res.setHeader("Cache-Control", "private, max-age=86400");
-          res.end(fs.readFileSync(gpzFile));
+          res.end(fs.readFileSync(gpsl0File));
           return;
         }
 
@@ -213,7 +213,7 @@ export function localTrackApiPlugin(frontendRoot: string): Plugin {
         }
 
         // Pure I/O ingest matching production Cloudflare Worker:
-        // Accepts browser-computed `gpz` binary, `meta` JSON ({ track, tiles }),
+        // Accepts browser-computed `gpsl0` binary, `meta` JSON ({ track, tiles }),
         // and optional updated `fog` binary.
         if (urlPath === "/api/tracks/upload" && req.method === "POST") {
           const bodyBuf = await readRequestBody(req);
@@ -224,12 +224,12 @@ export function localTrackApiPlugin(frontendRoot: string): Plugin {
             body: new Uint8Array(bodyBuf)
           });
           const form = await webReq.formData();
-          const gpzEntry = form.get("gpz");
+          const gpsl0Entry = form.get("gpsl0");
           const metaEntry = form.get("meta");
           const fogEntry = form.get("fog");
 
-          if (!gpzEntry || typeof gpzEntry === "string") {
-            sendJson(res, 400, { error: "Missing pre-encoded 'gpz' binary field" });
+          if (!gpsl0Entry || typeof gpsl0Entry === "string") {
+            sendJson(res, 400, { error: "Missing pre-encoded 'gpsl0' binary field" });
             return;
           }
           if (typeof metaEntry !== "string") {
@@ -248,7 +248,7 @@ export function localTrackApiPlugin(frontendRoot: string): Plugin {
           const track: TrackMetadata = {
             ...rawTrack,
             id: trackId,
-            r2_key: `tracks/${trackId}.gpz`,
+            r2_key: `d1://track_blobs/${trackId}`,
             created_at: rawTrack.created_at || Math.floor(Date.now() / 1000)
           };
 
@@ -264,13 +264,13 @@ export function localTrackApiPlugin(frontendRoot: string): Plugin {
               )
             : [];
 
-          const tracksDir = path.join(dataDir, "r2", "tracks");
+          const tracksDir = path.join(dataDir, "r2", "tracks-gpsl0");
           const fogDir = path.join(dataDir, "r2", "fog");
           fs.mkdirSync(tracksDir, { recursive: true });
           fs.mkdirSync(fogDir, { recursive: true });
 
-          const gpzBuf = Buffer.from(await (gpzEntry as File).arrayBuffer());
-          fs.writeFileSync(path.join(tracksDir, `${trackId}.gpz`), gpzBuf);
+          const gpsl0Buf = Buffer.from(await (gpsl0Entry as File).arrayBuffer());
+          fs.writeFileSync(path.join(tracksDir, `${trackId}.gpsl0`), gpsl0Buf);
 
           const idx = loadLocalIndex(dataDir);
           let tileCount = idx.stats.visitedTilesZ15;
@@ -344,8 +344,13 @@ export function localTrackApiPlugin(frontendRoot: string): Plugin {
               delete idx.tileIndex[key];
             }
           }
-          const gpzPath = path.join(dataDir, "r2", "tracks", `${safeId}.gpz`);
-          if (fs.existsSync(gpzPath)) fs.unlinkSync(gpzPath);
+          const gpsl0Path = path.join(
+            dataDir,
+            "r2",
+            "tracks-gpsl0",
+            `${safeId}.gpsl0`
+          );
+          if (fs.existsSync(gpsl0Path)) fs.unlinkSync(gpsl0Path);
 
           idx.stats = recomputeLocalStats(
             idx.tracks,
