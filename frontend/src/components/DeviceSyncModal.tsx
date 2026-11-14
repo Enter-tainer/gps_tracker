@@ -44,8 +44,10 @@ import type { FogPackData, GpsPoint, TrackMetadata } from "../types/track.ts";
 import { formatFileSize } from "../utils/helpers.ts";
 
 type DeviceSyncModalProps = {
-  isOpen: boolean;
-  onClose: () => void;
+  variant?: "modal" | "page";
+  isOpen?: boolean;
+  onClose?: () => void;
+  onOpenMap?: () => void;
   fogPack: FogPackData | null;
   ensureFogPack: () => Promise<FogPackData>;
   onTrackUploaded: (
@@ -142,14 +144,30 @@ const formatSysInfo = (info: SysInfo | null) => {
 };
 
 export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
-  isOpen,
+  variant = "modal",
+  isOpen = true,
   onClose,
+  onOpenMap,
   fogPack,
   ensureFogPack,
   onTrackUploaded,
   onPreviewLocalTrack
 }) => {
-  const [activeTab, setActiveTab] = useState<ModalTab>("upload");
+  const [activeTab, setActiveTab] = useState<ModalTab>("ble");
+  const [isOnline, setIsOnline] = useState<boolean>(() =>
+    typeof navigator !== "undefined" ? navigator.onLine : true
+  );
+
+  useEffect(() => {
+    const onOnline = () => setIsOnline(true);
+    const onOffline = () => setIsOnline(false);
+    window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
+    return () => {
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("offline", onOffline);
+    };
+  }, []);
   const { entries: logEntries, logger, clear: clearLogs } = useLogger(120);
   const bleServiceRef = useRef<ReturnType<typeof createBleService> | null>(null);
   const fileServiceRef = useRef<ReturnType<typeof createFileService> | null>(null);
@@ -550,7 +568,7 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
         const pts = createGpsDecoder().decode(rawBuf);
         if (pts.length > 0) {
           onPreviewLocalTrack(entry.name, pts);
-          onClose();
+          onClose?.();
         } else {
           logger.error(`No points found in ${entry.name}`);
         }
@@ -666,33 +684,77 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
 
   const info = useMemo(() => formatSysInfo(sysInfo), [sysInfo]);
 
-  if (!isOpen) return null;
+  if (variant === "modal" && !isOpen) return null;
+
+  const isPage = variant === "page";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm">
-      <div className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-lg border border-border bg-card text-card-foreground shadow-2xl">
-        {/* Modal Header */}
+    <div
+      className={
+        isPage
+          ? "flex h-screen w-screen flex-col bg-background text-foreground"
+          : "fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm"
+      }
+    >
+      <div
+        className={
+          isPage
+            ? "mx-auto flex h-full w-full max-w-5xl flex-col overflow-hidden border-x border-border bg-card text-card-foreground"
+            : "flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-lg border border-border bg-card text-card-foreground shadow-2xl"
+        }
+      >
+        {/* Header */}
         <div className="flex items-center justify-between border-b border-border px-5 py-3.5">
           <div className="flex items-center gap-3">
             <div className="flex h-8 w-8 items-center justify-center rounded-md border border-border bg-muted text-foreground">
               <Bluetooth className="h-4 w-4" />
             </div>
             <div>
-              <h2 className="text-sm font-semibold tracking-tight text-foreground">
-                设备同步与轨迹入库中心
-              </h2>
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm font-semibold tracking-tight text-foreground">
+                  {isPage ? "Traceveil · 设备与入库" : "设备同步与轨迹入库中心"}
+                </h2>
+                <span
+                  className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${
+                    isOnline
+                      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+                      : "border-amber-500/30 bg-amber-500/10 text-amber-400"
+                  }`}
+                >
+                  <span
+                    className={`h-1.5 w-1.5 rounded-full ${
+                      isOnline ? "bg-emerald-400" : "bg-amber-400"
+                    }`}
+                  />
+                  {isOnline ? "在线" : "离线模式 (SW)"}
+                </span>
+              </div>
               <p className="text-xs text-muted-foreground">
-                状态: {statusMessage} {mtuSize ? `· MTU ${mtuSize}` : ""}
+                设备状态: {statusMessage} {mtuSize ? `· MTU ${mtuSize}` : ""}
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          <div className="flex items-center gap-2">
+            {onOpenMap && (
+              <button
+                type="button"
+                onClick={onOpenMap}
+                className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-xs font-medium text-foreground shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+              >
+                <MapIcon className="h-3.5 w-3.5 text-muted-foreground" />
+                <span>打开地图</span>
+              </button>
+            )}
+            {!isPage && onClose && (
+              <button
+                type="button"
+                onClick={onClose}
+                className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Tabs */}
@@ -700,8 +762,8 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
           <div className="inline-flex items-center rounded-md bg-muted p-1">
             {(
               [
-                ["upload", "轨迹上传入库", Upload],
                 ["ble", "蓝牙设备 & SD 卡", Bluetooth],
+                ["upload", "轨迹上传入库", Upload],
                 ["findmy", "Find My 密钥", Key],
                 ["logs", `运行日志 (${logEntries.length})`, Terminal]
               ] as const

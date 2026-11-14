@@ -149,7 +149,7 @@ export const TrackSidebar: React.FC<TrackSidebarProps> = ({
           </div>
           <div>
             <h1 className="text-sm font-semibold tracking-tight text-foreground">
-              Atlas Fog
+              Traceveil
             </h1>
             <p className="text-[11px] text-muted-foreground">
               {stats.firstDate && stats.lastDate
