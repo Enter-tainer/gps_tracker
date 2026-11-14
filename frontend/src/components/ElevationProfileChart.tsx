@@ -1,0 +1,337 @@
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Compass, Download, Palette, X } from "lucide-react";
+
+import type {
+  GpsPoint,
+  TrackColorMode,
+  TrackMetadata
+} from "../types/track.ts";
+import { computePointSeries } from "../services/gpsCodec.ts";
+
+type ElevationProfileChartProps = {
+  track: TrackMetadata;
+  points: GpsPoint[];
+  colorMode: TrackColorMode;
+  onChangeColorMode: (mode: TrackColorMode) => void;
+  onHoverPoint: (pt: { lat: number; lon: number } | null) => void;
+  onFitBounds: () => void;
+  onDownloadGpx: () => void;
+  onClose: () => void;
+};
+
+type HoverSample = {
+  x: number;
+  distKm: number;
+  eleM: number;
+  speedKmh: number;
+  timestamp: number;
+};
+
+export const ElevationProfileChart: React.FC<ElevationProfileChartProps> = ({
+  track,
+  points,
+  colorMode,
+  onChangeColorMode,
+  onHoverPoint,
+  onFitBounds,
+  onDownloadGpx,
+  onClose
+}) => {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [hoverSample, setHoverSample] = useState<HoverSample | null>(null);
+
+  const series = useMemo(() => computePointSeries(points), [points]);
+
+  const { totalKm, minEle, maxEle, maxSpeed } = useMemo(() => {
+    const n = points.length;
+    if (n === 0) {
+      return { totalKm: 0, minEle: 0, maxEle: 100, maxSpeed: 30 };
+    }
+    let minE = Infinity;
+    let maxE = -Infinity;
+    let maxS = 10;
+    for (let i = 0; i < n; i++) {
+      const e = series.elevationsM[i];
+      const s = series.speedsKmh[i];
+      if (e < minE) minE = e;
+      if (e > maxE) maxE = e;
+      if (s > maxS) maxS = s;
+    }
+    if (!Number.isFinite(minE)) minE = 0;
+    if (!Number.isFinite(maxE) || maxE <= minE) maxE = minE + 10;
+    return {
+      totalKm: Math.max(0.01, series.distancesKm[n - 1]),
+      minEle: minE,
+      maxEle: maxE,
+      maxSpeed: Math.min(350, maxS * 1.1)
+    };
+  }, [points.length, series]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const cssW = Math.max(200, Math.round(rect.width));
+    const cssH = Math.max(80, Math.round(rect.height));
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+
+    if (
+      canvas.width !== Math.round(cssW * dpr) ||
+      canvas.height !== Math.round(cssH * dpr)
+    ) {
+      canvas.width = Math.round(cssW * dpr);
+      canvas.height = Math.round(cssH * dpr);
+    }
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    const n = points.length;
+    if (n < 2) return;
+
+    const padL = 44;
+    const padR = 44;
+    const padT = 10;
+    const padB = 20;
+    const plotW = Math.max(10, cssW - padL - padR);
+    const plotH = Math.max(10, cssH - padT - padB);
+    const eleSpan = Math.max(1, maxEle - minEle);
+
+    // Subtle horizontal grid lines
+    ctx.strokeStyle = "rgba(148, 163, 184, 0.14)";
+    ctx.lineWidth = 1;
+    ctx.fillStyle = "rgba(148, 163, 184, 0.7)";
+    ctx.font = "10px 'JetBrains Mono', monospace";
+
+    for (let g = 0; g <= 2; g++) {
+      const ratio = g / 2;
+      const y = padT + plotH * (1 - ratio);
+      ctx.beginPath();
+      ctx.moveTo(padL, y);
+      ctx.lineTo(padL + plotW, y);
+      ctx.stroke();
+
+      const eleLabel = Math.round(minEle + eleSpan * ratio);
+      ctx.textAlign = "right";
+      ctx.fillText(`${eleLabel}m`, padL - 6, y + 3);
+
+      const spdLabel = Math.round(maxSpeed * ratio);
+      ctx.textAlign = "left";
+      ctx.fillText(`${spdLabel}`, padL + plotW + 6, y + 3);
+    }
+
+    // Decimate indices to at most plotW * 2 samples for crisp fast stroke
+    const step = Math.max(1, Math.floor(n / (plotW * 2)));
+
+    // Elevation area
+    const grad = ctx.createLinearGradient(0, padT, 0, padT + plotH);
+    grad.addColorStop(0, "rgba(34, 211, 238, 0.42)");
+    grad.addColorStop(1, "rgba(34, 211, 238, 0.03)");
+
+    ctx.beginPath();
+    ctx.moveTo(padL, padT + plotH);
+    for (let i = 0; i < n; i += step) {
+      const x = padL + (series.distancesKm[i] / totalKm) * plotW;
+      const y =
+        padT + plotH - ((series.elevationsM[i] - minEle) / eleSpan) * plotH;
+      ctx.lineTo(x, y);
+    }
+    const lastX = padL + (series.distancesKm[n - 1] / totalKm) * plotW;
+    const lastY =
+      padT + plotH - ((series.elevationsM[n - 1] - minEle) / eleSpan) * plotH;
+    ctx.lineTo(lastX, lastY);
+    ctx.lineTo(lastX, padT + plotH);
+    ctx.closePath();
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    // Elevation stroke
+    ctx.beginPath();
+    for (let i = 0; i < n; i += step) {
+      const x = padL + (series.distancesKm[i] / totalKm) * plotW;
+      const y =
+        padT + plotH - ((series.elevationsM[i] - minEle) / eleSpan) * plotH;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.lineTo(lastX, lastY);
+    ctx.strokeStyle = "#22d3ee";
+    ctx.lineWidth = 1.6;
+    ctx.stroke();
+
+    // Speed stroke
+    ctx.beginPath();
+    for (let i = 0; i < n; i += step) {
+      const x = padL + (series.distancesKm[i] / totalKm) * plotW;
+      const y = padT + plotH - (series.speedsKmh[i] / maxSpeed) * plotH;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = "rgba(251, 191, 36, 0.85)";
+    ctx.lineWidth = 1.3;
+    ctx.stroke();
+
+    // X-axis distance ticks
+    ctx.fillStyle = "rgba(148, 163, 184, 0.7)";
+    ctx.textAlign = "center";
+    const ticks = 5;
+    for (let t = 0; t <= ticks; t++) {
+      const ratio = t / ticks;
+      const x = padL + plotW * ratio;
+      const kmVal = (totalKm * ratio).toFixed(totalKm < 10 ? 1 : 0);
+      ctx.fillText(`${kmVal}km`, x, cssH - 4);
+    }
+
+    // Hover crosshair
+    if (hoverSample) {
+      const hx = Math.max(padL, Math.min(padL + plotW, hoverSample.x));
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.55)";
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.moveTo(hx, padT);
+      ctx.lineTo(hx, padT + plotH);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }, [points, series, totalKm, minEle, maxEle, maxSpeed, hoverSample]);
+
+  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas || points.length === 0) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const padL = 44;
+    const padR = 44;
+    const plotW = Math.max(10, rect.width - padL - padR);
+    const ratio = Math.max(0, Math.min(1, (x - padL) / plotW));
+    const targetKm = ratio * totalKm;
+
+    // Binary search nearest point by cumulative distance
+    let lo = 0;
+    let hi = points.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (series.distancesKm[mid] < targetKm) lo = mid + 1;
+      else hi = mid;
+    }
+
+    const pt = points[lo];
+    setHoverSample({
+      x,
+      distKm: series.distancesKm[lo],
+      eleM: series.elevationsM[lo],
+      speedKmh: series.speedsKmh[lo],
+      timestamp: series.timestamps[lo]
+    });
+    onHoverPoint({
+      lat: pt.latitude_scaled_1e7 / 1e7,
+      lon: pt.longitude_scaled_1e7 / 1e7
+    });
+  };
+
+  const handleMouseLeave = () => {
+    setHoverSample(null);
+    onHoverPoint(null);
+  };
+
+  const formatTime = (ts: number) => {
+    if (!ts) return "--:--:--";
+    const d = new Date(ts * 1000);
+    return d.toLocaleTimeString("zh-CN", { hour12: false });
+  };
+
+  return (
+    <div className="pointer-events-auto rounded-2xl border border-slate-700/70 bg-slate-900/90 px-4 py-3 shadow-2xl backdrop-blur-xl">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-sm font-semibold text-slate-100">
+            {track.title}
+          </span>
+          <span className="rounded-md bg-cyan-500/15 px-2 py-0.5 font-mono text-xs text-cyan-300">
+            {(track.distance_m / 1000).toFixed(2)} km
+          </span>
+          <span className="rounded-md bg-emerald-500/15 px-2 py-0.5 font-mono text-xs text-emerald-300">
+            +{Math.round(track.elev_gain_m)} m
+          </span>
+          <span className="hidden font-mono text-xs text-slate-400 sm:inline">
+            {track.point_count.toLocaleString()} pts
+          </span>
+          {hoverSample && (
+            <span className="rounded-md border border-slate-700 bg-slate-800/90 px-2 py-0.5 font-mono text-xs text-slate-200">
+              {hoverSample.distKm.toFixed(2)} km · {hoverSample.eleM.toFixed(0)} m ·{" "}
+              {hoverSample.speedKmh.toFixed(1)} km/h ·{" "}
+              {formatTime(hoverSample.timestamp)}
+            </span>
+          )}
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          <div className="flex items-center rounded-lg border border-slate-700/80 bg-slate-950/70 p-0.5 text-xs">
+            <Palette className="ml-1.5 mr-1 h-3.5 w-3.5 text-slate-400" />
+            {(["speed", "elevation", "track"] as TrackColorMode[]).map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => onChangeColorMode(m)}
+                className={`rounded-md px-2 py-1 text-[11px] font-medium transition ${
+                  colorMode === m
+                    ? "bg-cyan-500 text-slate-950"
+                    : "text-slate-300 hover:text-white"
+                }`}
+              >
+                {m === "speed" ? "速度" : m === "elevation" ? "海拔" : "纯色"}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={onFitBounds}
+            title="定位轨迹"
+            className="inline-flex items-center gap-1 rounded-lg border border-slate-700/80 bg-slate-800/80 px-2.5 py-1.5 text-xs text-slate-200 hover:bg-slate-700"
+          >
+            <Compass className="h-3.5 w-3.5 text-cyan-400" />
+            <span className="hidden sm:inline">定位</span>
+          </button>
+          <button
+            type="button"
+            onClick={onDownloadGpx}
+            title="导出 GPX"
+            className="inline-flex items-center gap-1 rounded-lg border border-slate-700/80 bg-slate-800/80 px-2.5 py-1.5 text-xs text-slate-200 hover:bg-slate-700"
+          >
+            <Download className="h-3.5 w-3.5 text-emerald-400" />
+            <span className="hidden sm:inline">GPX</span>
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            title="关闭图表"
+            className="rounded-lg border border-slate-700/80 bg-slate-800/80 p-1.5 text-slate-400 hover:text-white"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </div>
+
+      <div className="relative h-28 w-full">
+        <canvas
+          ref={canvasRef}
+          onMouseMove={handleMouseMove}
+          onMouseLeave={handleMouseLeave}
+          className="h-full w-full cursor-crosshair"
+        />
+        <div className="pointer-events-none absolute left-12 top-0.5 flex gap-3 text-[10px] text-slate-400">
+          <span className="flex items-center gap-1">
+            <span className="inline-block h-2 w-2 rounded-full bg-cyan-400" />
+            海拔 (m)
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="inline-block h-2 w-2 rounded-full bg-amber-400" />
+            速度 (km/h)
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+};

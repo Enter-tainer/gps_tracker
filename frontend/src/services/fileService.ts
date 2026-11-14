@@ -204,6 +204,7 @@ export function createFileService(
 
   return {
     listDirectory,
+    downloadRawBuffer: downloadFileCore,
     downloadFile,
     downloadAndConvertToGpx,
     deleteFile

@@ -63,4 +63,11 @@ s140_nrf52_*.hex
 
 # 个人轨迹数据：GPZ 原文件可能含精确位置，示例数据请脱敏后再提交
 *.gpz
+frontend/local-data/
+frontend/.wrangler/
+.wrangler/
 
+
+
+# 本地 git worktree（GpsL0 等特性开发）
+.worktrees/
