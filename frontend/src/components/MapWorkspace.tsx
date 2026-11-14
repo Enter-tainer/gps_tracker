@@ -7,6 +7,7 @@ import {
   Layers,
   Loader2,
   MapPin,
+  RefreshCw,
   Route,
   SlidersHorizontal
 } from "lucide-react";
@@ -15,6 +16,7 @@ import { ElevationProfileChart } from "./ElevationProfileChart.tsx";
 import { FogMapView } from "./FogMapView.tsx";
 import type { SpatialOverlayShape } from "./FogMapView.tsx";
 import { TrackSidebar } from "./TrackSidebar.tsx";
+import { rebuildGlobalFogInBrowser } from "../services/clientEtl.ts";
 import { pointsToGpxXml } from "../services/gpsCodec.ts";
 import {
   fetchAndDecodeFog,
@@ -54,6 +56,7 @@ export type MapWorkspaceProps = {
   hasBootstrapped: boolean;
   setHasBootstrapped: React.Dispatch<React.SetStateAction<boolean>>;
   onNavigateDevice: () => void;
+  onFogRebuilt: (pack: FogPackData) => void;
 };
 
 export default function MapWorkspace({
@@ -69,10 +72,12 @@ export default function MapWorkspace({
   setSelectedTrackIds,
   hasBootstrapped,
   setHasBootstrapped,
-  onNavigateDevice
+  onNavigateDevice,
+  onFogRebuilt
 }: MapWorkspaceProps) {
   const [isBootstrapping, setIsBootstrapping] = useState(!hasBootstrapped);
   const [bootError, setBootError] = useState<string | null>(null);
+  const [rebuildStatus, setRebuildStatus] = useState<string | null>(null);
 
   const [mode, setMode] = useState<MapVisualizationMode>("fog");
   const [baseMapId, setBaseMapId] = useState<BaseMapId>("openfreemap-liberty");
@@ -215,7 +220,23 @@ export default function MapWorkspace({
       }
     })();
 
-    return () => {
+    const handleRebuildFog = useCallback(async () => {
+    if (rebuildStatus) return;
+    setRebuildStatus("准备重刷...");
+    try {
+      const rebuilt = await rebuildGlobalFogInBrowser((msg) =>
+        setRebuildStatus(msg)
+      );
+      onFogRebuilt(rebuilt);
+    } catch (err) {
+      console.error("Rebuild fog failed:", err);
+      setBootError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRebuildStatus(null);
+    }
+  }, [onFogRebuilt, rebuildStatus]);
+
+  return () => {
       cancelled = true;
     };
   }, [selectedTrackIds, loadedTrackPoints, setLoadedTrackPoints]);
@@ -403,6 +424,22 @@ export default function MapWorkspace({
     }));
   }, [tracks]);
 
+  const handleRebuildFog = useCallback(async () => {
+    if (rebuildStatus) return;
+    setRebuildStatus("准备重刷...");
+    try {
+      const rebuilt = await rebuildGlobalFogInBrowser((msg) =>
+        setRebuildStatus(msg)
+      );
+      onFogRebuilt(rebuilt);
+    } catch (err) {
+      console.error("Rebuild fog failed:", err);
+      setBootError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRebuildStatus(null);
+    }
+  }, [onFogRebuilt, rebuildStatus]);
+
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-background text-foreground">
       {/* Full-viewport MapLibre + 60fps Fog Canvas */}
@@ -554,6 +591,17 @@ export default function MapWorkspace({
                   onChange={(e) => setFogGlow(Number(e.target.value))}
                   className="h-1.5 w-full cursor-pointer accent-primary"
                 />
+                <button
+                  type="button"
+                  onClick={handleRebuildFog}
+                  disabled={Boolean(rebuildStatus)}
+                  className="mt-1 flex w-full items-center justify-center gap-1.5 rounded-md border border-border bg-muted/50 px-2.5 py-1.5 text-[11px] font-medium text-foreground transition-colors hover:bg-accent disabled:opacity-50"
+                >
+                  <RefreshCw
+                    className={`h-3 w-3 ${rebuildStatus ? "animate-spin" : ""}`}
+                  />
+                  <span>{rebuildStatus || "从云端轨迹全量重刷迷雾"}</span>
+                </button>
               </div>
 
               <div className="mb-3 flex items-center justify-between border-b border-border pb-3">

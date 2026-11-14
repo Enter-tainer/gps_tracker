@@ -153,6 +153,69 @@ export function localTrackApiPlugin(frontendRoot: string): Plugin {
           return;
         }
 
+        if (urlPath === "/api/fog" && req.method === "PUT") {
+          const fogBuf = await readRequestBody(req);
+          if (
+            fogBuf.byteLength < 16 ||
+            fogBuf[0] !== 0x46 ||
+            fogBuf[1] !== 0x47 ||
+            fogBuf[2] !== 0x50 ||
+            fogBuf[3] !== 0x31
+          ) {
+            sendJson(res, 400, { error: "Invalid FGP1 fog payload" });
+            return;
+          }
+          const fogDir = path.join(dataDir, "r2", "fog");
+          fs.mkdirSync(fogDir, { recursive: true });
+          fs.writeFileSync(path.join(fogDir, "global-fog.bin"), fogBuf);
+          fs.writeFileSync(
+            path.join(fogDir, "global-fog.bin.gz"),
+            zlib.gzipSync(fogBuf, { level: 9 })
+          );
+          const tileCount = fogBuf.readUInt32LE(8);
+          const totalCells = fogBuf.readUInt32LE(12);
+          const exploredAreaKm2 = Math.round(totalCells * 0.00026 * 1000) / 1000;
+          const idx = loadLocalIndex(dataDir);
+          idx.stats = recomputeLocalStats(
+            idx.tracks,
+            tileCount,
+            totalCells,
+            exploredAreaKm2
+          );
+          saveLocalIndex(dataDir, idx);
+          sendJson(res, 200, {
+            ok: true,
+            visitedTilesZ15: tileCount,
+            exploredCellsZ21: totalCells
+          });
+          return;
+        }
+
+        if (urlPath === "/api/tracks/all-gpsl0" && req.method === "GET") {
+          const tracksDir = path.join(dataDir, "r2", "tracks-gpsl0");
+          const files = fs.existsSync(tracksDir)
+            ? fs.readdirSync(tracksDir).filter((f) => f.endsWith(".gpsl0")).sort()
+            : [];
+          const chunks: Buffer[] = [];
+          const countBuf = Buffer.allocUnsafe(4);
+          countBuf.writeUInt32LE(files.length, 0);
+          chunks.push(countBuf);
+          for (const file of files) {
+            const idBuf = Buffer.from(file.replace(/\.gpsl0$/i, ""), "utf8");
+            const dataBuf = fs.readFileSync(path.join(tracksDir, file));
+            const hdr = Buffer.allocUnsafe(2);
+            hdr.writeUInt16LE(idBuf.byteLength, 0);
+            const lenBuf = Buffer.allocUnsafe(4);
+            lenBuf.writeUInt32LE(dataBuf.byteLength, 0);
+            chunks.push(hdr, idBuf, lenBuf, dataBuf);
+          }
+          res.statusCode = 200;
+          res.setHeader("Content-Type", "application/octet-stream");
+          res.setHeader("Cache-Control", "no-store");
+          res.end(Buffer.concat(chunks));
+          return;
+        }
+
         const gpsl0Match = urlPath.match(/^\/api\/tracks\/([^/]+)\/gpsl0$/);
         if (gpsl0Match && req.method === "GET") {
           const safeId = decodeURIComponent(gpsl0Match[1]).replace(

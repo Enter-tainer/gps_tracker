@@ -27,6 +27,7 @@ import { processAGNSSData } from "../modules/agnss/CasicAgnssProcessor.ts";
 import { createBleService } from "../services/bleService.ts";
 import {
   cloneFogPack,
+  rebuildGlobalFogInBrowser,
   runBrowserTrackEtl,
   uploadPreparedTrackToServer
 } from "../services/clientEtl.ts";
@@ -56,6 +57,7 @@ type DeviceSyncModalProps = {
     updatedFogPack: FogPackData
   ) => void;
   onPreviewLocalTrack: (name: string, points: GpsPoint[]) => void;
+  onFogRebuilt?: (pack: FogPackData) => void;
 };
 
 type ModalTab = "upload" | "ble" | "findmy" | "logs";
@@ -151,9 +153,11 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
   fogPack,
   ensureFogPack,
   onTrackUploaded,
-  onPreviewLocalTrack
+  onPreviewLocalTrack,
+  onFogRebuilt
 }) => {
   const [activeTab, setActiveTab] = useState<ModalTab>("ble");
+  const [rebuildStage, setRebuildStage] = useState<string | null>(null);
   const [isOnline, setIsOnline] = useState<boolean>(() =>
     typeof navigator !== "undefined" ? navigator.onLine : true
   );
@@ -865,6 +869,45 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
                   ))}
                 </div>
               )}
+
+              <div className="flex items-center justify-between rounded-lg border border-border bg-muted/20 px-4 py-3">
+                <div>
+                  <div className="text-xs font-medium text-foreground">
+                    从 D1 轨迹真源全量重刷全局迷雾
+                  </div>
+                  <div className="text-[11px] text-muted-foreground">
+                    删除或覆盖坏轨迹后，在浏览器端拉取全部 GPSL0（~1.1 MB）重新光栅化并覆写 R2
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  disabled={Boolean(rebuildStage) || !isOnline}
+                  onClick={async () => {
+                    setRebuildStage("拉取 GPSL0...");
+                    try {
+                      const rebuilt = await rebuildGlobalFogInBrowser((msg) =>
+                        setRebuildStage(msg)
+                      );
+                      onFogRebuilt?.(rebuilt);
+                      logger.success(
+                        `全局迷雾重刷完成: ${rebuilt.tileCount} 瓦片 · ${rebuilt.exploredAreaKm2} km²`
+                      );
+                    } catch (err) {
+                      logger.error(
+                        `重刷失败: ${err instanceof Error ? err.message : String(err)}`
+                      );
+                    } finally {
+                      setRebuildStage(null);
+                    }
+                  }}
+                  className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-xs font-medium text-foreground shadow-sm transition-colors hover:bg-accent disabled:opacity-50"
+                >
+                  <RefreshCw
+                    className={`h-3.5 w-3.5 ${rebuildStage ? "animate-spin" : ""}`}
+                  />
+                  <span>{rebuildStage || "重刷全局迷雾"}</span>
+                </button>
+              </div>
             </div>
           )}
 
