@@ -1,24 +1,26 @@
-﻿@tailwind base;
+﻿@import "maplibre-gl/dist/maplibre-gl.css";
+
+@tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
-  --background: 40 35% 96%;
-  --foreground: 222 28% 14%;
-  --primary: 202 73% 42%;
-  --primary-foreground: 210 40% 98%;
-  --secondary: 27 89% 58%;
-  --secondary-foreground: 24 100% 98%;
-  --accent: 146 46% 32%;
-  --accent-foreground: 150 30% 96%;
-  --muted: 210 22% 93%;
-  --muted-foreground: 220 10% 42%;
-  --destructive: 0 74% 52%;
+  --background: 222 47% 5%;
+  --foreground: 210 40% 96%;
+  --primary: 188 94% 43%;
+  --primary-foreground: 222 47% 7%;
+  --secondary: 38 92% 55%;
+  --secondary-foreground: 222 47% 7%;
+  --accent: 158 64% 42%;
+  --accent-foreground: 210 40% 98%;
+  --muted: 217 33% 14%;
+  --muted-foreground: 215 20% 65%;
+  --destructive: 0 72% 55%;
   --destructive-foreground: 0 0% 98%;
-  --border: 215 22% 88%;
-  --input: 215 22% 88%;
-  --ring: 202 73% 42%;
-  --radius: 0.9rem;
+  --border: 217 28% 18%;
+  --input: 217 28% 20%;
+  --ring: 188 94% 43%;
+  --radius: 0.75rem;
 }
 
 @layer base {
@@ -26,52 +28,56 @@
     @apply border-border;
   }
 
-  body {
-    font-family: "Space Grotesk", sans-serif;
+  html,
+  body,
+  #root {
+    height: 100%;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    font-family: "Space Grotesk", -apple-system, BlinkMacSystemFont, sans-serif;
     color: hsl(var(--foreground));
-    background:
-      radial-gradient(circle at 8% 12%, rgba(16, 185, 129, 0.18), transparent 42%),
-      radial-gradient(circle at 80% 12%, rgba(14, 116, 144, 0.18), transparent 45%),
-      radial-gradient(circle at 20% 90%, rgba(249, 115, 22, 0.18), transparent 42%),
-      linear-gradient(180deg, #f6f1ea 0%, #f4f7fb 55%, #f6efe6 100%);
-    min-height: 100vh;
+    background-color: #060a13;
   }
-}
-
-#root {
-  min-height: 100vh;
 }
 
 ::selection {
-  background: rgba(14, 116, 144, 0.25);
+  background: rgba(34, 211, 238, 0.28);
 }
 
-gpx-viewer {
-  display: block;
-  width: 100%;
-  height: 65vh;
-  min-height: 420px;
-  border-radius: calc(var(--radius) + 4px);
-  overflow: hidden;
+.maplibregl-ctrl-attrib {
+  background: rgba(9, 13, 22, 0.7) !important;
+  color: rgba(203, 213, 225, 0.75) !important;
+  backdrop-filter: blur(8px);
+  border-radius: 6px 0 0 0 !important;
+  font-size: 10px !important;
 }
 
-@media (max-width: 768px) {
-  gpx-viewer {
-    height: 52vh;
-    min-height: 320px;
-  }
+.maplibregl-ctrl-attrib a {
+  color: rgba(103, 232, 249, 0.9) !important;
+}
+
+.maplibregl-ctrl-group {
+  background: rgba(15, 23, 42, 0.85) !important;
+  border: 1px solid rgba(51, 65, 85, 0.7) !important;
+  backdrop-filter: blur(12px);
+}
+
+.maplibregl-ctrl-group button {
+  filter: invert(0.9) hue-rotate(180deg);
 }
 
 .scrollbar-thin::-webkit-scrollbar {
-  width: 8px;
+  width: 6px;
+  height: 6px;
 }
 
 .scrollbar-thin::-webkit-scrollbar-thumb {
-  background-color: rgba(15, 23, 42, 0.2);
+  background-color: rgba(148, 163, 184, 0.28);
   border-radius: 999px;
 }
 
 .scrollbar-thin::-webkit-scrollbar-track {
   background: transparent;
 }
-

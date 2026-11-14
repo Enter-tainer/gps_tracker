@@ -1,1224 +1,735 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Activity,
-  AlertTriangle,
   Bluetooth,
-  Download,
-  Eye,
-  FileDown,
-  Folder,
-  FolderOpen,
-  Key,
-  Map,
-  Power,
-  RefreshCw,
-  Satellite,
-  Terminal,
-  Timer,
-  Trash2,
-  Upload
+  Compass,
+  EyeOff,
+  Flame,
+  Layers,
+  Loader2,
+  MapPin,
+  Route,
+  SlidersHorizontal
 } from "lucide-react";
 
-import { Alert, AlertDescription, AlertTitle } from "./components/ui/alert";
+import { DeviceSyncModal } from "./components/DeviceSyncModal.tsx";
+import { ElevationProfileChart } from "./components/ElevationProfileChart.tsx";
+import { FogMapView } from "./components/FogMapView.tsx";
+import type { SpatialOverlayShape } from "./components/FogMapView.tsx";
+import { TrackSidebar } from "./components/TrackSidebar.tsx";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger
-} from "./components/ui/alert-dialog";
-import { Badge } from "./components/ui/badge";
-import { Button } from "./components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./components/ui/card";
-import { Input } from "./components/ui/input";
-import { ENTRY_TYPE } from "./constants";
-import { useLogger } from "./hooks/useLogger";
-import { processAGNSSData } from "./modules/agnss/CasicAgnssProcessor";
-import { createBleService } from "./services/bleService";
-import { createFileService } from "./services/fileService";
-import { createGpsDecoder } from "./services/gpsDecoder";
-import { createGpxConverter } from "./services/gpxConverter";
-import { exportKeysAsJson, generateFindMyKeys, unpackKeys } from "./services/findmyKeyGen";
-import type { FindMyKeyBundle } from "./services/findmyKeyGen";
-import type { FileEntry, SysInfo } from "./types/ble";
-import { formatFileSize } from "./utils/helpers";
+  computeTrackStatsAndOverview,
+  pointsToGpxXml
+} from "./services/gpsCodec.ts";
+import { createEmptyFogPack } from "./services/fogEngine.ts";
+import {
+  fetchAndDecodeFog,
+  fetchAndDecodeTrack,
+  getCachedTrackPoints,
+  removeTrackFromCache,
+  setTrackPointsInCache,
+  verifyBboxSpatialMatches,
+  verifyPointSpatialMatches
+} from "./services/trackCache.ts";
+import type {
+  BaseMapId,
+  BootstrapResponse,
+  BootstrapStats,
+  FogPackData,
+  GpsPoint,
+  MapVisualizationMode,
+  SpatialQueryMatch,
+  TrackColorMode,
+  TrackMetadata
+} from "./types/track.ts";
+import { getZ15TilesForBbox } from "./utils/coordTransform.ts";
+import { BASE_MAP_OPTIONS } from "./utils/styleBase.ts";
 
-const gpsStateLabels = [
-  "Initializing",
-  "Searching",
-  "Off",
-  "Fixed",
-  "Static",
-  "Transferring AGNSS"
-];
-
-type GpxViewerElement = HTMLElement & { setGpx?: (gpxString: string) => void };
-
-type DisplayEntry = FileEntry & { isParent?: boolean };
-
-const getParentPath = (path: string) => {
-  if (path === "/") return "/";
-  const normalized = path.endsWith("/") ? path.slice(0, -1) : path;
-  const idx = normalized.lastIndexOf("/");
-  if (idx <= 0) return "/";
-  return normalized.slice(0, idx);
-};
-
-const formatSysInfo = (info: SysInfo | null) => {
-  if (!info) {
-    return {
-      latitude: "-",
-      longitude: "-",
-      altitude: "-",
-      satellites: "-",
-      hdop: "-",
-      speed: "-",
-      course: "-",
-      date: "-",
-      time: "-",
-      locationValid: "-",
-      dateTimeValid: "-",
-      battery: "-",
-      gpsState: "-",
-      temperature: "-",
-      pressure: "-",
-      motion: "-"
-    };
-  }
-
-  const yesNo = (value: number) => (value ? "Yes" : "No");
-  const date = `${info.year}-${String(info.month).padStart(2, "0")}-${String(info.day).padStart(2, "0")}`;
-  const time = `${String(info.hour).padStart(2, "0")}:${String(info.minute).padStart(2, "0")}:${String(
-    info.second
-  ).padStart(2, "0")}`;
-
-  const battery = info.batteryPercent !== undefined
-    ? `${info.batteryPercent}% (${info.batteryVoltage.toFixed(2)}V)`
-    : `${info.batteryVoltage.toFixed(2)} V`;
-  const temperature = info.temperatureC !== undefined && !Number.isNaN(info.temperatureC)
-    ? `${info.temperatureC.toFixed(1)} °C`
-    : "-";
-  const pressure = info.pressurePa !== undefined && !Number.isNaN(info.pressurePa)
-    ? `${(info.pressurePa / 100).toFixed(2)} hPa`
-    : "-";
-  const motion = info.isStationary !== undefined
-    ? (info.isStationary ? "Stationary" : "Moving")
-    : "-";
-
-  return {
-    latitude: `${info.latitude.toFixed(7)} deg`,
-    longitude: `${info.longitude.toFixed(7)} deg`,
-    altitude: `${info.altitude.toFixed(1)} m`,
-    satellites: `${info.satellites}`,
-    hdop: info.hdop.toFixed(2),
-    speed: `${info.speed.toFixed(2)} km/h`,
-    course: `${info.course.toFixed(2)} deg`,
-    date,
-    time,
-    locationValid: yesNo(info.locationValid),
-    dateTimeValid: yesNo(info.dateTimeValid),
-    battery,
-    gpsState: gpsStateLabels[info.gpsState] ?? `${info.gpsState}`,
-    temperature,
-    pressure,
-    motion
-  };
+const EMPTY_STATS: BootstrapStats = {
+  trackCount: 0,
+  totalPoints: 0,
+  totalDistanceM: 0,
+  totalDurationS: 0,
+  totalElevGainM: 0,
+  firstDate: null,
+  lastDate: null,
+  visitedTilesZ15: 0,
+  exploredCellsZ21: 0,
+  exploredAreaKm2: 0
 };
 
 export default function App() {
-  const { entries: logEntries, logger, clear: clearLogs } = useLogger(120);
-  const bleServiceRef = useRef<ReturnType<typeof createBleService> | null>(null);
-  const fileServiceRef = useRef<ReturnType<typeof createFileService> | null>(null);
-  const gpxViewerRef = useRef<GpxViewerElement | null>(null);
+  const [tracks, setTracks] = useState<TrackMetadata[]>([]);
+  const [stats, setStats] = useState<BootstrapStats>(EMPTY_STATS);
+  const [fogPack, setFogPack] = useState<FogPackData | null>(null);
+  const [isBootstrapping, setIsBootstrapping] = useState(true);
+  const [bootError, setBootError] = useState<string | null>(null);
 
-  const [isBluetoothSupported, setIsBluetoothSupported] = useState(true);
-  const [isConnected, setIsConnected] = useState(false);
-  const [deviceName, setDeviceName] = useState<string | null>(null);
-  const [mtuSize, setMtuSize] = useState<number | null>(null);
-  const [statusMessage, setStatusMessage] = useState("Disconnected");
-  const [isConnecting, setIsConnecting] = useState(false);
-  const [agnssStatus, setAgnssStatus] = useState<string | null>(null);
-  const [isAgnssBusy, setIsAgnssBusy] = useState(false);
-  const [sysInfo, setSysInfo] = useState<SysInfo | null>(null);
-  const [sysInfoError, setSysInfoError] = useState<string | null>(null);
-  const [currentPath, setCurrentPath] = useState("/");
-  const [fileEntries, setFileEntries] = useState<FileEntry[]>([]);
-  const [isListing, setIsListing] = useState(false);
-  const [activeFileAction, setActiveFileAction] = useState<string | null>(null);
-  const [gpxFileName, setGpxFileName] = useState<string | null>(null);
-  const [localGpxString, setLocalGpxString] = useState<string | null>(null);
-  const [localFileName, setLocalFileName] = useState<string | null>(null);
-  const [isDragOver, setIsDragOver] = useState(false);
-  const [keepAliveMinutes, setKeepAliveMinutes] = useState(30);
-  const [findMyKeys, setFindMyKeys] = useState<FindMyKeyBundle | null>(null);
-  const [findMyEnabled, setFindMyEnabled] = useState<boolean | null>(null);
-  const [findMyBusy, setFindMyBusy] = useState(false);
+  const [mode, setMode] = useState<MapVisualizationMode>("fog");
+  const [baseMapId, setBaseMapId] = useState<BaseMapId>("openfreemap-liberty");
+  const [useGcj02, setUseGcj02] = useState(false);
+  const [fogOpacity, setFogOpacity] = useState(0.8);
+  const [fogGlow, setFogGlow] = useState(1.5);
+  const [showLayerMenu, setShowLayerMenu] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [deviceModalOpen, setDeviceModalOpen] = useState(false);
 
-  const getReadyStatus = useCallback(() => {
-    const connected = bleServiceRef.current?.isConnected() ?? false;
-    if (!connected) {
-      return "Disconnected";
-    }
-    return `Connected to ${deviceName ?? "device"}`;
-  }, [deviceName]);
+  const [selectedTrackIds, setSelectedTrackIds] = useState<string[]>([]);
+  const [loadedTrackPoints, setLoadedTrackPoints] = useState<
+    Record<string, GpsPoint[]>
+  >({});
+  const [loadingTrackId, setLoadingTrackId] = useState<string | null>(null);
+  const [trackColorMode, setTrackColorMode] =
+    useState<TrackColorMode>("speed");
+  const [hoverPoint, setHoverPoint] = useState<{
+    lat: number;
+    lon: number;
+  } | null>(null);
+  const [fitBoundsTrigger, setFitBoundsTrigger] = useState<{
+    bbox: [number, number, number, number];
+    nonce: number;
+  } | null>(null);
 
-  const resetStatus = useCallback(
-    (delay = 0) => {
-      if (delay <= 0) {
-        setStatusMessage(getReadyStatus());
-        return;
-      }
-      window.setTimeout(() => {
-        setStatusMessage(getReadyStatus());
-      }, delay);
-    },
-    [getReadyStatus]
+  // Spatial query state
+  const [spatialDrawTool, setSpatialDrawTool] = useState<"point" | "bbox">(
+    "point"
   );
+  const [spatialRadiusM, setSpatialRadiusM] = useState(200);
+  const [spatialShape, setSpatialShape] = useState<SpatialOverlayShape>(null);
+  const [spatialMatches, setSpatialMatches] = useState<SpatialQueryMatch[]>([]);
+  const [spatialSearching, setSpatialSearching] = useState(false);
+  const spatialSeqRef = useRef(0);
+  const hasAutoFittedRef = useRef(false);
 
-  const handlePreview = useCallback(
-    (gpxString: string, fileName: string) => {
-      const viewer = gpxViewerRef.current;
-      if (!viewer || typeof viewer.setGpx !== "function") {
-        logger.error("GPX viewer is not ready.");
-        return;
-      }
-
-      viewer.setGpx(gpxString);
-      setGpxFileName(fileName);
-      logger.success(`GPX loaded in viewer: ${fileName}`);
-    },
-    [logger]
-  );
-
-  const handleLocalFile = useCallback(
-    async (file: File) => {
-      if (!file.name.toLowerCase().endsWith(".gpz")) {
-        logger.error("Only .gpz files are supported.");
-        return;
-      }
-
-      logger.log(`Processing local file: ${file.name}`);
-      setStatusMessage(`Converting ${file.name}...`);
-
-      try {
-        const arrayBuffer = await file.arrayBuffer();
-        const decoder = createGpsDecoder();
-        const points = decoder.decode(arrayBuffer);
-
-        if (points.length === 0) {
-          logger.error("No GPS points found in file.");
-          setStatusMessage("No GPS points found.");
-          return;
-        }
-
-        const converter = createGpxConverter(logger, handlePreview);
-        const gpxString = converter.pointsToGpxString(points, file.name);
-
-        if (!gpxString) {
-          logger.error("Failed to convert to GPX.");
-          setStatusMessage("Conversion failed.");
-          return;
-        }
-
-        setLocalGpxString(gpxString);
-        setLocalFileName(file.name.replace(/\.gpz$/i, ".gpx"));
-
-        // Preview immediately
-        handlePreview(gpxString, file.name);
-        logger.success(`Converted ${points.length} points from ${file.name}`);
-        setStatusMessage(`Converted ${points.length} points.`);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        logger.error(`Failed to process file: ${message}`);
-        setStatusMessage("File processing failed.");
-      }
-    },
-    [logger, handlePreview]
-  );
-
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      setIsDragOver(false);
-
-      const files = e.dataTransfer.files;
-      if (files.length > 0) {
-        handleLocalFile(files[0]);
-      }
-    },
-    [handleLocalFile]
-  );
-
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragOver(true);
-  }, []);
-
-  const handleDragLeave = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragOver(false);
-  }, []);
-
-  const handleFileInput = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const files = e.target.files;
-      if (files && files.length > 0) {
-        handleLocalFile(files[0]);
-      }
-      e.target.value = "";
-    },
-    [handleLocalFile]
-  );
-
-  const handleDownloadLocalGpx = useCallback(() => {
-    if (!localGpxString || !localFileName) return;
-
-    const blob = new Blob([localGpxString], { type: "application/gpx+xml" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = localFileName;
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => {
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }, 100);
-    logger.success(`Downloaded: ${localFileName}`);
-  }, [localGpxString, localFileName, logger]);
-
-  useEffect(() => {
-    const supported = typeof navigator !== "undefined" && !!navigator.bluetooth;
-    setIsBluetoothSupported(supported);
-    if (!supported) {
-      setStatusMessage("Web Bluetooth is not supported in this browser.");
-      logger.error("Web Bluetooth API is not available.");
-    }
-
-    const bleService = createBleService(logger);
-    bleService.onConnectionChanged((connected, name) => {
-      setIsConnected(connected);
-      setDeviceName(name ?? null);
-      setMtuSize(connected ? bleService.getMtuSize() : null);
-      setStatusMessage(connected ? `Connected to ${name ?? "device"}` : "Disconnected");
-      if (!connected) {
-        setSysInfo(null);
-        setFileEntries([]);
-        setCurrentPath("/");
-      }
-    });
-    bleServiceRef.current = bleService;
-
-    fileServiceRef.current = createFileService(bleService, logger, {
-      onStatus: setStatusMessage,
-      onPreview: handlePreview
-    });
-
-    return () => {
-      if (bleService.isConnected()) {
-        bleService.disconnect();
-      }
-    };
-  }, [logger, handlePreview]);
-
-  const listDirectory = useCallback(
-    async (path: string) => {
-      const fileService = fileServiceRef.current;
-      if (!fileService) return;
-
-      setIsListing(true);
-      setStatusMessage(`Listing directory: ${path}`);
-      setFileEntries([]);
-      setCurrentPath(path);
-
-      try {
-        await fileService.listDirectory(
-          path,
-          (name, type, size, entryPath) => {
-            setFileEntries((prev) => [
-              ...prev,
-              {
-                name,
-                type: type === ENTRY_TYPE.DIRECTORY ? ENTRY_TYPE.DIRECTORY : ENTRY_TYPE.FILE,
-                size,
-                path: entryPath
-              }
-            ]);
-          },
-          () => {
-            setFileEntries([]);
-          }
-        );
-        logger.success(`Directory listed: ${path}`);
-        setStatusMessage(`Directory listed: ${path}`);
-      } catch (error) {
-        logger.error(`Error listing directory: ${error}`);
-        setStatusMessage("Directory listing failed.");
-      } finally {
-        setIsListing(false);
-        resetStatus(1200);
-      }
-    },
-    [logger]
-  );
-
-  useEffect(() => {
-    if (isConnected) {
-      const timer = setTimeout(() => {
-        listDirectory("/");
-      }, 300);
-      return () => clearTimeout(timer);
-    }
-    return undefined;
-  }, [isConnected, listDirectory]);
-
-  const displayEntries = useMemo<DisplayEntry[]>(() => {
-    if (currentPath === "/") {
-      return fileEntries;
-    }
-
-    return [
-      {
-        name: "..",
-        type: ENTRY_TYPE.DIRECTORY,
-        size: null,
-        path: getParentPath(currentPath),
-        isParent: true
-      },
-      ...fileEntries
-    ];
-  }, [currentPath, fileEntries]);
-
-  const pathSegments = useMemo(() => {
-    if (currentPath === "/") {
-      return [{ label: "root", path: "/" }];
-    }
-
-    const segments = currentPath.split("/").filter(Boolean);
-    const crumbs = [{ label: "root", path: "/" }];
-    let current = "";
-
-    segments.forEach((segment) => {
-      current += `/${segment}`;
-      crumbs.push({ label: segment, path: current });
-    });
-
-    return crumbs;
-  }, [currentPath]);
-
-  const handleConnect = useCallback(async () => {
-    if (!isBluetoothSupported) {
-      return;
-    }
-
-    const bleService = bleServiceRef.current;
-    if (!bleService) return;
-
-    setIsConnecting(true);
-    setSysInfoError(null);
-
+  const loadBootstrapAndFog = useCallback(async () => {
+    setIsBootstrapping(true);
+    setBootError(null);
     try {
-      if (bleService.isConnected()) {
-        bleService.disconnect();
-        return;
+      const [bootResp, fog] = await Promise.all([
+        fetch("/api/bootstrap"),
+        fetchAndDecodeFog().catch(() => null)
+      ]);
+      if (!bootResp.ok) {
+        throw new Error(`HTTP ${bootResp.status}`);
       }
-
-      setStatusMessage("Connecting...");
-      const success = await bleService.connect();
-      if (!success) {
-        setStatusMessage("Connection failed.");
+      const boot = (await bootResp.json()) as BootstrapResponse;
+      setTracks(boot.tracks ?? []);
+      if (fog) {
+        setFogPack(fog);
+        setStats({
+          ...boot.stats,
+          visitedTilesZ15: fog.tileCount,
+          exploredCellsZ21: fog.totalCells,
+          exploredAreaKm2: fog.exploredAreaKm2
+        });
+      } else {
+        setStats(boot.stats);
       }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setStatusMessage("Connection failed.");
-      logger.error(`Connection failed: ${message}`);
+    } catch (err) {
+      setBootError(err instanceof Error ? err.message : String(err));
     } finally {
-      setIsConnecting(false);
+      setIsBootstrapping(false);
     }
-  }, [isBluetoothSupported, logger]);
+  }, []);
 
-  const handleQueryStatus = useCallback(async () => {
-    const bleService = bleServiceRef.current;
-    if (!bleService) return;
+  useEffect(() => {
+    loadBootstrapAndFog();
+  }, [loadBootstrapAndFog]);
 
-    setSysInfoError(null);
-    setStatusMessage("Querying status...");
+  // Auto-fit map viewport to the user's tracks on initial bootstrap
+  useEffect(() => {
+    if (hasAutoFittedRef.current || tracks.length === 0) return;
+    const valid = tracks.filter(
+      (t) =>
+        Number.isFinite(t.min_lon) &&
+        Number.isFinite(t.max_lon) &&
+        Number.isFinite(t.min_lat) &&
+        Number.isFinite(t.max_lat)
+    );
+    if (valid.length === 0) return;
 
+    hasAutoFittedRef.current = true;
+    const eastAsia = valid.filter((t) => {
+      const lonC = (t.min_lon + t.max_lon) / 2;
+      const latC = (t.min_lat + t.max_lat) / 2;
+      return lonC >= 70 && lonC <= 140 && latC >= 15 && latC <= 55;
+    });
+    const scope = eastAsia.length > 0 ? eastAsia : valid;
+
+    let minLon = 180;
+    let maxLon = -180;
+    let minLat = 90;
+    let maxLat = -90;
+    for (const t of scope) {
+      if (t.min_lon < minLon) minLon = t.min_lon;
+      if (t.max_lon > maxLon) maxLon = t.max_lon;
+      if (t.min_lat < minLat) minLat = t.min_lat;
+      if (t.max_lat > maxLat) maxLat = t.max_lat;
+    }
+
+    setFitBoundsTrigger((prev) => ({
+      bbox: [minLon, minLat, maxLon, maxLat],
+      nonce: (prev?.nonce ?? 0) + 1
+    }));
+  }, [tracks]);
+
+  const ensureFogPack = useCallback(async (): Promise<FogPackData> => {
+    if (fogPack) return fogPack;
     try {
-      const info = await bleService.getSysInfo();
-      setSysInfo(info);
-      logger.success("System info updated.");
-      setStatusMessage("System info updated.");
-      resetStatus(1200);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setSysInfo(null);
-      setSysInfoError(message);
-      logger.error(`System info query failed: ${message}`);
-      setStatusMessage("System info query failed.");
-      resetStatus(1600);
+      const loaded = await fetchAndDecodeFog();
+      setFogPack(loaded);
+      return loaded;
+    } catch {
+      const empty = createEmptyFogPack();
+      setFogPack(empty);
+      return empty;
     }
-  }, [logger, resetStatus]);
+  }, [fogPack]);
 
-  const handleGpsWakeup = useCallback(async () => {
-    const bleService = bleServiceRef.current;
-    if (!bleService) return;
+  // Ensure all selected tracks have decoded points loaded
+  useEffect(() => {
+    let cancelled = false;
+    const missing = selectedTrackIds.filter(
+      (id) => !loadedTrackPoints[id]
+    );
+    if (missing.length === 0) return;
 
-    setStatusMessage("Triggering GPS wakeup...");
-    try {
-      await bleService.triggerGpsWakeup();
-      setStatusMessage("GPS wakeup successful.");
-      logger.success("GPS wakeup command sent.");
-      resetStatus(1200);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setStatusMessage("GPS wakeup failed.");
-      logger.error(`GPS wakeup failed: ${message}`);
-      resetStatus(1600);
-    }
-  }, [logger, resetStatus]);
-
-  const isKeepAliveActive = (sysInfo?.keepAliveRemainingS ?? 0) > 0;
-  const keepAliveRemainingText = isKeepAliveActive
-    ? `${Math.floor(sysInfo!.keepAliveRemainingS / 60)}:${(sysInfo!.keepAliveRemainingS % 60).toString().padStart(2, "0")}`
-    : null;
-
-  const handleKeepAlive = useCallback(async () => {
-    const bleService = bleServiceRef.current;
-    if (!bleService) return;
-
-    const isActive = (sysInfo?.keepAliveRemainingS ?? 0) > 0;
-    const minutes = isActive ? 0 : keepAliveMinutes;
-    setStatusMessage(minutes > 0 ? `Setting GPS keep-alive for ${minutes} min...` : "Cancelling GPS keep-alive...");
-    try {
-      await bleService.setGpsKeepAlive(minutes);
-      setStatusMessage(minutes > 0 ? `GPS keep-alive active (${minutes} min)` : "GPS keep-alive cancelled");
-      logger.success(minutes > 0 ? `GPS keep-alive set for ${minutes} minutes.` : "GPS keep-alive cancelled.");
-      resetStatus(2000);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setStatusMessage("GPS keep-alive failed.");
-      logger.error(`GPS keep-alive failed: ${message}`);
-      resetStatus(1600);
-    }
-  }, [sysInfo, keepAliveMinutes, logger, resetStatus]);
-
-  const handleAgnss = useCallback(async () => {
-    const bleService = bleServiceRef.current;
-    if (!bleService) return;
-
-    if (!bleService.isConnected()) {
-      logger.error("Cannot send AGNSS data: not connected.");
-      return;
-    }
-
-    setIsAgnssBusy(true);
-    setAgnssStatus("Downloading data...");
-    setStatusMessage("AGNSS transfer in progress...");
-
-    try {
-      const result = await processAGNSSData();
-
-      if (!result || !Array.isArray(result) || result.length === 0) {
-        throw new Error("No AGNSS data received or invalid format.");
-      }
-
-      logger.log(`Received ${result.length} AGNSS data chunks.`);
-      setAgnssStatus(`Downloaded ${result.length} chunks. Starting transfer...`);
-
-      await bleService.startAgnssWrite();
-      logger.log("AGNSS write session started.");
-
-      const maxChunkSize = Math.max(16, Math.min(128, bleService.getMtuSize() - 8));
-      logger.log(`Using max chunk size: ${maxChunkSize} bytes.`);
-
-      let totalChunks = 0;
-      let totalBytes = 0;
-
-      for (let i = 0; i < result.length; i++) {
-        const agnssData = result[i];
-        if (!(agnssData instanceof Uint8Array)) {
-          logger.error(`AGNSS data chunk ${i} is not Uint8Array, skipping.`);
+    (async () => {
+      for (const id of missing) {
+        if (cancelled) return;
+        const cached = getCachedTrackPoints(id);
+        if (cached) {
+          setLoadedTrackPoints((prev) => ({ ...prev, [id]: cached }));
           continue;
         }
-
-        setAgnssStatus(`Sending chunk ${i + 1}/${result.length}...`);
-
-        let offset = 0;
-        while (offset < agnssData.length) {
-          const chunkSize = Math.min(maxChunkSize, agnssData.length - offset);
-          const chunk = agnssData.slice(offset, offset + chunkSize);
-
-          await bleService.writeAgnssChunk(chunk);
-          logger.log(`Sent AGNSS chunk ${totalChunks + 1}: ${chunkSize} bytes`);
-
-          offset += chunkSize;
-          totalChunks++;
-          totalBytes += chunkSize;
-
-          await new Promise((resolve) => setTimeout(resolve, 50));
+        setLoadingTrackId(id);
+        try {
+          const pts = await fetchAndDecodeTrack(id);
+          if (!cancelled) {
+            setLoadedTrackPoints((prev) => ({ ...prev, [id]: pts }));
+          }
+        } catch (err) {
+          console.error(err);
+        } finally {
+          if (!cancelled) setLoadingTrackId(null);
         }
       }
+    })();
 
-      await bleService.endAgnssWrite();
-      logger.success(`AGNSS transfer completed: ${totalChunks} chunks, ${totalBytes} bytes.`);
-      setAgnssStatus(`Transfer completed (${totalChunks} chunks, ${totalBytes} bytes).`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      logger.error(`AGNSS transfer failed: ${message}`);
-      setAgnssStatus(`Transfer failed - ${message}`);
-    } finally {
-      setIsAgnssBusy(false);
-      setTimeout(() => setAgnssStatus(null), 5000);
-      resetStatus(1600);
-    }
-  }, [logger, resetStatus]);
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedTrackIds, loadedTrackPoints]);
 
-  const handleFindMyGenerate = useCallback(() => {
-    const bundle = generateFindMyKeys();
-    setFindMyKeys(bundle);
-    logger.success("FindMy keys generated.");
-  }, [logger]);
-
-  const handleFindMyProvision = useCallback(async () => {
-    const bleService = bleServiceRef.current;
-    if (!bleService || !findMyKeys) return;
-
-    setFindMyBusy(true);
-    setStatusMessage("Provisioning FindMy keys...");
-    try {
-      const result = await bleService.writeFindMyKeys(findMyKeys.packed);
-      if (result.success) {
-        logger.success("FindMy keys written to device.");
-        setFindMyEnabled(true);
-        setStatusMessage("FindMy keys provisioned.");
-      } else {
-        logger.error("Device rejected FindMy keys.");
-        setStatusMessage("FindMy provisioning failed.");
+  const handleSelectTrack = useCallback((trackId: string, multi: boolean) => {
+    setHoverPoint(null);
+    setSelectedTrackIds((prev) => {
+      if (!multi) {
+        return prev.length === 1 && prev[0] === trackId ? [] : [trackId];
       }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      logger.error(`FindMy provision failed: ${message}`);
-      setStatusMessage("FindMy provisioning failed.");
-    } finally {
-      setFindMyBusy(false);
-      resetStatus(1600);
+      return prev.includes(trackId)
+        ? prev.filter((id) => id !== trackId)
+        : [...prev, trackId];
+    });
+  }, []);
+
+  const handleFitTrackBounds = useCallback((track: TrackMetadata) => {
+    setFitBoundsTrigger((prev) => ({
+      bbox: [track.min_lon, track.min_lat, track.max_lon, track.max_lat],
+      nonce: (prev?.nonce ?? 0) + 1
+    }));
+  }, []);
+
+  const handleDeleteTrack = useCallback(async (trackId: string) => {
+    const resp = await fetch(`/api/tracks/${encodeURIComponent(trackId)}`, {
+      method: "DELETE"
+    });
+    if (!resp.ok) return;
+    removeTrackFromCache(trackId);
+    setTracks((prev) => prev.filter((t) => t.id !== trackId));
+    setSelectedTrackIds((prev) => prev.filter((id) => id !== trackId));
+    setSpatialMatches((prev) => prev.filter((m) => m.trackId !== trackId));
+  }, []);
+
+  const handleChangeBaseMap = useCallback((nextId: BaseMapId) => {
+    setBaseMapId(nextId);
+    const opt = BASE_MAP_OPTIONS.find((o) => o.id === nextId);
+    if (opt) {
+      setUseGcj02(opt.isGcj02Default);
     }
-  }, [findMyKeys, logger, resetStatus]);
+  }, []);
 
-  const handleFindMyDump = useCallback(async () => {
-    const bleService = bleServiceRef.current;
-    if (!bleService) return;
+  const runPointSpatialQuery = useCallback(
+    async (lat: number, lon: number, radiusM: number) => {
+      const seq = ++spatialSeqRef.current;
+      setSpatialShape({ kind: "point", lat, lon, radiusM });
+      setSpatialSearching(true);
+      setSidebarOpen(true);
 
-    setFindMyBusy(true);
-    setStatusMessage("Reading FindMy keys from device...");
-    try {
-      const result = await bleService.readFindMyKeys();
-      if (result.success && result.keys) {
-        const bundle = unpackKeys(result.keys);
-        if (bundle) {
-          setFindMyKeys(bundle);
-          logger.success("FindMy keys read from device.");
-        } else {
-          logger.error("Invalid key data from device.");
+      try {
+        const dLat = (radiusM / 6371000) * (180 / Math.PI);
+        const dLon = dLat / Math.max(0.15, Math.cos((lat * Math.PI) / 180));
+        const tileKeys = getZ15TilesForBbox(
+          lat - dLat,
+          lon - dLon,
+          lat + dLat,
+          lon + dLon,
+          15
+        );
+        const resp = await fetch("/api/query-spatial", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tileKeys })
+        });
+        const data = (await resp.json()) as { matches?: SpatialQueryMatch[] };
+        const candidates = data.matches ?? [];
+        const verified = await verifyPointSpatialMatches(
+          lat,
+          lon,
+          radiusM,
+          candidates
+        );
+        if (seq === spatialSeqRef.current) {
+          setSpatialMatches(verified);
         }
-      } else {
-        logger.log("No FindMy keys on device.");
+      } catch (err) {
+        console.error("Spatial point query failed:", err);
+      } finally {
+        if (seq === spatialSeqRef.current) {
+          setSpatialSearching(false);
+        }
       }
-      setStatusMessage("FindMy dump complete.");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      logger.error(`FindMy dump failed: ${message}`);
-      setStatusMessage("FindMy dump failed.");
-    } finally {
-      setFindMyBusy(false);
-      resetStatus(1600);
-    }
-  }, [logger, resetStatus]);
+    },
+    []
+  );
 
-  const handleFindMyStatus = useCallback(async () => {
-    const bleService = bleServiceRef.current;
-    if (!bleService) return;
+  const handleSpatialPointQuery = useCallback(
+    (lat: number, lon: number) => {
+      runPointSpatialQuery(lat, lon, spatialRadiusM);
+    },
+    [runPointSpatialQuery, spatialRadiusM]
+  );
 
-    try {
-      const result = await bleService.getFindMyStatus();
-      setFindMyEnabled(result.enabled);
-      logger.log(`FindMy status: ${result.enabled ? "enabled" : "disabled"}`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      logger.error(`FindMy status query failed: ${message}`);
-    }
-  }, [logger]);
+  const handleSpatialBboxQuery = useCallback(
+    async (minLat: number, minLon: number, maxLat: number, maxLon: number) => {
+      const seq = ++spatialSeqRef.current;
+      setSpatialShape({ kind: "bbox", minLat, minLon, maxLat, maxLon });
+      setSpatialSearching(true);
+      setSidebarOpen(true);
 
-  const handleFindMyExport = useCallback(() => {
-    if (!findMyKeys) return;
-    const json = exportKeysAsJson(findMyKeys);
-    const blob = new Blob([json], { type: "application/json" });
+      try {
+        const tileKeys = getZ15TilesForBbox(
+          minLat,
+          minLon,
+          maxLat,
+          maxLon,
+          15
+        );
+        const resp = await fetch("/api/query-spatial", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tileKeys })
+        });
+        const data = (await resp.json()) as { matches?: SpatialQueryMatch[] };
+        const candidates = data.matches ?? [];
+        const verified = await verifyBboxSpatialMatches(
+          minLat,
+          minLon,
+          maxLat,
+          maxLon,
+          candidates
+        );
+        if (seq === spatialSeqRef.current) {
+          setSpatialMatches(verified);
+        }
+      } catch (err) {
+        console.error("Spatial bbox query failed:", err);
+      } finally {
+        if (seq === spatialSeqRef.current) {
+          setSpatialSearching(false);
+        }
+      }
+    },
+    []
+  );
+
+  const handleTrackUploaded = useCallback(
+    (track: TrackMetadata, points: GpsPoint[], updatedFogPack: FogPackData) => {
+      setTrackPointsInCache(track.id, points);
+      setLoadedTrackPoints((prev) => ({ ...prev, [track.id]: points }));
+      setFogPack(updatedFogPack);
+      setTracks((prev) => {
+        const nextTracks = [
+          track,
+          ...prev.filter((t) => t.id !== track.id)
+        ].sort(
+          (a, b) => b.date.localeCompare(a.date) || b.start_time - a.start_time
+        );
+        const dates = nextTracks.map((t) => t.date).sort();
+        setStats({
+          trackCount: nextTracks.length,
+          totalPoints: nextTracks.reduce((s, t) => s + t.point_count, 0),
+          totalDistanceM: Math.round(
+            nextTracks.reduce((s, t) => s + t.distance_m, 0)
+          ),
+          totalDurationS: nextTracks.reduce((s, t) => s + t.duration_s, 0),
+          totalElevGainM: Math.round(
+            nextTracks.reduce((s, t) => s + t.elev_gain_m, 0)
+          ),
+          firstDate: dates[0] ?? null,
+          lastDate: dates[dates.length - 1] ?? null,
+          visitedTilesZ15: updatedFogPack.tileCount,
+          exploredCellsZ21: updatedFogPack.totalCells,
+          exploredAreaKm2: updatedFogPack.exploredAreaKm2
+        });
+        return nextTracks;
+      });
+      setSelectedTrackIds([track.id]);
+      handleFitTrackBounds(track);
+    },
+    [handleFitTrackBounds]
+  );
+
+  const handlePreviewLocalTrack = useCallback(
+    (name: string, points: GpsPoint[]) => {
+      const previewId = `preview-${name}`;
+      const summary = computeTrackStatsAndOverview(points);
+      const previewTrack: TrackMetadata = {
+        id: previewId,
+        date: new Date((summary.startTime || Date.now() / 1000) * 1000)
+          .toISOString()
+          .slice(0, 10),
+        title: `预览: ${name}`,
+        source_file: name,
+        point_count: summary.pointCount,
+        distance_m: summary.distanceM,
+        duration_s: summary.durationS,
+        elev_gain_m: summary.elevGainM,
+        min_ele: summary.minEle,
+        max_ele: summary.maxEle,
+        start_time: summary.startTime,
+        end_time: summary.endTime,
+        min_lat: summary.minLat,
+        max_lat: summary.maxLat,
+        min_lon: summary.minLon,
+        max_lon: summary.maxLon,
+        r2_key: "",
+        overview_coords: summary.overviewCoords,
+        created_at: Math.floor(Date.now() / 1000)
+      };
+      setTrackPointsInCache(previewId, points);
+      setLoadedTrackPoints((prev) => ({ ...prev, [previewId]: points }));
+      setTracks((prev) => [
+        previewTrack,
+        ...prev.filter((t) => t.id !== previewId)
+      ]);
+      setSelectedTrackIds([previewId]);
+      handleFitTrackBounds(previewTrack);
+    },
+    [handleFitTrackBounds]
+  );
+
+  const primaryTrack = useMemo(() => {
+    if (selectedTrackIds.length === 0) return null;
+    const primaryId = selectedTrackIds[0];
+    return tracks.find((t) => t.id === primaryId) ?? null;
+  }, [selectedTrackIds, tracks]);
+
+  const primaryTrackPoints = primaryTrack
+    ? loadedTrackPoints[primaryTrack.id] ?? null
+    : null;
+
+  const spatialMatchIds = useMemo(
+    () => spatialMatches.map((m) => m.trackId),
+    [spatialMatches]
+  );
+
+  const handleDownloadSelectedGpx = useCallback(() => {
+    if (!primaryTrack || !primaryTrackPoints) return;
+    const xml = pointsToGpxXml(primaryTrackPoints, primaryTrack.title);
+    const blob = new Blob([xml], { type: "application/gpx+xml" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `findmy-keys-${findMyKeys.epoch}.json`;
-    document.body.appendChild(a);
+    a.download = `${primaryTrack.id}.gpx`;
     a.click();
-    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
-    logger.success("FindMy keys exported as JSON.");
-  }, [findMyKeys, logger]);
+    setTimeout(() => URL.revokeObjectURL(url), 100);
+  }, [primaryTrack, primaryTrackPoints]);
 
-  const handleDownloadRaw = useCallback(async (entry: FileEntry) => {
-    const fileService = fileServiceRef.current;
-    if (!fileService) return;
-
-    setActiveFileAction(entry.path);
-    try {
-      await fileService.downloadFile(entry.path, entry.name, entry.size);
-    } finally {
-      setActiveFileAction(null);
-      resetStatus(1200);
+  const handleFitAllTracks = useCallback(() => {
+    if (tracks.length === 0) return;
+    let minLon = 180;
+    let maxLon = -180;
+    let minLat = 90;
+    let maxLat = -90;
+    for (const t of tracks) {
+      if (t.min_lon < minLon) minLon = t.min_lon;
+      if (t.max_lon > maxLon) maxLon = t.max_lon;
+      if (t.min_lat < minLat) minLat = t.min_lat;
+      if (t.max_lat > maxLat) maxLat = t.max_lat;
     }
-  }, [resetStatus]);
-
-  const handleDownloadGpx = useCallback(async (entry: FileEntry) => {
-    const fileService = fileServiceRef.current;
-    if (!fileService) return;
-
-    setActiveFileAction(entry.path);
-    try {
-      await fileService.downloadAndConvertToGpx(entry.path, entry.name, entry.size, true);
-    } finally {
-      setActiveFileAction(null);
-      resetStatus(1200);
-    }
-  }, [resetStatus]);
-
-  const handlePreviewGpx = useCallback(async (entry: FileEntry) => {
-    const fileService = fileServiceRef.current;
-    if (!fileService) return;
-
-    setActiveFileAction(entry.path);
-    try {
-      await fileService.downloadAndConvertToGpx(entry.path, entry.name, entry.size, false);
-    } finally {
-      setActiveFileAction(null);
-      resetStatus(1200);
-    }
-  }, [resetStatus]);
-
-  const handleDeleteFile = useCallback(
-    async (entry: FileEntry) => {
-      const fileService = fileServiceRef.current;
-      if (!fileService) return;
-
-      setActiveFileAction(entry.path);
-      try {
-        await fileService.deleteFile(entry.path);
-        logger.success(`File deleted: ${entry.name}`);
-        await listDirectory(currentPath);
-      } catch (error) {
-        logger.error(`Delete failed: ${error}`);
-      } finally {
-        setActiveFileAction(null);
-        resetStatus(1200);
-      }
-    },
-    [currentPath, listDirectory, logger, resetStatus]
-  );
-
-  const info = useMemo(() => formatSysInfo(sysInfo), [sysInfo]);
+    setFitBoundsTrigger((prev) => ({
+      bbox: [minLon, minLat, maxLon, maxLat],
+      nonce: (prev?.nonce ?? 0) + 1
+    }));
+  }, [tracks]);
 
   return (
-    <div className="min-h-screen">
-      <div className="mx-auto max-w-6xl px-6 py-10">
-        <header className="mb-10 flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
-          <div className="space-y-3">
-            <Badge variant="secondary" className="bg-white/70 text-foreground">
-              Field Console
-            </Badge>
-            <h1 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
-              GPS Tracker Control Deck
-            </h1>
-            <p className="max-w-xl text-sm text-muted-foreground">
-              Connect to your device, inspect telemetry, manage files, and render GPX tracks with a
-              focused workflow.
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <Badge variant={isConnected ? "default" : "muted"}>
-              {isConnected ? "Connected" : "Disconnected"}
-            </Badge>
-            <Badge variant="outline">{deviceName ?? "No device"}</Badge>
-            <Badge variant="outline">MTU {mtuSize ?? "--"}</Badge>
-          </div>
-        </header>
+    <div className="relative h-screen w-screen overflow-hidden bg-slate-950 text-slate-100">
+      {/* Full-viewport MapLibre + 60fps Fog Canvas */}
+      <FogMapView
+        mode={mode}
+        baseMapId={baseMapId}
+        useGcj02={useGcj02}
+        fogPack={fogPack}
+        fogOpacity={fogOpacity}
+        fogGlow={fogGlow}
+        tracks={tracks}
+        selectedTrackIds={selectedTrackIds}
+        loadedTrackPoints={loadedTrackPoints}
+        trackColorMode={trackColorMode}
+        spatialShape={spatialShape}
+        spatialMatchIds={spatialMatchIds}
+        spatialRadiusM={spatialRadiusM}
+        spatialDrawTool={spatialDrawTool}
+        hoverPoint={hoverPoint}
+        fitBoundsTrigger={fitBoundsTrigger}
+        onSelectTrack={handleSelectTrack}
+        onSpatialPointQuery={handleSpatialPointQuery}
+        onSpatialBboxQuery={handleSpatialBboxQuery}
+      />
 
-        {!isBluetoothSupported && (
-          <Alert variant="destructive" className="mb-6">
-            <AlertTriangle className="h-4 w-4" />
-            <AlertTitle>Web Bluetooth not available</AlertTitle>
-            <AlertDescription>
-              Your browser does not support Web Bluetooth. Please use a compatible browser (Chrome
-              or Edge) on desktop or Android.
-            </AlertDescription>
-          </Alert>
+      {/* Left Sidebar Overlay */}
+      <TrackSidebar
+        isOpen={sidebarOpen}
+        onToggleOpen={() => setSidebarOpen((v) => !v)}
+        stats={stats}
+        tracks={tracks}
+        selectedTrackIds={selectedTrackIds}
+        loadingTrackId={loadingTrackId}
+        mode={mode}
+        spatialShape={spatialShape}
+        spatialMatches={spatialMatches}
+        spatialSearching={spatialSearching}
+        spatialRadiusM={spatialRadiusM}
+        spatialDrawTool={spatialDrawTool}
+        onChangeSpatialRadius={(r) => {
+          setSpatialRadiusM(r);
+          if (spatialShape?.kind === "point") {
+            runPointSpatialQuery(spatialShape.lat, spatialShape.lon, r);
+          }
+        }}
+        onChangeSpatialDrawTool={setSpatialDrawTool}
+        onClearSpatial={() => {
+          spatialSeqRef.current++;
+          setSpatialShape(null);
+          setSpatialMatches([]);
+          setSpatialSearching(false);
+        }}
+        onSelectTrack={handleSelectTrack}
+        onClearSelection={() => {
+          setSelectedTrackIds([]);
+          setHoverPoint(null);
+        }}
+        onFitTrackBounds={handleFitTrackBounds}
+        onDeleteTrack={handleDeleteTrack}
+      />
+
+      {/* Top Floating Mode & Basemap Bar */}
+      <div className="pointer-events-none absolute right-3 top-3 z-20 flex max-w-[calc(100vw-24px)] flex-wrap items-center justify-end gap-2">
+        {isBootstrapping && (
+          <div className="pointer-events-auto flex items-center gap-1.5 rounded-xl border border-slate-700/70 bg-slate-900/90 px-3 py-2 text-xs text-cyan-300 shadow-xl backdrop-blur-xl">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            <span>加载足迹与迷雾...</span>
+          </div>
         )}
 
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
-          <div className="order-2 space-y-6 lg:order-1">
-            <div className="grid gap-6 lg:grid-cols-2">
-              <Card className="animate-fade-up">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Activity className="h-5 w-5 text-primary" />
-                    System Snapshot
-                  </CardTitle>
-                  <CardDescription>Live GNSS metrics reported by the tracker.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="grid grid-cols-2 gap-3 text-sm">
-                    {[
-                      ["Latitude", info.latitude],
-                      ["Longitude", info.longitude],
-                      ["Altitude", info.altitude],
-                      ["Satellites", info.satellites],
-                      ["HDOP", info.hdop],
-                      ["Speed", info.speed],
-                      ["Course", info.course],
-                      ["Date", info.date],
-                      ["Time", info.time],
-                      ["Location Valid", info.locationValid],
-                      ["Date/Time Valid", info.dateTimeValid],
-                      ["Battery", info.battery],
-                      ["GPS State", info.gpsState],
-                      ["Temperature", info.temperature],
-                      ["Pressure", info.pressure],
-                      ["Motion", info.motion]
-                    ].map(([label, value]) => (
-                      <div key={label} className="rounded-md border border-border/70 bg-white/60 p-3">
-                        <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                          {label}
-                        </div>
-                        <div className="mt-1 font-mono text-sm text-foreground">{value}</div>
-                      </div>
-                    ))}
-                  </div>
-                  {sysInfoError && (
-                    <Alert variant="destructive">
-                      <AlertTriangle className="h-4 w-4" />
-                      <AlertTitle>System info error</AlertTitle>
-                      <AlertDescription>{sysInfoError}</AlertDescription>
-                    </Alert>
-                  )}
-                </CardContent>
-              </Card>
-
-              <Card className="animate-fade-up">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <FolderOpen className="h-5 w-5 text-primary" />
-                    File System
-                  </CardTitle>
-                  <CardDescription>Browse device storage and manage raw or GPX exports.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex flex-wrap items-center gap-3">
-                    <div className="min-w-[240px] flex-1">
-                      <Input value={currentPath} readOnly />
-                    </div>
-                    <Button
-                      variant="outline"
-                      onClick={() => listDirectory(currentPath)}
-                      disabled={!isConnected || isListing}
-                    >
-                      <RefreshCw className="h-4 w-4" />
-                      {isListing ? "Listing..." : "List Directory"}
-                    </Button>
-                  </div>
-
-                  <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-                    {pathSegments.map((segment, idx) => (
-                      <Button
-                        key={`${segment.path}-${idx}`}
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 px-2"
-                        onClick={() => listDirectory(segment.path)}
-                        disabled={!isConnected}
-                      >
-                        {segment.label}
-                      </Button>
-                    ))}
-                  </div>
-
-                  <div className="max-h-[420px] space-y-2 overflow-y-auto rounded-lg border border-border/70 bg-white/60 p-3 scrollbar-thin">
-                    {displayEntries.length === 0 && (
-                      <div className="text-sm text-muted-foreground">No files listed.</div>
-                    )}
-                    {displayEntries.map((entry) => {
-                      const isDirectory = entry.type === ENTRY_TYPE.DIRECTORY;
-                      const isBusy = activeFileAction === entry.path;
-
-                      return (
-                        <div
-                          key={entry.path}
-                          className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border/70 bg-white/70 p-3"
-                        >
-                          <div className="flex items-center gap-3">
-                            {isDirectory ? (
-                              <Folder className="h-4 w-4 text-secondary" />
-                            ) : (
-                              <FileDown className="h-4 w-4 text-muted-foreground" />
-                            )}
-                            <button
-                              type="button"
-                              className={`text-left text-sm font-medium ${
-                                isDirectory ? "text-secondary" : "text-foreground"
-                              }`}
-                              onClick={() => {
-                                if (isDirectory) {
-                                  listDirectory(entry.path);
-                                }
-                              }}
-                              disabled={!isDirectory}
-                            >
-                              {entry.name}
-                            </button>
-                            {!isDirectory && (
-                              <Badge variant="outline" className="font-mono text-xs">
-                                {formatFileSize(entry.size)}
-                              </Badge>
-                            )}
-                          </div>
-                          {!isDirectory && (
-                            <div className="flex flex-wrap gap-2">
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => handleDownloadRaw(entry)}
-                                disabled={isBusy}
-                              >
-                                <FileDown className="h-4 w-4" />
-                                Raw
-                              </Button>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => handleDownloadGpx(entry)}
-                                disabled={isBusy}
-                              >
-                                <Map className="h-4 w-4" />
-                                GPX
-                              </Button>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => handlePreviewGpx(entry)}
-                                disabled={isBusy}
-                              >
-                                <Eye className="h-4 w-4" />
-                                Preview
-                              </Button>
-                              <AlertDialog>
-                                <AlertDialogTrigger asChild>
-                                  <Button variant="destructive" size="sm" disabled={isBusy}>
-                                    <Trash2 className="h-4 w-4" />
-                                    Delete
-                                  </Button>
-                                </AlertDialogTrigger>
-                                <AlertDialogContent>
-                                  <AlertDialogHeader>
-                                    <AlertDialogTitle>Delete file?</AlertDialogTitle>
-                                    <AlertDialogDescription>
-                                      This will permanently delete {entry.name}. This action cannot be
-                                      undone.
-                                    </AlertDialogDescription>
-                                  </AlertDialogHeader>
-                                  <AlertDialogFooter>
-                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                    <AlertDialogAction onClick={() => handleDeleteFile(entry)}>
-                                      Delete
-                                    </AlertDialogAction>
-                                  </AlertDialogFooter>
-                                </AlertDialogContent>
-                              </AlertDialog>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-
-            <Card className="animate-fade-up">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Upload className="h-5 w-5 text-primary" />
-                  Local GPZ Converter
-                </CardTitle>
-                <CardDescription>
-                  Drop a .gpz file to convert and preview. Works offline.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div
-                  onDrop={handleDrop}
-                  onDragOver={handleDragOver}
-                  onDragLeave={handleDragLeave}
-                  className={`flex flex-col items-center justify-center rounded-lg border-2 border-dashed p-8 transition-colors ${
-                    isDragOver
-                      ? "border-primary bg-primary/5"
-                      : "border-border/70 bg-white/60 hover:border-primary/50"
-                  }`}
-                >
-                  <Upload className="mb-3 h-8 w-8 text-muted-foreground" />
-                  <p className="mb-2 text-sm text-muted-foreground">
-                    Drag & drop a .gpz file here
-                  </p>
-                  <label className="cursor-pointer">
-                    <span className="text-sm font-medium text-primary hover:underline">
-                      or click to browse
-                    </span>
-                    <input
-                      type="file"
-                      accept=".gpz"
-                      onChange={handleFileInput}
-                      className="hidden"
-                    />
-                  </label>
-                </div>
-                {localGpxString && localFileName && (
-                  <div className="flex items-center justify-between rounded-md border border-border/70 bg-white/70 p-3">
-                    <span className="text-sm font-medium">{localFileName}</span>
-                    <Button variant="outline" size="sm" onClick={handleDownloadLocalGpx}>
-                      <Download className="h-4 w-4" />
-                      Download GPX
-                    </Button>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card className="animate-fade-up">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Map className="h-5 w-5 text-primary" />
-                  GPX Viewer
-                </CardTitle>
-                <CardDescription>
-                  {gpxFileName ? `Previewing ${gpxFileName}` : "Select a file to preview track data."}
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <gpx-viewer ref={gpxViewerRef} id="gpxViewer"></gpx-viewer>
-              </CardContent>
-            </Card>
+        {bootError && (
+          <div className="pointer-events-auto rounded-xl border border-rose-500/40 bg-rose-950/90 px-3 py-2 text-xs text-rose-200 shadow-xl">
+            数据加载失败: {bootError}
           </div>
+        )}
 
-          <aside className="order-1 space-y-6 lg:order-2 lg:sticky lg:top-6 self-start">
-            <Card className="animate-fade-up">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Bluetooth className="h-5 w-5 text-primary" />
-                  Connection
-                </CardTitle>
-                <CardDescription>Pair, wake, and sync with the GPS tracker.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <div className="flex flex-wrap gap-3">
-                  <Button onClick={handleConnect} disabled={!isBluetoothSupported || isConnecting}>
-                    <Power className="h-4 w-4" />
-                    {isConnected ? "Disconnect" : "Connect"}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={handleQueryStatus}
-                    disabled={!isConnected || isConnecting}
-                  >
-                    <Activity className="h-4 w-4" />
-                    Query Status
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    onClick={handleAgnss}
-                    disabled={!isConnected || isAgnssBusy}
-                  >
-                    <Satellite className="h-4 w-4" />
-                    Download + Send AGNSS
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={handleGpsWakeup}
-                    disabled={!isConnected}
-                  >
-                    <RefreshCw className="h-4 w-4" />
-                    GPS Wakeup
-                  </Button>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-3">
-                  <div className="flex items-center gap-1">
-                    <input
-                      type="number"
-                      min={1}
-                      max={720}
-                      value={keepAliveMinutes}
-                      onChange={(e) => {
-                        const v = Math.max(1, Math.min(720, Number(e.target.value) || 1));
-                        setKeepAliveMinutes(v);
-                      }}
-                      disabled={!isConnected || isKeepAliveActive}
-                      className="h-9 w-20 rounded-md border border-border bg-white/70 px-2 text-sm text-center"
-                    />
-                    <span className="text-sm text-muted-foreground">min</span>
-                  </div>
-                  <Button
-                    variant={isKeepAliveActive ? "destructive" : "outline"}
-                    onClick={handleKeepAlive}
-                    disabled={!isConnected}
-                  >
-                    <Timer className="h-4 w-4" />
-                    {isKeepAliveActive
-                      ? `Cancel (${keepAliveRemainingText})`
-                      : "GPS Keep Alive"}
-                  </Button>
-                </div>
-
-                <div className="grid gap-3">
-                  <div className="rounded-lg border border-border/70 bg-white/70 px-4 py-3 text-sm">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                      Status
-                    </div>
-                    <div className="mt-1 text-base font-medium text-foreground">{statusMessage}</div>
-                  </div>
-                  {agnssStatus && (
-                    <div className="rounded-lg border border-border/60 bg-white/60 px-4 py-3 text-sm">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                        AGNSS
-                      </div>
-                      <div className="mt-1 text-sm text-foreground">{agnssStatus}</div>
-                    </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          </aside>
-
-          <div className="order-3 space-y-6 lg:order-2 lg:col-start-2 self-start">
-            <Card className="animate-fade-up">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Key className="h-5 w-5 text-primary" />
-                  Find My
-                </CardTitle>
-                <CardDescription>Generate, provision, and export Apple Find My keys.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex flex-wrap gap-2">
-                  <Button variant="outline" size="sm" onClick={handleFindMyGenerate} disabled={findMyBusy}>
-                    Generate Keys
-                  </Button>
-                  <Button
-                    variant="default"
-                    size="sm"
-                    onClick={handleFindMyProvision}
-                    disabled={!isConnected || !findMyKeys || findMyBusy}
-                  >
-                    Provision
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleFindMyDump}
-                    disabled={!isConnected || findMyBusy}
-                  >
-                    Dump
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleFindMyStatus}
-                    disabled={!isConnected || findMyBusy}
-                  >
-                    Status
-                  </Button>
-                </div>
-                {findMyKeys && (
-                  <div className="space-y-2">
-                    <div className="rounded-md border border-border/70 bg-white/60 p-3 text-xs font-mono break-all">
-                      <div><span className="text-muted-foreground">Epoch:</span> {new Date(findMyKeys.epoch * 1000).toISOString()}</div>
-                      <div><span className="text-muted-foreground">PubKey (x):</span> {Array.from(findMyKeys.publicKey.slice(1, 29)).map(b => b.toString(16).padStart(2, "0")).join("")}</div>
-                    </div>
-                    <Button variant="outline" size="sm" onClick={handleFindMyExport} className="w-full">
-                      <Download className="h-4 w-4" />
-                      Export JSON
-                    </Button>
-                  </div>
-                )}
-                {findMyEnabled !== null && (
-                  <Badge variant={findMyEnabled ? "default" : "muted"}>
-                    {findMyEnabled ? "FindMy Active" : "FindMy Inactive"}
-                  </Badge>
-                )}
-              </CardContent>
-            </Card>
-          </div>
+        {/* Visualization Mode Switcher */}
+        <div className="pointer-events-auto flex items-center rounded-xl border border-slate-700/70 bg-slate-900/90 p-1 shadow-xl backdrop-blur-xl">
+          {(
+            [
+              ["fog", "世界迷雾", EyeOff],
+              ["heatmap", "足迹热力", Flame],
+              ["tracks", "全部轨迹", Route],
+              ["spatial", "空间反查", MapPin]
+            ] as const
+          ).map(([id, label, Icon]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setMode(id)}
+              className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition ${
+                mode === id
+                  ? "bg-cyan-500 text-slate-950 shadow-sm"
+                  : "text-slate-300 hover:bg-slate-800 hover:text-white"
+              }`}
+            >
+              <Icon className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">{label}</span>
+            </button>
+          ))}
         </div>
 
-        <Card className="mt-6 animate-fade-up">
-          <CardHeader>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="space-y-1">
-                <CardTitle className="flex items-center gap-2">
-                  <Terminal className="h-5 w-5 text-primary" />
-                  Device Logs
-                </CardTitle>
-                <CardDescription>Runtime messages and transfer telemetry.</CardDescription>
+        {/* Fog Controls & Layer Switcher */}
+        <div className="pointer-events-auto relative">
+          <button
+            type="button"
+            onClick={() => setShowLayerMenu((v) => !v)}
+            className="flex items-center gap-1.5 rounded-xl border border-slate-700/70 bg-slate-900/90 px-3 py-2 text-xs font-medium text-slate-200 shadow-xl backdrop-blur-xl hover:bg-slate-800"
+          >
+            <Layers className="h-3.5 w-3.5 text-cyan-400" />
+            <span className="hidden md:inline">底图与迷雾</span>
+            <SlidersHorizontal className="h-3 w-3 text-slate-400" />
+          </button>
+
+          {showLayerMenu && (
+            <div className="absolute right-0 mt-2 w-72 rounded-2xl border border-slate-700/80 bg-slate-900/95 p-3.5 shadow-2xl backdrop-blur-xl">
+              <div className="mb-3 space-y-2 border-b border-slate-800 pb-3">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-semibold text-slate-200">
+                    迷雾遮罩浓度
+                  </span>
+                  <span className="font-mono text-cyan-300">
+                    {Math.round(fogOpacity * 100)}%
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={0.35}
+                  max={0.95}
+                  step={0.05}
+                  value={fogOpacity}
+                  onChange={(e) => setFogOpacity(Number(e.target.value))}
+                  className="h-1.5 w-full accent-cyan-400"
+                />
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-semibold text-slate-200">
+                    擦除柔边光晕
+                  </span>
+                  <span className="font-mono text-cyan-300">
+                    {fogGlow.toFixed(1)}x
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={3.5}
+                  step={0.5}
+                  value={fogGlow}
+                  onChange={(e) => setFogGlow(Number(e.target.value))}
+                  className="h-1.5 w-full accent-cyan-400"
+                />
               </div>
-              <Button variant="outline" size="sm" onClick={clearLogs}>
-                Clear Logs
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="max-h-[420px] space-y-2 overflow-y-auto rounded-lg border border-border/70 bg-white/70 p-4 font-mono text-xs scrollbar-thin">
-              {logEntries.length === 0 && (
-                <div className="text-muted-foreground">No logs yet.</div>
-              )}
-              {logEntries.map((entry) => (
-                <div
-                  key={entry.id}
-                  className={`flex flex-wrap gap-2 ${
-                    entry.level === "error"
-                      ? "text-destructive"
-                      : entry.level === "success"
-                        ? "text-emerald-600"
-                        : "text-foreground"
+
+              <div className="mb-3 flex items-center justify-between border-b border-slate-800 pb-3">
+                <div>
+                  <div className="text-xs font-semibold text-slate-200">
+                    GCJ-02 火星坐标纠偏
+                  </div>
+                  <div className="text-[10px] text-slate-400">
+                    使用高德底图时需开启，OpenFreeMap 请关闭
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setUseGcj02((v) => !v)}
+                  className={`h-5 w-9 rounded-full p-0.5 transition ${
+                    useGcj02 ? "bg-cyan-500" : "bg-slate-700"
                   }`}
                 >
-                  <Badge
-                    variant="outline"
-                    className={`text-[10px] uppercase tracking-wide ${
-                      entry.level === "error"
-                        ? "border-destructive text-destructive"
-                        : entry.level === "success"
-                          ? "border-emerald-500 text-emerald-600"
-                          : "border-muted text-muted-foreground"
+                  <div
+                    className={`h-4 w-4 rounded-full bg-white transition-transform ${
+                      useGcj02 ? "translate-x-4" : "translate-x-0"
+                    }`}
+                  />
+                </button>
+              </div>
+
+              <div className="space-y-1">
+                <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                  底图源 (OpenFreeMap 矢量瓦片 / 高德)
+                </div>
+                {BASE_MAP_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => handleChangeBaseMap(opt.id)}
+                    className={`w-full rounded-lg px-2.5 py-1.5 text-left transition ${
+                      baseMapId === opt.id
+                        ? "bg-cyan-500/20 text-cyan-300 ring-1 ring-cyan-500/50"
+                        : "text-slate-300 hover:bg-slate-800"
                     }`}
                   >
-                    {entry.level.toUpperCase()}
-                  </Badge>
-                  <span className="text-muted-foreground">[{entry.time}]</span>
-                  <span>{entry.message}</span>
-                </div>
-              ))}
+                    <div className="text-xs font-medium">{opt.label}</div>
+                    <div className="text-[10px] text-slate-400">
+                      {opt.description}
+                    </div>
+                  </button>
+                ))}
+              </div>
             </div>
-          </CardContent>
-        </Card>
+          )}
+        </div>
+
+        {/* Fit All Tracks */}
+        <button
+          type="button"
+          onClick={handleFitAllTracks}
+          title="全览所有足迹"
+          className="pointer-events-auto flex items-center gap-1.5 rounded-xl border border-slate-700/70 bg-slate-900/90 px-3 py-2 text-xs font-medium text-slate-200 shadow-xl backdrop-blur-xl hover:bg-slate-800"
+        >
+          <Compass className="h-3.5 w-3.5 text-emerald-400" />
+          <span className="hidden md:inline">全局视野</span>
+        </button>
+
+        {/* BLE Device & Upload Modal Trigger */}
+        <button
+          type="button"
+          onClick={() => setDeviceModalOpen(true)}
+          className="pointer-events-auto flex items-center gap-1.5 rounded-xl bg-cyan-500 px-3 py-2 text-xs font-semibold text-slate-950 shadow-xl hover:bg-cyan-400"
+        >
+          <Bluetooth className="h-3.5 w-3.5" />
+          <span>设备 / 入库</span>
+        </button>
       </div>
+
+      {/* Bottom Elevation & Speed Profile Drawer */}
+      {primaryTrack && primaryTrackPoints && (
+        <div
+          className={`pointer-events-none absolute bottom-3 right-3 z-20 transition-all ${
+            sidebarOpen ? "left-[368px] max-md:left-3" : "left-3"
+          } mr-10`}
+        >
+          <ElevationProfileChart
+            track={primaryTrack}
+            points={primaryTrackPoints}
+            colorMode={trackColorMode}
+            onChangeColorMode={setTrackColorMode}
+            onHoverPoint={setHoverPoint}
+            onFitBounds={() => handleFitTrackBounds(primaryTrack)}
+            onDownloadGpx={handleDownloadSelectedGpx}
+            onClose={() => {
+              setSelectedTrackIds([]);
+              setHoverPoint(null);
+            }}
+          />
+        </div>
+      )}
+
+      {/* Device & Upload Modal */}
+      <DeviceSyncModal
+        isOpen={deviceModalOpen}
+        onClose={() => setDeviceModalOpen(false)}
+        fogPack={fogPack}
+        ensureFogPack={ensureFogPack}
+        onTrackUploaded={handleTrackUploaded}
+        onPreviewLocalTrack={handlePreviewLocalTrack}
+      />
     </div>
   );
 }

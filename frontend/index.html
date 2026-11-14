@@ -1,20 +1,20 @@
 ﻿<!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN" class="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>GPS Tracker PWA</title>
-    <meta name="description" content="GPS tracking device interface with offline capabilities" />
+    <title>Atlas Fog — Personal GPS Archive</title>
+    <meta name="description" content="Personal GPS Fog of War visualizer, spatial track archive, and BLE tracker console" />
 
-    <link rel="manifest" href="/gps_tracker/manifest.json" />
-    <meta name="theme-color" content="#0e7490" />
+    <link rel="manifest" href="manifest.json" />
+    <meta name="theme-color" content="#090d16" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <meta name="apple-mobile-web-app-title" content="GPS Tracker" />
-    <link rel="apple-touch-icon" href="/gps_tracker/icons/icon-192.png" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="AtlasFog" />
+    <link rel="apple-touch-icon" href="icons/icon-192.png" />
 
-    <link rel="icon" type="image/png" sizes="32x32" href="/gps_tracker/icons/icon-192.png" />
-    <link rel="mask-icon" href="/gps_tracker/icons/icon-192.png" color="#0e7490" />
+    <link rel="icon" type="image/png" sizes="32x32" href="icons/icon-192.png" />
+    <link rel="mask-icon" href="icons/icon-192.png" color="#22d3ee" />
 
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -22,12 +22,9 @@
       href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-
-    <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@5.6.0/dist/maplibre-gl.min.js"></script>
   </head>
-  <body>
+  <body class="bg-slate-950 text-slate-100 antialiased">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-

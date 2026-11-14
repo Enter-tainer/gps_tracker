@@ -5,7 +5,11 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "ingest": "node scripts/ingest_downloads.mjs",
+    "sync:cf": "node scripts/sync_cloudflare.mjs",
+    "deploy:cf": "npm run build && npx wrangler deploy"
   },
   "dependencies": {
     "@noble/curves": "^1.8.1",
@@ -15,6 +19,7 @@
     "clsx": "^2.1.1",
     "gpx_viewer": "^1.1.1",
     "lucide-react": "^0.468.0",
+    "maplibre-gl": "^6.18.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "tailwind-merge": "^2.5.5",
@@ -22,6 +27,7 @@
     "workbox-window": "^7.3.0"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261114.1",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.2",
@@ -33,4 +39,3 @@
     "vite": "^6.3.5"
   }
 }
-

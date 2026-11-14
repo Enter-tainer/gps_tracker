@@ -25,7 +25,7 @@ type ReadChunkPromise = {
 };
 
 type VoidPromise = {
-  resolve: () => void;
+  resolve: (value?: void) => void;
   reject: (error: Error) => void;
 };
 
@@ -62,7 +62,7 @@ export function createBleService(logger: Logger) {
   let txCharacteristic: BluetoothRemoteGATTCharacteristic | null = null;
   let rxCharacteristic: BluetoothRemoteGATTCharacteristic | null = null;
   let isConnected = false;
-  let mtuSize = CONSTANTS.DEFAULT_MTU_SIZE;
+  let mtuSize: number = CONSTANTS.DEFAULT_MTU_SIZE;
 
   let listDirEntries: FileEntry[] = [];
   let connectionChangedCallback: ConnectionChangedCallback | null = null;
@@ -189,7 +189,7 @@ export function createBleService(logger: Logger) {
     }
 
     try {
-      if ("writeValueWithoutResponse" in txCharacteristic) {
+      if ("writeValueWithoutResponse" in txCharacteristic && typeof txCharacteristic.writeValueWithoutResponse === "function") {
         await txCharacteristic.writeValueWithoutResponse(data);
       } else {
         await txCharacteristic.writeValue(data);
