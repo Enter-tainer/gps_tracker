@@ -9,7 +9,12 @@
     "typecheck": "tsc --noEmit",
     "ingest": "node scripts/ingest_downloads.mjs",
     "sync:cf": "node scripts/sync_cloudflare.mjs",
-    "deploy:cf": "npm run build && npx wrangler deploy"
+    "deploy:cf": "npm run build && npx wrangler deploy",
+    "gpsl0:selftest": "node scripts/selftest_gpsl0.mjs",
+    "gpsl0:bench": "node scripts/bench_gpsl0.mjs --verify --stats",
+    "gpsl0:ablate": "node scripts/ablation_codec.mjs --matrix=core",
+    "gpsl0:verify": "node scripts/verify_gpsl0.mjs --all",
+    "gpsl0:pack": "node scripts/pack_gpsl0.mjs --verify"
   },
   "dependencies": {
     "@noble/curves": "^1.8.1",
