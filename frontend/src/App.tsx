@@ -474,7 +474,7 @@ export default function App() {
   }, [tracks]);
 
   return (
-    <div className="relative h-screen w-screen overflow-hidden bg-slate-950 text-slate-100">
+    <div className="relative h-screen w-screen overflow-hidden bg-background text-foreground">
       {/* Full-viewport MapLibre + 60fps Fog Canvas */}
       <FogMapView
         mode={mode}
@@ -537,20 +537,20 @@ export default function App() {
       {/* Top Floating Mode & Basemap Bar */}
       <div className="pointer-events-none absolute right-3 top-3 z-20 flex max-w-[calc(100vw-24px)] flex-wrap items-center justify-end gap-2">
         {isBootstrapping && (
-          <div className="pointer-events-auto flex items-center gap-1.5 rounded-xl border border-slate-700/70 bg-slate-900/90 px-3 py-2 text-xs text-cyan-300 shadow-xl backdrop-blur-xl">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          <div className="pointer-events-auto flex items-center gap-1.5 rounded-md border border-border bg-background/90 px-3 py-1.5 text-xs text-muted-foreground shadow-md backdrop-blur-md">
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-foreground" />
             <span>加载足迹与迷雾...</span>
           </div>
         )}
 
         {bootError && (
-          <div className="pointer-events-auto rounded-xl border border-rose-500/40 bg-rose-950/90 px-3 py-2 text-xs text-rose-200 shadow-xl">
+          <div className="pointer-events-auto rounded-md border border-destructive/50 bg-destructive/15 px-3 py-1.5 text-xs text-red-300 shadow-md backdrop-blur-md">
             数据加载失败: {bootError}
           </div>
         )}
 
-        {/* Visualization Mode Switcher */}
-        <div className="pointer-events-auto flex items-center rounded-xl border border-slate-700/70 bg-slate-900/90 p-1 shadow-xl backdrop-blur-xl">
+        {/* Visualization Mode Switcher (shadcn Tabs style) */}
+        <div className="pointer-events-auto inline-flex items-center rounded-lg border border-border bg-background/90 p-1 shadow-md backdrop-blur-md">
           {(
             [
               ["fog", "世界迷雾", EyeOff],
@@ -563,10 +563,10 @@ export default function App() {
               key={id}
               type="button"
               onClick={() => setMode(id)}
-              className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition ${
+              className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                 mode === id
-                  ? "bg-cyan-500 text-slate-950 shadow-sm"
-                  : "text-slate-300 hover:bg-slate-800 hover:text-white"
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
               }`}
             >
               <Icon className="h-3.5 w-3.5" />
@@ -580,21 +580,21 @@ export default function App() {
           <button
             type="button"
             onClick={() => setShowLayerMenu((v) => !v)}
-            className="flex items-center gap-1.5 rounded-xl border border-slate-700/70 bg-slate-900/90 px-3 py-2 text-xs font-medium text-slate-200 shadow-xl backdrop-blur-xl hover:bg-slate-800"
+            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background/90 px-3 text-xs font-medium text-foreground shadow-md backdrop-blur-md transition-colors hover:bg-accent hover:text-accent-foreground"
           >
-            <Layers className="h-3.5 w-3.5 text-cyan-400" />
+            <Layers className="h-3.5 w-3.5 text-muted-foreground" />
             <span className="hidden md:inline">底图与迷雾</span>
-            <SlidersHorizontal className="h-3 w-3 text-slate-400" />
+            <SlidersHorizontal className="h-3 w-3 text-muted-foreground" />
           </button>
 
           {showLayerMenu && (
-            <div className="absolute right-0 mt-2 w-72 rounded-2xl border border-slate-700/80 bg-slate-900/95 p-3.5 shadow-2xl backdrop-blur-xl">
-              <div className="mb-3 space-y-2 border-b border-slate-800 pb-3">
+            <div className="absolute right-0 mt-2 w-72 rounded-lg border border-border bg-popover/95 p-3.5 text-popover-foreground shadow-xl backdrop-blur-md">
+              <div className="mb-3 space-y-2 border-b border-border pb-3">
                 <div className="flex items-center justify-between text-xs">
-                  <span className="font-semibold text-slate-200">
+                  <span className="font-medium text-foreground">
                     迷雾遮罩浓度
                   </span>
-                  <span className="font-mono text-cyan-300">
+                  <span className="font-mono tabular-nums text-muted-foreground">
                     {Math.round(fogOpacity * 100)}%
                   </span>
                 </div>
@@ -605,13 +605,13 @@ export default function App() {
                   step={0.05}
                   value={fogOpacity}
                   onChange={(e) => setFogOpacity(Number(e.target.value))}
-                  className="h-1.5 w-full accent-cyan-400"
+                  className="h-1.5 w-full cursor-pointer accent-primary"
                 />
                 <div className="flex items-center justify-between text-xs">
-                  <span className="font-semibold text-slate-200">
+                  <span className="font-medium text-foreground">
                     擦除柔边光晕
                   </span>
-                  <span className="font-mono text-cyan-300">
+                  <span className="font-mono tabular-nums text-muted-foreground">
                     {fogGlow.toFixed(1)}x
                   </span>
                 </div>
@@ -622,28 +622,28 @@ export default function App() {
                   step={0.5}
                   value={fogGlow}
                   onChange={(e) => setFogGlow(Number(e.target.value))}
-                  className="h-1.5 w-full accent-cyan-400"
+                  className="h-1.5 w-full cursor-pointer accent-primary"
                 />
               </div>
 
-              <div className="mb-3 flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="mb-3 flex items-center justify-between border-b border-border pb-3">
                 <div>
-                  <div className="text-xs font-semibold text-slate-200">
+                  <div className="text-xs font-medium text-foreground">
                     GCJ-02 火星坐标纠偏
                   </div>
-                  <div className="text-[10px] text-slate-400">
-                    使用高德底图时需开启，OpenFreeMap 请关闭
+                  <div className="text-[11px] text-muted-foreground">
+                    高德底图开启，OpenFreeMap 关闭
                   </div>
                 </div>
                 <button
                   type="button"
                   onClick={() => setUseGcj02((v) => !v)}
-                  className={`h-5 w-9 rounded-full p-0.5 transition ${
-                    useGcj02 ? "bg-cyan-500" : "bg-slate-700"
+                  className={`inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors ${
+                    useGcj02 ? "bg-primary" : "bg-input"
                   }`}
                 >
-                  <div
-                    className={`h-4 w-4 rounded-full bg-white transition-transform ${
+                  <span
+                    className={`pointer-events-none block h-4 w-4 rounded-full bg-background shadow-lg transition-transform ${
                       useGcj02 ? "translate-x-4" : "translate-x-0"
                     }`}
                   />
@@ -651,22 +651,24 @@ export default function App() {
               </div>
 
               <div className="space-y-1">
-                <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                  底图源 (OpenFreeMap 矢量瓦片 / 高德)
+                <div className="mb-1.5 text-[11px] font-medium text-muted-foreground">
+                  底图源 (OpenFreeMap / 高德)
                 </div>
                 {BASE_MAP_OPTIONS.map((opt) => (
                   <button
                     key={opt.id}
                     type="button"
                     onClick={() => handleChangeBaseMap(opt.id)}
-                    className={`w-full rounded-lg px-2.5 py-1.5 text-left transition ${
+                    className={`w-full rounded-md px-2.5 py-1.5 text-left transition-colors ${
                       baseMapId === opt.id
-                        ? "bg-cyan-500/20 text-cyan-300 ring-1 ring-cyan-500/50"
-                        : "text-slate-300 hover:bg-slate-800"
+                        ? "bg-accent text-accent-foreground ring-1 ring-border"
+                        : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
                     }`}
                   >
-                    <div className="text-xs font-medium">{opt.label}</div>
-                    <div className="text-[10px] text-slate-400">
+                    <div className="text-xs font-medium text-foreground">
+                      {opt.label}
+                    </div>
+                    <div className="text-[11px] text-muted-foreground">
                       {opt.description}
                     </div>
                   </button>
@@ -681,9 +683,9 @@ export default function App() {
           type="button"
           onClick={handleFitAllTracks}
           title="全览所有足迹"
-          className="pointer-events-auto flex items-center gap-1.5 rounded-xl border border-slate-700/70 bg-slate-900/90 px-3 py-2 text-xs font-medium text-slate-200 shadow-xl backdrop-blur-xl hover:bg-slate-800"
+          className="pointer-events-auto inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background/90 px-3 text-xs font-medium text-foreground shadow-md backdrop-blur-md transition-colors hover:bg-accent hover:text-accent-foreground"
         >
-          <Compass className="h-3.5 w-3.5 text-emerald-400" />
+          <Compass className="h-3.5 w-3.5 text-muted-foreground" />
           <span className="hidden md:inline">全局视野</span>
         </button>
 
@@ -691,7 +693,7 @@ export default function App() {
         <button
           type="button"
           onClick={() => setDeviceModalOpen(true)}
-          className="pointer-events-auto flex items-center gap-1.5 rounded-xl bg-cyan-500 px-3 py-2 text-xs font-semibold text-slate-950 shadow-xl hover:bg-cyan-400"
+          className="pointer-events-auto inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground shadow-md transition-colors hover:bg-primary/90"
         >
           <Bluetooth className="h-3.5 w-3.5" />
           <span>设备 / 入库</span>

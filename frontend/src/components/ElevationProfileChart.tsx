@@ -243,23 +243,23 @@ export const ElevationProfileChart: React.FC<ElevationProfileChartProps> = ({
   };
 
   return (
-    <div className="pointer-events-auto rounded-2xl border border-slate-700/70 bg-slate-900/90 px-4 py-3 shadow-2xl backdrop-blur-xl">
+    <div className="pointer-events-auto rounded-lg border border-border bg-card/95 px-4 py-3 text-card-foreground shadow-xl backdrop-blur-md">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-3">
-          <span className="text-sm font-semibold text-slate-100">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-semibold tracking-tight text-foreground">
             {track.title}
           </span>
-          <span className="rounded-md bg-cyan-500/15 px-2 py-0.5 font-mono text-xs text-cyan-300">
+          <span className="inline-flex items-center rounded-md border border-border bg-secondary px-2 py-0.5 font-mono text-xs font-medium tabular-nums text-secondary-foreground">
             {(track.distance_m / 1000).toFixed(2)} km
           </span>
-          <span className="rounded-md bg-emerald-500/15 px-2 py-0.5 font-mono text-xs text-emerald-300">
+          <span className="inline-flex items-center rounded-md border border-border bg-secondary px-2 py-0.5 font-mono text-xs font-medium tabular-nums text-emerald-400">
             +{Math.round(track.elev_gain_m)} m
           </span>
-          <span className="hidden font-mono text-xs text-slate-400 sm:inline">
+          <span className="hidden font-mono text-xs tabular-nums text-muted-foreground sm:inline">
             {track.point_count.toLocaleString()} pts
           </span>
           {hoverSample && (
-            <span className="rounded-md border border-slate-700 bg-slate-800/90 px-2 py-0.5 font-mono text-xs text-slate-200">
+            <span className="rounded-md border border-border bg-muted px-2 py-0.5 font-mono text-xs tabular-nums text-foreground">
               {hoverSample.distKm.toFixed(2)} km · {hoverSample.eleM.toFixed(0)} m ·{" "}
               {hoverSample.speedKmh.toFixed(1)} km/h ·{" "}
               {formatTime(hoverSample.timestamp)}
@@ -268,17 +268,17 @@ export const ElevationProfileChart: React.FC<ElevationProfileChartProps> = ({
         </div>
 
         <div className="flex items-center gap-1.5">
-          <div className="flex items-center rounded-lg border border-slate-700/80 bg-slate-950/70 p-0.5 text-xs">
-            <Palette className="ml-1.5 mr-1 h-3.5 w-3.5 text-slate-400" />
+          <div className="inline-flex items-center rounded-md bg-muted p-0.5 text-xs">
+            <Palette className="ml-1.5 mr-1 h-3.5 w-3.5 text-muted-foreground" />
             {(["speed", "elevation", "track"] as TrackColorMode[]).map((m) => (
               <button
                 key={m}
                 type="button"
                 onClick={() => onChangeColorMode(m)}
-                className={`rounded-md px-2 py-1 text-[11px] font-medium transition ${
+                className={`rounded-sm px-2 py-1 text-[11px] font-medium transition-colors ${
                   colorMode === m
-                    ? "bg-cyan-500 text-slate-950"
-                    : "text-slate-300 hover:text-white"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
                 }`}
               >
                 {m === "speed" ? "速度" : m === "elevation" ? "海拔" : "纯色"}
@@ -289,25 +289,25 @@ export const ElevationProfileChart: React.FC<ElevationProfileChartProps> = ({
             type="button"
             onClick={onFitBounds}
             title="定位轨迹"
-            className="inline-flex items-center gap-1 rounded-lg border border-slate-700/80 bg-slate-800/80 px-2.5 py-1.5 text-xs text-slate-200 hover:bg-slate-700"
+            className="inline-flex h-7 items-center gap-1 rounded-md border border-border bg-background px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
           >
-            <Compass className="h-3.5 w-3.5 text-cyan-400" />
+            <Compass className="h-3.5 w-3.5 text-muted-foreground" />
             <span className="hidden sm:inline">定位</span>
           </button>
           <button
             type="button"
             onClick={onDownloadGpx}
             title="导出 GPX"
-            className="inline-flex items-center gap-1 rounded-lg border border-slate-700/80 bg-slate-800/80 px-2.5 py-1.5 text-xs text-slate-200 hover:bg-slate-700"
+            className="inline-flex h-7 items-center gap-1 rounded-md border border-border bg-background px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
           >
-            <Download className="h-3.5 w-3.5 text-emerald-400" />
+            <Download className="h-3.5 w-3.5 text-muted-foreground" />
             <span className="hidden sm:inline">GPX</span>
           </button>
           <button
             type="button"
             onClick={onClose}
             title="关闭图表"
-            className="rounded-lg border border-slate-700/80 bg-slate-800/80 p-1.5 text-slate-400 hover:text-white"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-background text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
             <X className="h-3.5 w-3.5" />
           </button>
@@ -321,7 +321,7 @@ export const ElevationProfileChart: React.FC<ElevationProfileChartProps> = ({
           onMouseLeave={handleMouseLeave}
           className="h-full w-full cursor-crosshair"
         />
-        <div className="pointer-events-none absolute left-12 top-0.5 flex gap-3 text-[10px] text-slate-400">
+        <div className="pointer-events-none absolute left-12 top-0.5 flex gap-3 text-[10px] text-muted-foreground">
           <span className="flex items-center gap-1">
             <span className="inline-block h-2 w-2 rounded-full bg-cyan-400" />
             海拔 (m)

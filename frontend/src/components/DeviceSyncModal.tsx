@@ -669,17 +669,19 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-      <div className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-slate-700/80 bg-slate-900 shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm">
+      <div className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-lg border border-border bg-card text-card-foreground shadow-2xl">
         {/* Modal Header */}
-        <div className="flex items-center justify-between border-b border-slate-800 px-5 py-3.5">
+        <div className="flex items-center justify-between border-b border-border px-5 py-3.5">
           <div className="flex items-center gap-3">
-            <Bluetooth className="h-5 w-5 text-cyan-400" />
+            <div className="flex h-8 w-8 items-center justify-center rounded-md border border-border bg-muted text-foreground">
+              <Bluetooth className="h-4 w-4" />
+            </div>
             <div>
-              <h2 className="text-sm font-bold text-slate-100">
+              <h2 className="text-sm font-semibold tracking-tight text-foreground">
                 设备同步与轨迹入库中心
               </h2>
-              <p className="text-[11px] text-slate-400">
+              <p className="text-xs text-muted-foreground">
                 状态: {statusMessage} {mtuSize ? `· MTU ${mtuSize}` : ""}
               </p>
             </div>
@@ -687,36 +689,38 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-1 border-b border-slate-800 bg-slate-950/60 px-5 py-2">
-          {(
-            [
-              ["upload", "轨迹上传入库", Upload],
-              ["ble", "蓝牙设备 & SD 卡", Bluetooth],
-              ["findmy", "Find My 密钥", Key],
-              ["logs", `运行日志 (${logEntries.length})`, Terminal]
-            ] as const
-          ).map(([id, label, Icon]) => (
-            <button
-              key={id}
-              type="button"
-              onClick={() => setActiveTab(id)}
-              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition ${
-                activeTab === id
-                  ? "bg-cyan-500 text-slate-950"
-                  : "text-slate-300 hover:bg-slate-800"
-              }`}
-            >
-              <Icon className="h-3.5 w-3.5" />
-              <span>{label}</span>
-            </button>
-          ))}
+        <div className="border-b border-border bg-muted/30 px-5 py-2">
+          <div className="inline-flex items-center rounded-md bg-muted p-1">
+            {(
+              [
+                ["upload", "轨迹上传入库", Upload],
+                ["ble", "蓝牙设备 & SD 卡", Bluetooth],
+                ["findmy", "Find My 密钥", Key],
+                ["logs", `运行日志 (${logEntries.length})`, Terminal]
+              ] as const
+            ).map(([id, label, Icon]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setActiveTab(id)}
+                className={`inline-flex items-center gap-1.5 rounded-sm px-3 py-1 text-xs font-medium transition-colors ${
+                  activeTab === id
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <Icon className="h-3.5 w-3.5" />
+                <span>{label}</span>
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Body */}
@@ -739,21 +743,21 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
                   e.preventDefault();
                   setIsDragOver(false);
                 }}
-                className={`flex flex-col items-center justify-center rounded-2xl border-2 border-dashed p-10 text-center transition ${
+                className={`flex flex-col items-center justify-center rounded-lg border border-dashed p-10 text-center transition-colors ${
                   isDragOver
-                    ? "border-cyan-400 bg-cyan-500/10"
-                    : "border-slate-700 bg-slate-950/60 hover:border-cyan-500/50"
+                    ? "border-foreground bg-accent/60"
+                    : "border-border bg-muted/20 hover:border-muted-foreground/60"
                 }`}
               >
-                <CloudUpload className="mb-3 h-10 w-10 text-cyan-400" />
-                <p className="text-sm font-medium text-slate-200">
-                  拖拽一个或多个 <code className="text-cyan-300">.gpx</code> /{" "}
-                  <code className="text-cyan-300">.gpz</code> 文件到此处
+                <CloudUpload className="mb-3 h-9 w-9 text-muted-foreground" />
+                <p className="text-sm font-medium text-foreground">
+                  拖拽一个或多个 <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">.gpx</code> /{" "}
+                  <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">.gpz</code> 文件到此处
                 </p>
-                <p className="mt-1 text-xs text-slate-400">
+                <p className="mt-1.5 text-xs text-muted-foreground">
                   浏览器端闭环 ETL：解析 XML → GPZ V2 压缩 → 光栅化 Z15/Z21 迷雾位图，Worker 零计算纯 I/O 落盘 R2 & D1
                 </p>
-                <label className="mt-4 cursor-pointer rounded-xl bg-cyan-500 px-4 py-2 text-xs font-semibold text-slate-950 hover:bg-cyan-400">
+                <label className="mt-4 inline-flex h-8 cursor-pointer items-center rounded-md bg-primary px-4 text-xs font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90">
                   {isUploading ? "正在处理..." : "选择本地文件"}
                   <input
                     type="file"
@@ -772,16 +776,16 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
               </div>
 
               {uploadQueue.length > 0 && (
-                <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-950/60 p-3">
-                  <div className="text-xs font-semibold text-slate-300">
+                <div className="space-y-2 rounded-lg border border-border bg-muted/20 p-3">
+                  <div className="text-xs font-medium text-foreground">
                     入库队列
                   </div>
                   {uploadQueue.map((item, idx) => (
                     <div
                       key={`${item.name}-${idx}`}
-                      className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2 text-xs"
+                      className="flex items-center justify-between rounded-md border border-border bg-background px-3 py-2 text-xs"
                     >
-                      <span className="font-mono text-slate-200">
+                      <span className="font-mono text-foreground">
                         {item.name}
                       </span>
                       <span
@@ -789,8 +793,8 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
                           item.ok === true
                             ? "text-emerald-400"
                             : item.ok === false
-                              ? "text-rose-400"
-                              : "text-cyan-300"
+                              ? "text-red-400"
+                              : "text-muted-foreground"
                         }
                       >
                         {item.status}
@@ -805,8 +809,8 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
           {activeTab === "ble" && (
             <div className="space-y-5">
               {!isBluetoothSupported && (
-                <div className="flex items-center gap-2 rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-xs text-rose-200">
-                  <AlertTriangle className="h-4 w-4 shrink-0 text-rose-400" />
+                <div className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/15 p-3 text-xs text-red-300">
+                  <AlertTriangle className="h-4 w-4 shrink-0 text-red-400" />
                   <span>
                     当前浏览器不支持 Web Bluetooth，请使用桌面/Android 版 Chrome 或 Edge。
                   </span>
@@ -819,7 +823,7 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
                   type="button"
                   onClick={handleConnect}
                   disabled={!isBluetoothSupported || isConnecting}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-cyan-500 px-3.5 py-2 text-xs font-semibold text-slate-950 hover:bg-cyan-400 disabled:opacity-50"
+                  className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 disabled:opacity-50"
                 >
                   <Power className="h-3.5 w-3.5" />
                   {isConnected ? "断开连接" : "连接设备"}
@@ -828,7 +832,7 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
                   type="button"
                   onClick={handleQueryStatus}
                   disabled={!isConnected}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-slate-200 hover:bg-slate-700 disabled:opacity-40"
+                  className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-xs font-medium text-foreground transition-colors hover:bg-accent disabled:opacity-40"
                 >
                   <Activity className="h-3.5 w-3.5" />
                   查询状态
@@ -837,7 +841,7 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
                   type="button"
                   onClick={handleAgnss}
                   disabled={!isConnected || isAgnssBusy}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-slate-200 hover:bg-slate-700 disabled:opacity-40"
+                  className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-xs font-medium text-foreground transition-colors hover:bg-accent disabled:opacity-40"
                 >
                   <Satellite className="h-3.5 w-3.5" />
                   同步 A-GNSS 星历
@@ -846,7 +850,7 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
                   type="button"
                   onClick={handleGpsWakeup}
                   disabled={!isConnected}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-slate-200 hover:bg-slate-700 disabled:opacity-40"
+                  className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-xs font-medium text-foreground transition-colors hover:bg-accent disabled:opacity-40"
                 >
                   <RefreshCw className="h-3.5 w-3.5" />
                   唤醒 GPS
