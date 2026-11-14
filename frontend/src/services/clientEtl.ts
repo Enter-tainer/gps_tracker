@@ -17,7 +17,8 @@ import {
   decodeGpsPoints,
   parseGpxXmlToPoints
 } from "./gpsCodec.ts";
-import { encodeGpsl0Points } from "./gpsl0/index.ts";
+import { decodeGpsl0ToPoints, encodeGpsl0Points } from "./gpsl0/index.ts";
+import { setTrackPointsInCache } from "./trackCache.ts";
 
 export type BrowserEtlInputFile =
   | File
@@ -236,4 +237,64 @@ export async function uploadPreparedTrackToServer(params: {
     throw new Error(json.error || `HTTP ${resp.status}`);
   }
   return json.track;
+}
+
+/**
+ * Browser-side full fog rebuild:
+ * Fetches all GPSL0 track blobs from D1 in a single ~1.1 MB binary bundle,
+ * decodes + rasterizes every track into a fresh Z15/Z21 fog pack,
+ * and PUTs the rebuilt `global-fog.bin` back to R2.
+ */
+export async function rebuildGlobalFogInBrowser(
+  onProgress?: (stage: string) => void
+): Promise<FogPackData> {
+  onProgress?.("拉取全量 GPSL0 轨迹真源...");
+  const resp = await fetch("/api/tracks/all-gpsl0");
+  if (!resp.ok) {
+    throw new Error(`HTTP ${resp.status}`);
+  }
+  const buf = await resp.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  if (bytes.byteLength < 4) {
+    throw new Error("Invalid all-gpsl0 bundle");
+  }
+
+  const view = new DataView(buf);
+  const decoder = new TextDecoder();
+  const count = view.getUint32(0, true);
+  let offset = 4;
+
+  const pack = createEmptyFogPack();
+  for (let i = 0; i < count; i++) {
+    const idLen = view.getUint16(offset, true);
+    offset += 2;
+    const trackId = decoder.decode(bytes.subarray(offset, offset + idLen));
+    offset += idLen;
+    const dataLen = view.getUint32(offset, true);
+    offset += 4;
+    const gpsl0Bytes = bytes.subarray(offset, offset + dataLen);
+    offset += dataLen;
+
+    const points = decodeGpsl0ToPoints(gpsl0Bytes);
+    setTrackPointsInCache(trackId, points);
+    const trackTiles = rasterizeTrackToFogTiles(points);
+    mergeTrackTilesIntoFogPack(pack, trackTiles, true);
+
+    if ((i + 1) % 15 === 0 || i + 1 === count) {
+      onProgress?.(`正在重算迷雾 (${i + 1}/${count})...`);
+      await new Promise((r) => setTimeout(r, 0));
+    }
+  }
+
+  onProgress?.("编码并写回 global-fog.bin...");
+  const fogBytes = encodeFogPack(pack);
+  const putResp = await fetch("/api/fog", {
+    method: "PUT",
+    headers: { "Content-Type": "application/octet-stream" },
+    body: toArrayBuffer(fogBytes)
+  });
+  if (!putResp.ok) {
+    throw new Error(`PUT /api/fog failed: HTTP ${putResp.status}`);
+  }
+  return pack;
 }

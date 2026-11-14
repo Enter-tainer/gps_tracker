@@ -39,6 +39,9 @@ const EMPTY_STATS: BootstrapStats = {
 
 export default function App() {
   const [route, setRoute] = useState<AppRoute>(readRoute);
+  const [hasVisitedMap, setHasVisitedMap] = useState<boolean>(
+    () => readRoute() === "/map"
+  );
   const [tracks, setTracks] = useState<TrackMetadata[]>([]);
   const [stats, setStats] = useState<BootstrapStats>(EMPTY_STATS);
   const [fogPack, setFogPack] = useState<FogPackData | null>(null);
@@ -52,11 +55,18 @@ export default function App() {
     if (window.location.pathname !== nextRoute) {
       window.history.pushState(null, "", nextRoute);
     }
+    if (nextRoute === "/map") {
+      setHasVisitedMap(true);
+    }
     setRoute(nextRoute);
   }, []);
 
   useEffect(() => {
-    const onPopState = () => setRoute(readRoute());
+    const onPopState = () => {
+      const next = readRoute();
+      if (next === "/map") setHasVisitedMap(true);
+      setRoute(next);
+    };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
@@ -73,6 +83,16 @@ export default function App() {
       return empty;
     }
   }, [fogPack]);
+
+  const handleFogRebuilt = useCallback((rebuiltPack: FogPackData) => {
+    setFogPack(rebuiltPack);
+    setStats((prev) => ({
+      ...prev,
+      visitedTilesZ15: rebuiltPack.tileCount,
+      exploredCellsZ21: rebuiltPack.totalCells,
+      exploredAreaKm2: rebuiltPack.exploredAreaKm2
+    }));
+  }, []);
 
   const handleTrackUploaded = useCallback(
     (track: TrackMetadata, points: GpsPoint[], updatedFogPack: FogPackData) => {
@@ -149,43 +169,51 @@ export default function App() {
     [navigate]
   );
 
-  if (route === "/map") {
-    return (
-      <Suspense
-        fallback={
-          <div className="flex h-screen w-screen items-center justify-center bg-background text-sm text-muted-foreground">
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            <span>正在加载地图引擎...</span>
-          </div>
-        }
-      >
-        <MapWorkspace
-          tracks={tracks}
-          setTracks={setTracks}
-          stats={stats}
-          setStats={setStats}
-          fogPack={fogPack}
-          setFogPack={setFogPack}
-          loadedTrackPoints={loadedTrackPoints}
-          setLoadedTrackPoints={setLoadedTrackPoints}
-          selectedTrackIds={selectedTrackIds}
-          setSelectedTrackIds={setSelectedTrackIds}
-          hasBootstrapped={hasBootstrapped}
-          setHasBootstrapped={setHasBootstrapped}
-          onNavigateDevice={() => navigate("/")}
-        />
-      </Suspense>
-    );
-  }
-
   return (
-    <DeviceSyncModal
-      variant="page"
-      onOpenMap={() => navigate("/map")}
-      fogPack={fogPack}
-      ensureFogPack={ensureFogPack}
-      onTrackUploaded={handleTrackUploaded}
-      onPreviewLocalTrack={handlePreviewLocalTrack}
-    />
+    <>
+      {/* Keep DeviceSyncModal mounted across route switches so Web Bluetooth stays connected */}
+      <div className={route === "/" ? "contents" : "hidden"}>
+        <DeviceSyncModal
+          variant="page"
+          onOpenMap={() => navigate("/map")}
+          fogPack={fogPack}
+          ensureFogPack={ensureFogPack}
+          onTrackUploaded={handleTrackUploaded}
+          onPreviewLocalTrack={handlePreviewLocalTrack}
+          onFogRebuilt={handleFogRebuilt}
+        />
+      </div>
+
+      {/* Lazy-load MapWorkspace only after /map is visited */}
+      {hasVisitedMap && (
+        <div className={route === "/map" ? "contents" : "hidden"}>
+          <Suspense
+            fallback={
+              <div className="flex h-screen w-screen items-center justify-center bg-background text-sm text-muted-foreground">
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                <span>正在加载地图引擎...</span>
+              </div>
+            }
+          >
+            <MapWorkspace
+              tracks={tracks}
+              setTracks={setTracks}
+              stats={stats}
+              setStats={setStats}
+              fogPack={fogPack}
+              setFogPack={setFogPack}
+              loadedTrackPoints={loadedTrackPoints}
+              setLoadedTrackPoints={setLoadedTrackPoints}
+              selectedTrackIds={selectedTrackIds}
+              setSelectedTrackIds={setSelectedTrackIds}
+              hasBootstrapped={hasBootstrapped}
+              setHasBootstrapped={setHasBootstrapped}
+              onNavigateDevice={() => navigate("/")}
+              onFogRebuilt={handleFogRebuilt}
+            />
+          </Suspense>
+        </div>
+      )}
+    </>
   );
 }

@@ -205,6 +205,72 @@ async function handleGetTrackGpsl0(env: Env, id: string): Promise<Response> {
   });
 }
 
+async function handleGetAllTracksGpsl0(env: Env): Promise<Response> {
+  const { results } = await env.TRACKS_DB.prepare(
+    `SELECT track_id, data FROM track_blobs ORDER BY track_id ASC`
+  ).all<{ track_id: string; data: unknown }>();
+
+  const encoder = new TextEncoder();
+  const entries: Array<{ idBytes: Uint8Array; dataBytes: Uint8Array }> = [];
+  let totalBytes = 4;
+
+  for (const row of results ?? []) {
+    const dataBytes = toBlobBytes(row.data);
+    if (!dataBytes) continue;
+    const idBytes = encoder.encode(row.track_id);
+    entries.push({ idBytes, dataBytes });
+    totalBytes += 2 + idBytes.byteLength + 4 + dataBytes.byteLength;
+  }
+
+  const out = new Uint8Array(totalBytes);
+  const view = new DataView(out.buffer);
+  view.setUint32(0, entries.length, true);
+  let offset = 4;
+  for (const { idBytes, dataBytes } of entries) {
+    view.setUint16(offset, idBytes.byteLength, true);
+    offset += 2;
+    out.set(idBytes, offset);
+    offset += idBytes.byteLength;
+    view.setUint32(offset, dataBytes.byteLength, true);
+    offset += 4;
+    out.set(dataBytes, offset);
+    offset += dataBytes.byteLength;
+  }
+
+  return new Response(out as unknown as BodyInit, {
+    headers: {
+      "Content-Type": "application/octet-stream",
+      "Cache-Control": "no-store"
+    }
+  });
+}
+
+async function handlePutFog(request: Request, env: Env): Promise<Response> {
+  const buf = await request.arrayBuffer();
+  if (buf.byteLength < 16) {
+    return jsonResponse({ error: "Invalid fog binary payload" }, 400);
+  }
+  const view = new DataView(buf);
+  if (
+    view.getUint8(0) !== 0x46 ||
+    view.getUint8(1) !== 0x47 ||
+    view.getUint8(2) !== 0x50 ||
+    view.getUint8(3) !== 0x31
+  ) {
+    return jsonResponse({ error: "Invalid FGP1 magic header" }, 400);
+  }
+
+  await env.TRACKS_BUCKET.put(FOG_KEY, buf, {
+    httpMetadata: { contentType: "application/octet-stream" }
+  });
+
+  return jsonResponse({
+    ok: true,
+    visitedTilesZ15: view.getUint32(8, true),
+    exploredCellsZ21: view.getUint32(12, true)
+  });
+}
+
 async function handleSpatialQuery(request: Request, env: Env): Promise<Response> {
   let body: { tileKeys?: unknown };
   try {
@@ -423,8 +489,14 @@ export default {
     if (pathname === "/api/fog" && request.method === "GET") {
       return handleGetFog(request, env);
     }
+    if (pathname === "/api/fog" && request.method === "PUT") {
+      return handlePutFog(request, env);
+    }
     if (pathname === "/api/query-spatial" && request.method === "POST") {
       return handleSpatialQuery(request, env);
+    }
+    if (pathname === "/api/tracks/all-gpsl0" && request.method === "GET") {
+      return handleGetAllTracksGpsl0(env);
     }
     if (pathname === "/api/tracks/upload" && request.method === "POST") {
       return handleUploadTrack(request, env);
