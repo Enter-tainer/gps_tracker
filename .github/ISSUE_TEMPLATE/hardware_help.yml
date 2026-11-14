@@ -1,0 +1,36 @@
+name: 🔧 硬件 / 装配问题
+description: 打样、焊接、装壳、供电相关的问题
+labels: ["hardware"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        装配前请先看 [docs/hardware/assembly.md](https://github.com/Enter-tainer/gps_tracker/blob/master/docs/hardware/assembly.md)，
+        常见问题（屏幕不亮、扫不到 BLE、GPS 不定位、电量异常）那里有排查表。
+  - type: dropdown
+    id: stage
+    attributes:
+      label: 卡在哪一步
+      options:
+        - 打样 / 下单（Gerber、BOM）
+        - 焊接（虚焊、连锡、LGA 回流）
+        - 上电（短路、电压不对、发热）
+        - 刷固件 / bootloader
+        - 装壳 / 结构不匹配
+        - 实际使用（续航、定位、存储）
+    validations:
+      required: true
+  - type: textarea
+    id: detail
+    attributes:
+      label: 具体情况
+      description: 板子批次、焊接方式、测量到的电压/电流、照片（如果方便）
+    validations:
+      required: true
+  - type: textarea
+    id: tried
+    attributes:
+      label: 已经排查过的
+      placeholder: |
+        - 测过 3V3 对地无短路
+        - 换了 OLED 模块仍不亮

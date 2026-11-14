@@ -1,0 +1,60 @@
+name: 🐛 Bug 报告 / Bug report
+description: 固件、前端或工具链的行为不符合预期
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢报告！请**不要**在这里粘贴 Find My 密钥、`auth.json` 或含真实位置的轨迹文件。
+        安全问题请改用 [SECURITY.md](https://github.com/Enter-tainer/gps_tracker/blob/master/SECURITY.md) 里的私密渠道。
+  - type: dropdown
+    id: component
+    attributes:
+      label: 涉及组件
+      options:
+        - 固件 firmware/
+        - 网页上位机 frontend/
+        - Python 工具 tools/ (gt)
+        - 硬件 hardware/
+        - 文档 docs/
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: 版本 / commit
+      description: 固件版本、前端部署地址或 `git log -1 --oneline` 的输出
+      placeholder: "4846ae5"
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 现象
+      description: 发生了什么？期望是什么？
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. 连接设备
+        2. 点击「...」
+        3. 看到 ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志 / 截图
+      description: |
+        固件日志：`DEFMT_LOG=info cargo run --release`（RTT）或 USB 串口日志。
+        浏览器：F12 Console 里的报错。
+      render: text
+  - type: input
+    id: hardware
+    attributes:
+      label: 硬件版本
+      description: PCB 版本、电芯、外壳（如果与硬件相关）
+      placeholder: "v1.0 / 21700 / slim v1"

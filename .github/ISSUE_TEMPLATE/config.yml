@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 🔒 安全漏洞（私密报告）
+    url: https://github.com/Enter-tainer/gps_tracker/security/advisories/new
+    about: 请勿公开披露；密钥泄露、越权访问、隐私问题走这里
+  - name: 📖 文档与协议
+    url: https://github.com/Enter-tainer/gps_tracker/tree/master/docs
+    about: 状态机、存储格式、BLE 协议、硬件引脚都在这里
