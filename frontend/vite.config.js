@@ -38,8 +38,8 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['icons/favicon.ico', 'icons/apple-touch-icon-180x180.png', 'icons/icon-192.png', 'icons/icon-512.png'],
       manifest: {
-        name: 'Atlas Fog — Personal GPS Archive',
-        short_name: 'AtlasFog',
+        name: 'Traceveil — Personal GPS Archive',
+        short_name: 'Traceveil',
         description: 'Personal GPS Fog of War visualizer and BLE tracker console',
         theme_color: '#090d16',
         background_color: '#090d16',
@@ -66,7 +66,8 @@ export default defineConfig({
         dir: 'ltr'
       },
       workbox: {
-        globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,mjs}'],
+        navigateFallback: '/index.html',
         navigateFallbackDenylist: [/^\/api\//],
         runtimeCaching: [
           {
