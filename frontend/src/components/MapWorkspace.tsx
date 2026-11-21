@@ -20,6 +20,7 @@ import { ElevationProfileChart } from "./ElevationProfileChart.tsx";
 import { FogMapView } from "./FogMapView.tsx";
 import type { FitPadding, SpatialOverlayShape } from "./FogMapView.tsx";
 import { LayerSettingsPanel } from "./LayerSettingsPanel.tsx";
+import { RegionInfoCard } from "./RegionInfoCard.tsx";
 import { TrackSidebar } from "./TrackSidebar.tsx";
 import type { MobileSheetSnap } from "./TrackSidebar.tsx";
 import { rebuildGlobalFogInBrowser } from "../services/clientEtl.ts";
@@ -37,11 +38,15 @@ import type {
   BootstrapResponse,
   BootstrapStats,
   FogPackData,
+  FogRenderStyle,
   GpsPoint,
+  LodTier,
   MapVisualizationMode,
+  SelectedRegionInfo,
   SpatialQueryMatch,
   TrackColorMode,
-  TrackMetadata
+  TrackMetadata,
+  VisitedRegion
 } from "../types/track.ts";
 import { getZ15TilesForBbox } from "../utils/coordTransform.ts";
 import { BASE_MAP_OPTIONS } from "../utils/styleBase.ts";
@@ -49,6 +54,8 @@ import { BASE_MAP_OPTIONS } from "../utils/styleBase.ts";
 export type MapWorkspaceProps = {
   tracks: TrackMetadata[];
   setTracks: React.Dispatch<React.SetStateAction<TrackMetadata[]>>;
+  visitedRegions: VisitedRegion[];
+  setVisitedRegions: React.Dispatch<React.SetStateAction<VisitedRegion[]>>;
   stats: BootstrapStats;
   setStats: React.Dispatch<React.SetStateAction<BootstrapStats>>;
   fogPack: FogPackData | null;
@@ -62,7 +69,15 @@ export type MapWorkspaceProps = {
   hasBootstrapped: boolean;
   setHasBootstrapped: React.Dispatch<React.SetStateAction<boolean>>;
   onNavigateDevice: () => void;
-  onFogRebuilt: (pack: FogPackData) => void;
+  onFogRebuilt: (pack: FogPackData, regions?: VisitedRegion[]) => void;
+};
+
+const LOD_TIER_LABELS: Record<LodTier, string> = {
+  l0: "国家级热力",
+  l1: "省·州级热力",
+  l2: "地市级热力",
+  l3: "区·县级热力",
+  fine: "街道精准迷雾"
 };
 
 const MODE_TABS = [
@@ -75,6 +90,8 @@ const MODE_TABS = [
 export default function MapWorkspace({
   tracks,
   setTracks,
+  visitedRegions,
+  setVisitedRegions,
   stats,
   setStats,
   fogPack,
@@ -95,6 +112,7 @@ export default function MapWorkspace({
   const [rebuildStatus, setRebuildStatus] = useState<string | null>(null);
 
   const [mode, setMode] = useState<MapVisualizationMode>("fog");
+  const [fogStyle, setFogStyle] = useState<FogRenderStyle>("hybrid");
   const [baseMapId, setBaseMapId] = useState<BaseMapId>("openfreemap-liberty");
   const [useGcj02, setUseGcj02] = useState(false);
   const [fogOpacity, setFogOpacity] = useState(0.8);
@@ -105,6 +123,11 @@ export default function MapWorkspace({
   const [mobileSheetSnap, setMobileSheetSnap] =
     useState<MobileSheetSnap>("closed");
   const [elevationMinimized, setElevationMinimized] = useState(false);
+
+  const [selectedRegion, setSelectedRegion] =
+    useState<SelectedRegionInfo | null>(null);
+  const [activeLodTier, setActiveLodTier] = useState<LodTier>("l1");
+  const [loadingRegionTracks, setLoadingRegionTracks] = useState(false);
 
   const [loadingTrackId, setLoadingTrackId] = useState<string | null>(null);
   const [trackColorMode, setTrackColorMode] =
@@ -146,6 +169,9 @@ export default function MapWorkspace({
         const serverTracks = boot.tracks ?? [];
         return [...previewOnly, ...serverTracks];
       });
+      if (Array.isArray(boot.regions)) {
+        setVisitedRegions(boot.regions);
+      }
       if (fog) {
         setFogPack(fog);
         setStats({
@@ -246,6 +272,7 @@ export default function MapWorkspace({
   const handleSelectTrack = useCallback(
     (trackId: string, multi: boolean) => {
       setHoverPoint(null);
+      setSelectedRegion(null);
       setSelectedTrackIds((prev) => {
         if (!multi) {
           return prev.length === 1 && prev[0] === trackId ? [] : [trackId];
@@ -256,6 +283,81 @@ export default function MapWorkspace({
       });
     },
     [setSelectedTrackIds]
+  );
+
+  const handleFitBbox = useCallback((bbox: [number, number, number, number]) => {
+    setFitBoundsTrigger((prev) => ({
+      bbox,
+      nonce: (prev?.nonce ?? 0) + 1
+    }));
+  }, []);
+
+  const handleSelectRegionFromMap = useCallback(
+    (info: SelectedRegionInfo | null) => {
+      setSelectedRegion(info);
+      if (info) {
+        setSelectedTrackIds([]);
+        setHoverPoint(null);
+      }
+    },
+    [setSelectedTrackIds]
+  );
+
+  const handleSelectRegionFromList = useCallback(
+    (region: VisitedRegion) => {
+      setMode("fog");
+      setSelectedTrackIds([]);
+      setHoverPoint(null);
+      setSelectedRegion({
+        rid: region.rid,
+        level: region.level,
+        nameZh: region.nameZh,
+        nameEn: region.nameEn,
+        country: region.country,
+        directChildCount: region.directChildCount,
+        leafChildCount: region.leafChildCount,
+        areaKm2: region.areaKm2,
+        bbox: region.bbox,
+        visited: region
+      });
+      handleFitBbox(region.bbox);
+    },
+    [handleFitBbox, setSelectedTrackIds]
+  );
+
+  const handleLoadRegionTracks = useCallback(
+    async (rid: number) => {
+      setLoadingRegionTracks(true);
+      try {
+        const resp = await fetch(`/api/regions/tracks?rids=${rid}`);
+        if (!resp.ok) return;
+        const json = (await resp.json()) as { trackIds?: string[] };
+        const ids = Array.isArray(json.trackIds) ? json.trackIds : [];
+        if (ids.length === 0) return;
+
+        setSelectedRegion(null);
+        setHoverPoint(null);
+        setSelectedTrackIds(ids);
+
+        const matched = tracks.filter((t) => ids.includes(t.id));
+        if (matched.length > 0) {
+          let minLon = 180;
+          let maxLon = -180;
+          let minLat = 90;
+          let maxLat = -90;
+          for (const t of matched) {
+            if (t.min_lon < minLon) minLon = t.min_lon;
+            if (t.max_lon > maxLon) maxLon = t.max_lon;
+            if (t.min_lat < minLat) minLat = t.min_lat;
+            if (t.max_lat > maxLat) maxLat = t.max_lat;
+          }
+          handleFitBbox([minLon, minLat, maxLon, maxLat]);
+        }
+      } finally {
+        setLoadingRegionTracks(false);
+      }
+    },
+    [handleFitBbox, setSelectedTrackIds, tracks]
   );
 
   const handleFitTrackBounds = useCallback((track: TrackMetadata) => {
@@ -447,23 +549,32 @@ export default function MapWorkspace({
     if (rebuildStatus) return;
     setRebuildStatus("准备重刷...");
     try {
-      const rebuilt = await rebuildGlobalFogInBrowser((msg) =>
-        setRebuildStatus(msg)
+      let rebuiltRegions: VisitedRegion[] | undefined;
+      const trackDatesById = new Map(tracks.map((t) => [t.id, t.date]));
+      const rebuilt = await rebuildGlobalFogInBrowser(
+        (msg) => setRebuildStatus(msg),
+        (regions) => {
+          rebuiltRegions = regions;
+        },
+        trackDatesById
       );
-      onFogRebuilt(rebuilt);
+      onFogRebuilt(rebuilt, rebuiltRegions);
     } catch (err) {
       console.error("Rebuild fog failed:", err);
       setBootError(err instanceof Error ? err.message : String(err));
     } finally {
       setRebuildStatus(null);
     }
-  }, [onFogRebuilt, rebuildStatus]);
+  }, [onFogRebuilt, rebuildStatus, tracks]);
+
+  const hasRegionCard = Boolean(selectedRegion && !hasElevationCard);
+  const hasBottomCard = hasElevationCard || hasRegionCard;
 
   const fitPadding = useMemo<FitPadding>(() => {
     if (isMobile) {
       const vh = typeof window !== "undefined" ? window.innerHeight : 700;
       return {
-        top: mode === "spatial" ? 136 : 72,
+        top: mode === "spatial" ? 136 : 86,
         bottom:
           mobileSheetSnap === "half"
             ? Math.round(vh * 0.52)
@@ -471,14 +582,16 @@ export default function MapWorkspace({
               ? elevationMinimized
                 ? 136
                 : 236
-              : 96,
+              : hasRegionCard
+                ? 192
+                : 96,
         left: 24,
         right: 24
       };
     }
     return {
       top: 76,
-      bottom: hasElevationCard ? 210 : 64,
+      bottom: hasElevationCard ? 210 : hasRegionCard ? 164 : 64,
       left: desktopSidebarOpen ? 372 : 48,
       right: 64
     };
@@ -487,6 +600,7 @@ export default function MapWorkspace({
     mode,
     mobileSheetSnap,
     hasElevationCard,
+    hasRegionCard,
     elevationMinimized,
     desktopSidebarOpen
   ]);
@@ -496,7 +610,9 @@ export default function MapWorkspace({
       ? elevationMinimized
         ? "128px"
         : "232px"
-      : "78px"
+      : hasRegionCard
+        ? "190px"
+        : "78px"
     : "12px";
 
   const clearSpatial = useCallback(() => {
@@ -515,14 +631,17 @@ export default function MapWorkspace({
       }
       className="relative h-viewport w-screen overflow-hidden bg-background text-foreground"
     >
-      {/* Full-viewport MapLibre + 60fps Fog Canvas */}
+      {/* Full-viewport MapLibre + 60fps Fog + Global Regions LOD */}
       <FogMapView
         mode={mode}
         baseMapId={baseMapId}
         useGcj02={useGcj02}
         fogPack={fogPack}
+        fogStyle={fogStyle}
         fogOpacity={fogOpacity}
         fogGlow={fogGlow}
+        visitedRegions={visitedRegions}
+        selectedRegionRid={selectedRegion?.rid ?? null}
         tracks={tracks}
         selectedTrackIds={selectedTrackIds}
         loadedTrackPoints={loadedTrackPoints}
@@ -535,11 +654,13 @@ export default function MapWorkspace({
         fitBoundsTrigger={fitBoundsTrigger}
         fitPadding={fitPadding}
         onSelectTrack={handleSelectTrack}
+        onSelectRegion={handleSelectRegionFromMap}
+        onActiveLodChange={setActiveLodTier}
         onSpatialPointQuery={handleSpatialPointQuery}
         onSpatialBboxQuery={handleSpatialBboxQuery}
       />
 
-      {/* Track Archive (Desktop Left Sidebar / Mobile Bottom Sheet) */}
+      {/* Track & Regions Archive (Desktop Left Sidebar / Mobile Bottom Sheet) */}
       <TrackSidebar
         isOpen={sidebarOpen}
         isMobile={isMobile}
@@ -548,6 +669,8 @@ export default function MapWorkspace({
         onToggleOpen={() => setDesktopSidebarOpen((v) => !v)}
         stats={stats}
         tracks={tracks}
+        visitedRegions={visitedRegions}
+        selectedRegionRid={selectedRegion?.rid ?? null}
         selectedTrackIds={selectedTrackIds}
         loadingTrackId={loadingTrackId}
         mode={mode}
@@ -565,6 +688,7 @@ export default function MapWorkspace({
         onChangeSpatialDrawTool={setSpatialDrawTool}
         onClearSpatial={clearSpatial}
         onSelectTrack={handleSelectTrack}
+        onSelectRegionFromList={handleSelectRegionFromList}
         onClearSelection={() => {
           setSelectedTrackIds([]);
           setHoverPoint(null);
@@ -629,14 +753,38 @@ export default function MapWorkspace({
             </div>
           </div>
 
-          {/* Mobile Status / Error & Spatial HUD Stack */}
-          {(isBootstrapping || bootError || mode === "spatial") && (
+          {/* Mobile Status / Error, LOD Legend & Spatial HUD Stack */}
+          {(isBootstrapping ||
+            bootError ||
+            mode === "spatial" ||
+            (mode === "fog" && fogStyle !== "fine")) && (
             <div
               style={{
                 top: "calc(max(0.75rem, var(--safe-top)) + 48px)"
               }}
               className="pointer-events-none absolute inset-x-3 z-20 flex flex-col gap-2"
             >
+              {mode === "fog" && fogStyle !== "fine" && (
+                <div className="pointer-events-auto inline-flex items-center gap-2 self-start rounded-full border border-border/85 bg-background/85 px-2.5 py-1 text-[11px] text-foreground shadow-md backdrop-blur-md">
+                  <span className="font-medium text-cyan-300">
+                    {LOD_TIER_LABELS[activeLodTier]}
+                  </span>
+                  {activeLodTier !== "fine" && (
+                    <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                      <span>冷</span>
+                      <span
+                        className="h-1.5 w-12 rounded-full"
+                        style={{
+                          background:
+                            "linear-gradient(90deg, #0284c7, #06b6d4, #10b981, #facc15, #f97316, #f43f5e)"
+                        }}
+                      />
+                      <span>热</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {isBootstrapping && (
                 <div className="pointer-events-auto inline-flex items-center gap-1.5 self-center rounded-lg border border-border bg-background/90 px-3 py-1.5 text-xs text-muted-foreground shadow-md backdrop-blur-md">
                   <Loader2 className="h-3.5 w-3.5 animate-spin text-foreground" />
@@ -793,6 +941,25 @@ export default function MapWorkspace({
             </div>
           )}
 
+          {/* Mobile Region Detail Card */}
+          {hasRegionCard && selectedRegion && (
+            <div
+              style={{
+                bottom: "calc(72px + max(0.5rem, var(--safe-bottom)))"
+              }}
+              className="pointer-events-none absolute inset-x-2.5 z-30"
+            >
+              <RegionInfoCard
+                region={selectedRegion}
+                isMobile={true}
+                loadingTracks={loadingRegionTracks}
+                onFitBounds={handleFitBbox}
+                onLoadRegionTracks={handleLoadRegionTracks}
+                onClose={() => setSelectedRegion(null)}
+              />
+            </div>
+          )}
+
           {/* Mobile Bottom 5-Tab Mode Dock */}
           <nav
             aria-label="地图模式导航"
@@ -846,6 +1013,8 @@ export default function MapWorkspace({
             isOpen={showLayerMenu}
             isMobile={true}
             onClose={() => setShowLayerMenu(false)}
+            fogStyle={fogStyle}
+            onChangeFogStyle={setFogStyle}
             fogOpacity={fogOpacity}
             onChangeFogOpacity={setFogOpacity}
             fogGlow={fogGlow}
@@ -860,97 +1029,144 @@ export default function MapWorkspace({
         </>
       ) : (
         <>
-          {/* Desktop Top Floating Mode & Basemap Bar */}
-          <div className="pointer-events-none absolute right-3 top-3 z-20 flex max-w-[calc(100vw-24px)] flex-wrap items-center justify-end gap-2">
-            {isBootstrapping && (
-              <div className="pointer-events-auto flex items-center gap-1.5 rounded-md border border-border bg-background/90 px-3 py-1.5 text-xs text-muted-foreground shadow-md backdrop-blur-md">
-                <Loader2 className="h-3.5 w-3.5 animate-spin text-foreground" />
-                <span>加载足迹与迷雾...</span>
+          {/* Desktop Top Bar: LOD Legend Pill + Floating Mode & Basemap Actions */}
+          <div
+            className={`pointer-events-none absolute right-3 top-3 z-20 flex flex-wrap items-center justify-between gap-2 transition-all ${
+              desktopSidebarOpen ? "left-[364px]" : "left-[144px]"
+            }`}
+          >
+            {mode === "fog" && fogStyle !== "fine" && (
+              <div className="pointer-events-auto inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border bg-background/90 px-2.5 py-1.5 text-[11px] shadow-md backdrop-blur-md">
+                <span className="font-medium text-cyan-300">
+                  {LOD_TIER_LABELS[activeLodTier]}
+                </span>
+                {activeLodTier !== "fine" && (
+                  <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                    <span>冷</span>
+                    <span
+                      className="h-1.5 w-12 rounded-full"
+                      style={{
+                        background:
+                          "linear-gradient(90deg, #0284c7, #06b6d4, #10b981, #facc15, #f97316, #f43f5e)"
+                      }}
+                    />
+                    <span>热</span>
+                  </div>
+                )}
               </div>
             )}
 
-            {bootError && (
-              <div className="pointer-events-auto flex items-center gap-2 rounded-md border border-destructive/50 bg-destructive/15 px-3 py-1.5 text-xs text-red-300 shadow-md backdrop-blur-md">
-                <span>数据加载失败: {bootError}</span>
-                <button
-                  type="button"
-                  onClick={loadBootstrapAndFog}
-                  className="rounded bg-destructive/30 px-1.5 py-0.5 text-[11px] font-medium text-red-100 hover:bg-destructive/50"
-                >
-                  重试
-                </button>
+            <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+              {isBootstrapping && (
+                <div className="pointer-events-auto flex items-center gap-1.5 rounded-md border border-border bg-background/90 px-3 py-1.5 text-xs text-muted-foreground shadow-md backdrop-blur-md">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-foreground" />
+                  <span>加载足迹与迷雾...</span>
+                </div>
+              )}
+
+              {bootError && (
+                <div className="pointer-events-auto flex items-center gap-2 rounded-md border border-destructive/50 bg-destructive/15 px-3 py-1.5 text-xs text-red-300 shadow-md backdrop-blur-md">
+                  <span>数据加载失败: {bootError}</span>
+                  <button
+                    type="button"
+                    onClick={loadBootstrapAndFog}
+                    className="rounded bg-destructive/30 px-1.5 py-0.5 text-[11px] font-medium text-red-100 hover:bg-destructive/50"
+                  >
+                    重试
+                  </button>
+                </div>
+              )}
+
+              {/* Visualization Mode Switcher */}
+              <div className="pointer-events-auto inline-flex items-center rounded-lg border border-border bg-background/90 p-1 shadow-md backdrop-blur-md">
+                {MODE_TABS.map(({ id, desktopLabel, Icon }) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setMode(id)}
+                    className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                      mode === id
+                        ? "bg-primary text-primary-foreground shadow-sm"
+                        : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                    }`}
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                    <span>{desktopLabel}</span>
+                  </button>
+                ))}
               </div>
-            )}
 
-            {/* Visualization Mode Switcher */}
-            <div className="pointer-events-auto inline-flex items-center rounded-lg border border-border bg-background/90 p-1 shadow-md backdrop-blur-md">
-              {MODE_TABS.map(({ id, desktopLabel, Icon }) => (
+              {/* Fog Controls & Layer Switcher */}
+              <div className="pointer-events-auto relative">
                 <button
-                  key={id}
                   type="button"
-                  onClick={() => setMode(id)}
-                  className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                    mode === id
-                      ? "bg-primary text-primary-foreground shadow-sm"
-                      : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                  }`}
+                  onClick={() => setShowLayerMenu((v) => !v)}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background/90 px-3 text-xs font-medium text-foreground shadow-md backdrop-blur-md transition-colors hover:bg-accent hover:text-accent-foreground"
                 >
-                  <Icon className="h-3.5 w-3.5" />
-                  <span>{desktopLabel}</span>
+                  <Layers className="h-3.5 w-3.5 text-muted-foreground" />
+                  <span>底图与迷雾</span>
+                  <SlidersHorizontal className="h-3 w-3 text-muted-foreground" />
                 </button>
-              ))}
-            </div>
 
-            {/* Fog Controls & Layer Switcher */}
-            <div className="pointer-events-auto relative">
+                <LayerSettingsPanel
+                  isOpen={showLayerMenu}
+                  isMobile={false}
+                  onClose={() => setShowLayerMenu(false)}
+                  fogStyle={fogStyle}
+                  onChangeFogStyle={setFogStyle}
+                  fogOpacity={fogOpacity}
+                  onChangeFogOpacity={setFogOpacity}
+                  fogGlow={fogGlow}
+                  onChangeFogGlow={setFogGlow}
+                  rebuildStatus={rebuildStatus}
+                  onRebuildFog={handleRebuildFog}
+                  useGcj02={useGcj02}
+                  onToggleGcj02={() => setUseGcj02((v) => !v)}
+                  baseMapId={baseMapId}
+                  onChangeBaseMap={handleChangeBaseMap}
+                />
+              </div>
+
+              {/* Fit All Tracks */}
               <button
                 type="button"
-                onClick={() => setShowLayerMenu((v) => !v)}
-                className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background/90 px-3 text-xs font-medium text-foreground shadow-md backdrop-blur-md transition-colors hover:bg-accent hover:text-accent-foreground"
+                onClick={handleFitAllTracks}
+                title="全览所有足迹"
+                className="pointer-events-auto inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background/90 px-3 text-xs font-medium text-foreground shadow-md backdrop-blur-md transition-colors hover:bg-accent hover:text-accent-foreground"
               >
-                <Layers className="h-3.5 w-3.5 text-muted-foreground" />
-                <span>底图与迷雾</span>
-                <SlidersHorizontal className="h-3 w-3 text-muted-foreground" />
+                <Compass className="h-3.5 w-3.5 text-muted-foreground" />
+                <span>全局视野</span>
               </button>
 
-              <LayerSettingsPanel
-                isOpen={showLayerMenu}
+              {/* Back to Device / Ingest Console (/) */}
+              <button
+                type="button"
+                onClick={onNavigateDevice}
+                className="pointer-events-auto inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground shadow-md transition-colors hover:bg-primary/90"
+              >
+                <Bluetooth className="h-3.5 w-3.5" />
+                <span>设备 / 入库</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Desktop Bottom Region Detail Card */}
+          {hasRegionCard && selectedRegion && (
+            <div
+              className={`pointer-events-none absolute bottom-3 right-14 z-30 max-w-md transition-all ${
+                desktopSidebarOpen ? "left-[368px]" : "left-3"
+              }`}
+            >
+              <RegionInfoCard
+                region={selectedRegion}
                 isMobile={false}
-                onClose={() => setShowLayerMenu(false)}
-                fogOpacity={fogOpacity}
-                onChangeFogOpacity={setFogOpacity}
-                fogGlow={fogGlow}
-                onChangeFogGlow={setFogGlow}
-                rebuildStatus={rebuildStatus}
-                onRebuildFog={handleRebuildFog}
-                useGcj02={useGcj02}
-                onToggleGcj02={() => setUseGcj02((v) => !v)}
-                baseMapId={baseMapId}
-                onChangeBaseMap={handleChangeBaseMap}
+                loadingTracks={loadingRegionTracks}
+                onFitBounds={handleFitBbox}
+                onLoadRegionTracks={handleLoadRegionTracks}
+                onClose={() => setSelectedRegion(null)}
               />
             </div>
-
-            {/* Fit All Tracks */}
-            <button
-              type="button"
-              onClick={handleFitAllTracks}
-              title="全览所有足迹"
-              className="pointer-events-auto inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background/90 px-3 text-xs font-medium text-foreground shadow-md backdrop-blur-md transition-colors hover:bg-accent hover:text-accent-foreground"
-            >
-              <Compass className="h-3.5 w-3.5 text-muted-foreground" />
-              <span>全局视野</span>
-            </button>
-
-            {/* Back to Device / Ingest Console (/) */}
-            <button
-              type="button"
-              onClick={onNavigateDevice}
-              className="pointer-events-auto inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground shadow-md transition-colors hover:bg-primary/90"
-            >
-              <Bluetooth className="h-3.5 w-3.5" />
-              <span>设备 / 入库</span>
-            </button>
-          </div>
+          )}
 
           {/* Desktop Bottom Elevation & Speed Profile Drawer */}
           {primaryTrack && primaryTrackPoints && (

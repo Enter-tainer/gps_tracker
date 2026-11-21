@@ -6,10 +6,12 @@ import type { Plugin } from "vite";
 
 import type {
   BootstrapStats,
+  CompactTrackRegionTuple,
   CompactTrackTileTuple,
   SpatialQueryMatch,
   TrackMetadata,
-  UploadTrackMetaPayload
+  UploadTrackMetaPayload,
+  VisitedRegion
 } from "./src/types/track.ts";
 
 type LocalTileHit = {
@@ -23,6 +25,11 @@ type LocalIndex = {
   stats: BootstrapStats;
   tracks: TrackMetadata[];
   tileIndex: Record<string, LocalTileHit[]>;
+};
+
+type LocalRegionsData = {
+  visitedRegions: VisitedRegion[];
+  trackRegions: Array<[number, string, number, number, number]>;
 };
 
 const EMPTY_FOG_HEADER = Buffer.from([
@@ -86,6 +93,31 @@ function saveLocalIndex(dataDir: string, idx: LocalIndex): void {
   fs.writeFileSync(path.join(dataDir, "index.json"), JSON.stringify(idx));
 }
 
+function loadLocalRegions(dataDir: string): LocalRegionsData {
+  const regionsPath = path.join(dataDir, "regions-visited.json");
+  if (!fs.existsSync(regionsPath)) {
+    return { visitedRegions: [], trackRegions: [] };
+  }
+  try {
+    const parsed = JSON.parse(
+      fs.readFileSync(regionsPath, "utf8")
+    ) as Partial<LocalRegionsData>;
+    return {
+      visitedRegions: Array.isArray(parsed.visitedRegions)
+        ? parsed.visitedRegions
+        : [],
+      trackRegions: Array.isArray(parsed.trackRegions) ? parsed.trackRegions : []
+    };
+  } catch {
+    return { visitedRegions: [], trackRegions: [] };
+  }
+}
+
+function saveLocalRegions(dataDir: string, data: LocalRegionsData): void {
+  fs.mkdirSync(dataDir, { recursive: true });
+  fs.writeFileSync(path.join(dataDir, "regions-visited.json"), JSON.stringify(data));
+}
+
 function recomputeLocalStats(
   tracks: TrackMetadata[],
   tileCount: number,
@@ -120,12 +152,155 @@ export function localTrackApiPlugin(frontendRoot: string): Plugin {
         return;
       }
 
-      const urlPath = rawUrl.split("?")[0];
+      const parsedUrl = new URL(rawUrl, "http://localhost");
+      const urlPath = parsedUrl.pathname;
 
       try {
         if (urlPath === "/api/bootstrap" && req.method === "GET") {
           const idx = loadLocalIndex(dataDir);
-          sendJson(res, 200, { stats: idx.stats, tracks: idx.tracks });
+          const reg = loadLocalRegions(dataDir);
+          sendJson(res, 200, {
+            stats: idx.stats,
+            tracks: idx.tracks,
+            regions: reg.visitedRegions
+          });
+          return;
+        }
+
+        if (
+          urlPath === "/api/regions/global.pmtiles" &&
+          (req.method === "GET" || req.method === "HEAD")
+        ) {
+          const pmtilesPath = path.join(
+            dataDir,
+            "r2",
+            "regions",
+            "global-regions.pmtiles"
+          );
+          if (!fs.existsSync(pmtilesPath)) {
+            sendJson(res, 404, { error: "global-regions.pmtiles not built yet" });
+            return;
+          }
+          const stat = fs.statSync(pmtilesPath);
+          const totalSize = stat.size;
+          const etag = `"${stat.size}-${Math.floor(stat.mtimeMs)}"`;
+
+          res.setHeader("Content-Type", "application/octet-stream");
+          res.setHeader("Accept-Ranges", "bytes");
+          res.setHeader("ETag", etag);
+          res.setHeader("Cache-Control", "public, max-age=86400");
+
+          if (req.method === "HEAD") {
+            res.statusCode = 200;
+            res.setHeader("Content-Length", String(totalSize));
+            res.end();
+            return;
+          }
+
+          const rangeHeader = String(req.headers.range || "");
+          if (rangeHeader) {
+            const match = rangeHeader.match(/^bytes=(\d+)-(\d*)$/i);
+            if (!match) {
+              res.statusCode = 416;
+              res.setHeader("Content-Range", `bytes */${totalSize}`);
+              res.end();
+              return;
+            }
+            const start = Number(match[1]);
+            const end = match[2]
+              ? Math.min(totalSize - 1, Number(match[2]))
+              : totalSize - 1;
+            if (start >= totalSize || end < start) {
+              res.statusCode = 416;
+              res.setHeader("Content-Range", `bytes */${totalSize}`);
+              res.end();
+              return;
+            }
+            const len = end - start + 1;
+            const buf = Buffer.allocUnsafe(len);
+            const fd = fs.openSync(pmtilesPath, "r");
+            try {
+              fs.readSync(fd, buf, 0, len, start);
+            } finally {
+              fs.closeSync(fd);
+            }
+            res.statusCode = 206;
+            res.setHeader("Content-Range", `bytes ${start}-${end}/${totalSize}`);
+            res.setHeader("Content-Length", String(len));
+            res.end(buf);
+            return;
+          }
+
+          res.statusCode = 200;
+          res.setHeader("Content-Length", String(totalSize));
+          fs.createReadStream(pmtilesPath).pipe(res);
+          return;
+        }
+
+        if (urlPath === "/api/regions/meta" && req.method === "GET") {
+          const metaGzPath = path.join(
+            dataDir,
+            "r2",
+            "regions",
+            "regions-meta.json.gz"
+          );
+          if (!fs.existsSync(metaGzPath)) {
+            sendJson(res, 404, { error: "regions-meta.json.gz not found" });
+            return;
+          }
+          const acceptEncoding = String(req.headers["accept-encoding"] || "");
+          const gzBuf = fs.readFileSync(metaGzPath);
+          res.statusCode = 200;
+          res.setHeader("Content-Type", "application/json; charset=utf-8");
+          res.setHeader("Cache-Control", "public, max-age=86400");
+          if (acceptEncoding.includes("gzip")) {
+            res.setHeader("Content-Encoding", "gzip");
+            res.end(gzBuf);
+          } else {
+            res.end(zlib.gunzipSync(gzBuf));
+          }
+          return;
+        }
+
+        if (urlPath === "/api/regions/visited" && req.method === "PUT") {
+          const bodyBuf = await readRequestBody(req);
+          const parsed = JSON.parse(
+            bodyBuf.toString("utf8")
+          ) as Partial<LocalRegionsData>;
+          const prev = loadLocalRegions(dataDir);
+          const next: LocalRegionsData = {
+            visitedRegions: Array.isArray(parsed.visitedRegions)
+              ? parsed.visitedRegions
+              : prev.visitedRegions,
+            trackRegions: Array.isArray(parsed.trackRegions)
+              ? parsed.trackRegions
+              : prev.trackRegions
+          };
+          saveLocalRegions(dataDir, next);
+          sendJson(res, 200, { ok: true, count: next.visitedRegions.length });
+          return;
+        }
+
+        if (urlPath === "/api/regions/tracks" && req.method === "GET") {
+          const rawRids = parsedUrl.searchParams.get("rids") || "";
+          const ridSet = new Set(
+            rawRids
+              .split(",")
+              .map((s) => Number(s.trim()))
+              .filter((n) => Number.isInteger(n) && n > 0)
+          );
+          const reg = loadLocalRegions(dataDir);
+          const hits = new Map<string, number>();
+          for (const [rid, trackId, , , lastTs] of reg.trackRegions) {
+            if (ridSet.has(rid)) {
+              const prevTs = hits.get(trackId) ?? 0;
+              if (lastTs >= prevTs) hits.set(trackId, lastTs);
+            }
+          }
+          const trackIds = Array.from(hits.entries())
+            .sort((a, b) => b[1] - a[1])
+            .map(([id]) => id);
+          sendJson(res, 200, { trackIds });
           return;
         }
 
@@ -276,7 +451,7 @@ export function localTrackApiPlugin(frontendRoot: string): Plugin {
         }
 
         // Pure I/O ingest matching production Cloudflare Worker:
-        // Accepts browser-computed `gpsl0` binary, `meta` JSON ({ track, tiles }),
+        // Accepts browser-computed `gpsl0` binary, `meta` JSON ({ track, tiles, trackRegions?, visitedRegions? }),
         // and optional updated `fog` binary.
         if (urlPath === "/api/tracks/upload" && req.method === "POST") {
           const bodyBuf = await readRequestBody(req);
@@ -318,6 +493,20 @@ export function localTrackApiPlugin(frontendRoot: string): Plugin {
           const validTiles: CompactTrackTileTuple[] = Array.isArray(parsedMeta.tiles)
             ? parsedMeta.tiles.filter(
                 (t): t is CompactTrackTileTuple =>
+                  Array.isArray(t) &&
+                  t.length === 4 &&
+                  Number.isInteger(t[0]) &&
+                  Number.isInteger(t[1]) &&
+                  Number.isInteger(t[2]) &&
+                  Number.isInteger(t[3])
+              )
+            : [];
+
+          const validTrackRegions: CompactTrackRegionTuple[] = Array.isArray(
+            parsedMeta.trackRegions
+          )
+            ? parsedMeta.trackRegions.filter(
+                (t): t is CompactTrackRegionTuple =>
                   Array.isArray(t) &&
                   t.length === 4 &&
                   Number.isInteger(t[0]) &&
@@ -387,6 +576,20 @@ export function localTrackApiPlugin(frontendRoot: string): Plugin {
           );
           saveLocalIndex(dataDir, idx);
 
+          if (Array.isArray(parsedMeta.visitedRegions) || validTrackRegions.length > 0) {
+            const reg = loadLocalRegions(dataDir);
+            const filteredTR = reg.trackRegions.filter((r) => r[1] !== trackId);
+            for (const [rid, cellCount, firstTs, lastTs] of validTrackRegions) {
+              filteredTR.push([rid, trackId, cellCount, firstTs, lastTs]);
+            }
+            saveLocalRegions(dataDir, {
+              visitedRegions: Array.isArray(parsedMeta.visitedRegions)
+                ? parsedMeta.visitedRegions
+                : reg.visitedRegions,
+              trackRegions: filteredTR
+            });
+          }
+
           sendJson(res, 200, { ok: true, track });
           return;
         }
@@ -422,6 +625,15 @@ export function localTrackApiPlugin(frontendRoot: string): Plugin {
             idx.stats.exploredAreaKm2
           );
           saveLocalIndex(dataDir, idx);
+
+          const reg = loadLocalRegions(dataDir);
+          if (reg.trackRegions.length > 0) {
+            saveLocalRegions(dataDir, {
+              visitedRegions: reg.visitedRegions,
+              trackRegions: reg.trackRegions.filter((r) => r[1] !== safeId)
+            });
+          }
+
           sendJson(res, 200, { ok: true, deletedId: safeId });
           return;
         }

@@ -1,13 +1,15 @@
 import React, { useEffect } from "react";
 import { Check, RefreshCw, X } from "lucide-react";
 
-import type { BaseMapId } from "../types/track.ts";
+import type { BaseMapId, FogRenderStyle } from "../types/track.ts";
 import { BASE_MAP_OPTIONS } from "../utils/styleBase.ts";
 
 export type LayerSettingsPanelProps = {
   isOpen: boolean;
   isMobile: boolean;
   onClose: () => void;
+  fogStyle: FogRenderStyle;
+  onChangeFogStyle: (style: FogRenderStyle) => void;
   fogOpacity: number;
   onChangeFogOpacity: (val: number) => void;
   fogGlow: number;
@@ -20,10 +22,22 @@ export type LayerSettingsPanelProps = {
   onChangeBaseMap: (id: BaseMapId) => void;
 };
 
+const FOG_STYLE_OPTIONS: Array<{
+  id: FogRenderStyle;
+  label: string;
+  desc: string;
+}> = [
+  { id: "hybrid", label: "智能分级 LOD", desc: "宏观区划热力 + 放大街道擦除" },
+  { id: "fine", label: "精细街道", desc: "全程显示 Z15/Z21 GPS 精准擦除" },
+  { id: "regions", label: "仅区划热力", desc: "始终按国/省/市/区县热力展示" }
+];
+
 export const LayerSettingsPanel: React.FC<LayerSettingsPanelProps> = ({
   isOpen,
   isMobile,
   onClose,
+  fogStyle,
+  onChangeFogStyle,
   fogOpacity,
   onChangeFogOpacity,
   fogGlow,
@@ -52,6 +66,37 @@ export const LayerSettingsPanel: React.FC<LayerSettingsPanelProps> = ({
 
   const bodyContent = (
     <>
+      <div className="mb-3 space-y-2 border-b border-border pb-3">
+        <div className="text-xs font-medium text-foreground">
+          迷雾渲染模式 (LOD)
+        </div>
+        <div className="grid grid-cols-3 gap-1 rounded-lg bg-muted p-1">
+          {FOG_STYLE_OPTIONS.map((opt) => {
+            const active = fogStyle === opt.id;
+            return (
+              <button
+                key={opt.id}
+                type="button"
+                title={opt.desc}
+                onClick={() => onChangeFogStyle(opt.id)}
+                className={`rounded-md px-1.5 ${
+                  isMobile ? "py-2 text-xs" : "py-1.5 text-[11px]"
+                } font-medium transition-colors ${
+                  active
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
+        <div className="text-[11px] text-muted-foreground">
+          {FOG_STYLE_OPTIONS.find((o) => o.id === fogStyle)?.desc}
+        </div>
+      </div>
+
       <div className="mb-3 space-y-2.5 border-b border-border pb-3">
         <div className="flex items-center justify-between text-xs">
           <span className="font-medium text-foreground">迷雾遮罩浓度</span>

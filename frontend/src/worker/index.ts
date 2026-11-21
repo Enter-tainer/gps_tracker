@@ -8,11 +8,14 @@ import type {
 
 import type {
   BootstrapResponse,
+  CompactTrackRegionTuple,
   CompactTrackTileTuple,
   LonLat,
+  RegionLevel,
   SpatialQueryMatch,
   TrackMetadata,
-  UploadTrackMetaPayload
+  UploadTrackMetaPayload,
+  VisitedRegion
 } from "../types/track.ts";
 
 export interface Env {
@@ -22,6 +25,8 @@ export interface Env {
 }
 
 const FOG_KEY = "fog/global-fog.bin";
+const REGIONS_PMTILES_KEY = "regions/global-regions.pmtiles";
+const REGIONS_META_KEY = "regions/regions-meta.json.gz";
 const MAX_QUERY_TILES = 1600;
 // Static 16-byte empty FGP1 header ("FGP1", version=1, tileCount=0, totalCells=0)
 const EMPTY_FOG_HEADER = new Uint8Array([
@@ -72,6 +77,28 @@ type DbTrackRow = {
   created_at: number;
 };
 
+type DbVisitedRegionRow = {
+  region_id: number;
+  level: number;
+  parent_id: number | null;
+  country: string;
+  name_zh: string;
+  name_en: string;
+  direct_child_count: number;
+  leaf_child_count: number;
+  lit_direct_children: number;
+  lit_leaf_children: number;
+  area_km2: number;
+  explored_cells: number;
+  explored_area_km2: number;
+  visit_days: number;
+  track_count: number;
+  heat: number;
+  first_ts: number;
+  last_ts: number;
+  bbox_json: string;
+};
+
 function mapDbRowToTrack(row: DbTrackRow): TrackMetadata {
   let overview: LonLat[][] = [];
   try {
@@ -88,6 +115,100 @@ function mapDbRowToTrack(row: DbTrackRow): TrackMetadata {
   };
 }
 
+function mapDbRowToVisitedRegion(row: DbVisitedRegionRow): VisitedRegion {
+  let bbox: [number, number, number, number] = [0, 0, 0, 0];
+  try {
+    const parsed = JSON.parse(row.bbox_json);
+    if (Array.isArray(parsed) && parsed.length === 4) {
+      bbox = [
+        Number(parsed[0]) || 0,
+        Number(parsed[1]) || 0,
+        Number(parsed[2]) || 0,
+        Number(parsed[3]) || 0
+      ];
+    }
+  } catch {
+    bbox = [0, 0, 0, 0];
+  }
+
+  return {
+    rid: row.region_id,
+    level: Math.max(0, Math.min(3, row.level)) as RegionLevel,
+    parentRid: row.parent_id ?? null,
+    country: row.country,
+    nameZh: row.name_zh,
+    nameEn: row.name_en,
+    directChildCount: row.direct_child_count,
+    leafChildCount: row.leaf_child_count,
+    litDirectChildren: row.lit_direct_children,
+    litLeafChildren: row.lit_leaf_children,
+    areaKm2: row.area_km2,
+    exploredCells: row.explored_cells,
+    exploredAreaKm2: row.explored_area_km2,
+    visitDays: row.visit_days,
+    trackCount: row.track_count,
+    heat: row.heat,
+    firstTs: row.first_ts,
+    lastTs: row.last_ts,
+    bbox
+  };
+}
+
+function appendVisitedRegionUpserts(
+  stmts: D1PreparedStatement[],
+  db: D1Database,
+  regions: VisitedRegion[],
+  replaceAll: boolean
+): void {
+  if (replaceAll) {
+    stmts.push(db.prepare(`DELETE FROM visited_regions`));
+  }
+  // 5 rows * 19 params = 95 < 100 D1 param limit
+  const BATCH = 5;
+  for (let i = 0; i < regions.length; i += BATCH) {
+    const chunk = regions.slice(i, i + BATCH);
+    const placeholders = chunk
+      .map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .join(", ");
+    const params: Array<string | number | null> = [];
+    for (const r of chunk) {
+      params.push(
+        r.rid,
+        r.level,
+        r.parentRid,
+        r.country,
+        r.nameZh,
+        r.nameEn,
+        r.directChildCount,
+        r.leafChildCount,
+        r.litDirectChildren,
+        r.litLeafChildren,
+        r.areaKm2,
+        r.exploredCells,
+        r.exploredAreaKm2,
+        r.visitDays,
+        r.trackCount,
+        r.heat,
+        r.firstTs,
+        r.lastTs,
+        JSON.stringify(r.bbox ?? [0, 0, 0, 0])
+      );
+    }
+    stmts.push(
+      db
+        .prepare(
+          `INSERT OR REPLACE INTO visited_regions (
+            region_id, level, parent_id, country, name_zh, name_en,
+            direct_child_count, leaf_child_count, lit_direct_children, lit_leaf_children,
+            area_km2, explored_cells, explored_area_km2, visit_days, track_count,
+            heat, first_ts, last_ts, bbox_json
+          ) VALUES ${placeholders}`
+        )
+        .bind(...params)
+    );
+  }
+}
+
 async function handleBootstrap(env: Env): Promise<Response> {
   const { results } = await env.TRACKS_DB.prepare(
     `SELECT id, date, title, source_file, point_count, distance_m, duration_s,
@@ -98,6 +219,21 @@ async function handleBootstrap(env: Env): Promise<Response> {
   ).all<DbTrackRow>();
 
   const tracks = (results ?? []).map(mapDbRowToTrack);
+
+  let regions: VisitedRegion[] = [];
+  try {
+    const regionQuery = await env.TRACKS_DB.prepare(
+      `SELECT region_id, level, parent_id, country, name_zh, name_en,
+              direct_child_count, leaf_child_count, lit_direct_children, lit_leaf_children,
+              area_km2, explored_cells, explored_area_km2, visit_days, track_count,
+              heat, first_ts, last_ts, bbox_json
+       FROM visited_regions
+       ORDER BY level ASC, heat DESC, explored_area_km2 DESC`
+    ).all<DbVisitedRegionRow>();
+    regions = (regionQuery.results ?? []).map(mapDbRowToVisitedRegion);
+  } catch {
+    regions = [];
+  }
 
   let visitedTilesZ15 = 0;
   let exploredCellsZ21 = 0;
@@ -127,7 +263,8 @@ async function handleBootstrap(env: Env): Promise<Response> {
       exploredCellsZ21,
       exploredAreaKm2: Math.round(exploredCellsZ21 * 0.00026 * 1000) / 1000
     },
-    tracks
+    tracks,
+    regions
   };
 
   return jsonResponse(payload);
@@ -172,6 +309,207 @@ async function handleGetFog(request: Request, env: Env): Promise<Response> {
   }
 
   return new Response(obj.body as unknown as BodyInit, { headers });
+}
+
+async function handleGetRegionsPmtiles(
+  request: Request,
+  env: Env
+): Promise<Response> {
+  if (request.method === "HEAD") {
+    const headObj = await env.TRACKS_BUCKET.head(REGIONS_PMTILES_KEY);
+    if (!headObj) {
+      return jsonResponse({ error: "global-regions.pmtiles not found" }, 404);
+    }
+    const headers: Record<string, string> = {
+      "Content-Type": "application/octet-stream",
+      "Content-Length": String(headObj.size),
+      "Accept-Ranges": "bytes",
+      "Cache-Control": "public, max-age=86400"
+    };
+    if (headObj.httpEtag) headers["ETag"] = headObj.httpEtag;
+    return new Response(null, { status: 200, headers });
+  }
+
+  const rangeHeader = request.headers.get("range");
+  if (rangeHeader) {
+    const match = rangeHeader.match(/^bytes=(\d+)-(\d*)$/i);
+    if (!match) {
+      return new Response("Range Not Satisfiable", { status: 416 });
+    }
+    const start = Number(match[1]);
+    const reqEnd = match[2] ? Number(match[2]) : undefined;
+    if (
+      !Number.isFinite(start) ||
+      (reqEnd !== undefined && (!Number.isFinite(reqEnd) || reqEnd < start))
+    ) {
+      return new Response("Range Not Satisfiable", { status: 416 });
+    }
+
+    const reqLen = reqEnd !== undefined ? reqEnd - start + 1 : undefined;
+    const obj = await env.TRACKS_BUCKET.get(REGIONS_PMTILES_KEY, {
+      range: reqLen !== undefined ? { offset: start, length: reqLen } : { offset: start }
+    });
+    if (!obj) {
+      return jsonResponse({ error: "global-regions.pmtiles not found" }, 404);
+    }
+
+    const totalSize = obj.size;
+    if (start >= totalSize) {
+      return new Response("Range Not Satisfiable", {
+        status: 416,
+        headers: { "Content-Range": `bytes */${totalSize}` }
+      });
+    }
+
+    const actualEnd =
+      reqLen !== undefined ? Math.min(totalSize - 1, start + reqLen - 1) : totalSize - 1;
+    const actualLen = actualEnd - start + 1;
+    const headers: Record<string, string> = {
+      "Content-Type": "application/octet-stream",
+      "Content-Range": `bytes ${start}-${actualEnd}/${totalSize}`,
+      "Content-Length": String(actualLen),
+      "Accept-Ranges": "bytes",
+      "Cache-Control": "public, max-age=86400"
+    };
+    if (obj.httpEtag) headers["ETag"] = obj.httpEtag;
+    return new Response(obj.body as unknown as BodyInit, { status: 206, headers });
+  }
+
+  const obj = await env.TRACKS_BUCKET.get(REGIONS_PMTILES_KEY);
+  if (!obj) {
+    return jsonResponse({ error: "global-regions.pmtiles not found" }, 404);
+  }
+  const headers: Record<string, string> = {
+    "Content-Type": "application/octet-stream",
+    "Content-Length": String(obj.size),
+    "Accept-Ranges": "bytes",
+    "Cache-Control": "public, max-age=86400"
+  };
+  if (obj.httpEtag) headers["ETag"] = obj.httpEtag;
+  return new Response(obj.body as unknown as BodyInit, { status: 200, headers });
+}
+
+async function handleGetRegionsMeta(
+  request: Request,
+  env: Env
+): Promise<Response> {
+  const obj = await env.TRACKS_BUCKET.get(REGIONS_META_KEY);
+  if (!obj) {
+    return jsonResponse({ error: "regions-meta.json.gz not found" }, 404);
+  }
+
+  const ifNoneMatch = request.headers.get("If-None-Match");
+  if (ifNoneMatch && obj.httpEtag && ifNoneMatch === obj.httpEtag) {
+    return new Response(null, { status: 304 });
+  }
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "public, max-age=86400"
+  };
+  if (obj.httpEtag) headers["ETag"] = obj.httpEtag;
+
+  const acceptEncoding = request.headers.get("Accept-Encoding") || "";
+  if (acceptEncoding.includes("gzip")) {
+    headers["Content-Encoding"] = "gzip";
+    return new Response(obj.body as unknown as BodyInit, {
+      headers,
+      encodeBody: "manual"
+    } as ResponseInit);
+  }
+
+  if (typeof DecompressionStream !== "undefined") {
+    const decompressed = obj.body.pipeThrough(
+      new DecompressionStream("gzip") as unknown as Parameters<
+        typeof obj.body.pipeThrough
+      >[0]
+    );
+    return new Response(decompressed as unknown as BodyInit, { headers });
+  }
+
+  headers["Content-Encoding"] = "gzip";
+  return new Response(obj.body as unknown as BodyInit, {
+    headers,
+    encodeBody: "manual"
+  } as ResponseInit);
+}
+
+async function handlePutVisitedRegions(
+  request: Request,
+  env: Env
+): Promise<Response> {
+  let body: {
+    visitedRegions?: VisitedRegion[];
+    trackRegions?: Array<[number, string, number, number, number]>;
+  };
+  try {
+    body = (await request.json()) as typeof body;
+  } catch {
+    return jsonResponse({ error: "Invalid JSON body" }, 400);
+  }
+
+  const visitedRegions = Array.isArray(body.visitedRegions)
+    ? body.visitedRegions
+    : [];
+  const stmts: D1PreparedStatement[] = [];
+  appendVisitedRegionUpserts(stmts, env.TRACKS_DB, visitedRegions, true);
+
+  if (Array.isArray(body.trackRegions)) {
+    stmts.push(env.TRACKS_DB.prepare(`DELETE FROM track_regions`));
+    const TR_BATCH = 15; // 15 * 5 = 75 < 100 params
+    for (let i = 0; i < body.trackRegions.length; i += TR_BATCH) {
+      const chunk = body.trackRegions.slice(i, i + TR_BATCH);
+      const placeholders = chunk.map(() => "(?, ?, ?, ?, ?)").join(", ");
+      const params: Array<string | number> = [];
+      for (const [rid, trackId, cellCount, firstTs, lastTs] of chunk) {
+        params.push(rid, trackId, cellCount, firstTs, lastTs);
+      }
+      stmts.push(
+        env.TRACKS_DB.prepare(
+          `INSERT OR REPLACE INTO track_regions (region_id, track_id, cell_count, first_ts, last_ts)
+           VALUES ${placeholders}`
+        ).bind(...params)
+      );
+    }
+  }
+
+  // Execute in D1 batch slices so large payloads never exceed D1 statement-per-batch caps
+  const STMT_SLICE = 80;
+  for (let i = 0; i < stmts.length; i += STMT_SLICE) {
+    await env.TRACKS_DB.batch(stmts.slice(i, i + STMT_SLICE));
+  }
+
+  return jsonResponse({ ok: true, count: visitedRegions.length });
+}
+
+async function handleGetRegionTracks(env: Env, url: URL): Promise<Response> {
+  const rawRids = url.searchParams.get("rids") || "";
+  const rids = Array.from(
+    new Set(
+      rawRids
+        .split(",")
+        .map((s) => Number(s.trim()))
+        .filter((n) => Number.isInteger(n) && n > 0)
+    )
+  ).slice(0, 80);
+
+  if (rids.length === 0) {
+    return jsonResponse({ trackIds: [] });
+  }
+
+  const placeholders = rids.map(() => "?").join(", ");
+  const { results } = await env.TRACKS_DB.prepare(
+    `SELECT DISTINCT track_id
+     FROM track_regions
+     WHERE region_id IN (${placeholders})
+     ORDER BY last_ts DESC`
+  )
+    .bind(...rids)
+    .all<{ track_id: string }>();
+
+  return jsonResponse({
+    trackIds: (results ?? []).map((r) => r.track_id)
+  });
 }
 
 function toBlobBytes(raw: unknown): Uint8Array | null {
@@ -390,6 +728,20 @@ async function handleUploadTrack(request: Request, env: Env): Promise<Response> 
       )
     : [];
 
+  const validTrackRegions: CompactTrackRegionTuple[] = Array.isArray(
+    parsedMeta.trackRegions
+  )
+    ? parsedMeta.trackRegions.filter(
+        (t): t is CompactTrackRegionTuple =>
+          Array.isArray(t) &&
+          t.length === 4 &&
+          Number.isInteger(t[0]) &&
+          Number.isInteger(t[1]) &&
+          Number.isInteger(t[2]) &&
+          Number.isInteger(t[3])
+      )
+    : [];
+
   const gpsl0Buf = new Uint8Array(await (gpsl0Entry as File).arrayBuffer());
   const r2Writes: Promise<unknown>[] = [];
 
@@ -437,6 +789,9 @@ async function handleUploadTrack(request: Request, env: Env): Promise<Response> 
     ).bind(track.id, gpsl0Buf),
     env.TRACKS_DB.prepare(`DELETE FROM track_tiles WHERE track_id = ?`).bind(
       track.id
+    ),
+    env.TRACKS_DB.prepare(`DELETE FROM track_regions WHERE track_id = ?`).bind(
+      track.id
     )
   ];
 
@@ -456,7 +811,40 @@ async function handleUploadTrack(request: Request, env: Env): Promise<Response> 
     );
   }
 
-  await Promise.all([...r2Writes, env.TRACKS_DB.batch(stmts)]);
+  for (let i = 0; i < validTrackRegions.length; i += TILE_BATCH) {
+    const chunk = validTrackRegions.slice(i, i + TILE_BATCH);
+    const placeholders = chunk.map(() => "(?, ?, ?, ?, ?)").join(", ");
+    const params: Array<string | number> = [];
+    for (const [rid, cellCount, firstTs, lastTs] of chunk) {
+      params.push(rid, track.id, cellCount, firstTs, lastTs);
+    }
+    stmts.push(
+      env.TRACKS_DB.prepare(
+        `INSERT OR REPLACE INTO track_regions (region_id, track_id, cell_count, first_ts, last_ts)
+         VALUES ${placeholders}`
+      ).bind(...params)
+    );
+  }
+
+  if (Array.isArray(parsedMeta.visitedRegions)) {
+    appendVisitedRegionUpserts(
+      stmts,
+      env.TRACKS_DB,
+      parsedMeta.visitedRegions,
+      true
+    );
+  }
+
+  const STMT_SLICE = 80;
+  await Promise.all([
+    ...r2Writes,
+    (async () => {
+      for (let i = 0; i < stmts.length; i += STMT_SLICE) {
+        await env.TRACKS_DB.batch(stmts.slice(i, i + STMT_SLICE));
+      }
+    })()
+  ]);
+
   return jsonResponse({ ok: true, track });
 }
 
@@ -464,6 +852,9 @@ async function handleDeleteTrack(env: Env, id: string): Promise<Response> {
   const safeId = decodeURIComponent(id).replace(/[^a-zA-Z0-9_.-]/g, "");
   await env.TRACKS_DB.batch([
     env.TRACKS_DB.prepare(`DELETE FROM track_tiles WHERE track_id = ?`).bind(
+      safeId
+    ),
+    env.TRACKS_DB.prepare(`DELETE FROM track_regions WHERE track_id = ?`).bind(
       safeId
     ),
     env.TRACKS_DB.prepare(`DELETE FROM track_blobs WHERE track_id = ?`).bind(
@@ -491,6 +882,21 @@ export default {
     }
     if (pathname === "/api/fog" && request.method === "PUT") {
       return handlePutFog(request, env);
+    }
+    if (
+      pathname === "/api/regions/global.pmtiles" &&
+      (request.method === "GET" || request.method === "HEAD")
+    ) {
+      return handleGetRegionsPmtiles(request, env);
+    }
+    if (pathname === "/api/regions/meta" && request.method === "GET") {
+      return handleGetRegionsMeta(request, env);
+    }
+    if (pathname === "/api/regions/visited" && request.method === "PUT") {
+      return handlePutVisitedRegions(request, env);
+    }
+    if (pathname === "/api/regions/tracks" && request.method === "GET") {
+      return handleGetRegionTracks(env, url);
     }
     if (pathname === "/api/query-spatial" && request.method === "POST") {
       return handleSpatialQuery(request, env);

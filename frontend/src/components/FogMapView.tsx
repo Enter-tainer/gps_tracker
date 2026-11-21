@@ -1,25 +1,36 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
+  addProtocol,
   Map as MapLibreMap,
   NavigationControl,
   ScaleControl,
   setWorkerUrl,
+  type AddProtocolAction,
   type DataDrivenPropertyValueSpecification,
   type GeoJSONSource,
   type MapMouseEvent
 } from "maplibre-gl";
 import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
+import { Protocol } from "pmtiles";
 
 setWorkerUrl(maplibreWorkerUrl);
+
+const pmtilesProtocol = new Protocol();
+addProtocol("pmtiles", pmtilesProtocol.tile as unknown as AddProtocolAction);
 
 import type {
   BaseMapId,
   FogPackData,
+  FogRenderStyle,
   GpsPoint,
+  LodTier,
   LonLat,
   MapVisualizationMode,
+  RegionLevel,
+  SelectedRegionInfo,
   TrackColorMode,
-  TrackMetadata
+  TrackMetadata,
+  VisitedRegion
 } from "../types/track.ts";
 import {
   applyDisplayLonLat,
@@ -35,6 +46,7 @@ import {
   FOG_SUBGRID_SIZE,
   FOG_TILE_ZOOM
 } from "../services/fogEngine.ts";
+import { getRegionsPmtilesUrl } from "../services/regionClassifier.ts";
 
 export type SpatialOverlayShape =
   | { kind: "point"; lat: number; lon: number; radiusM: number }
@@ -59,8 +71,11 @@ type FogMapViewProps = {
   baseMapId: BaseMapId;
   useGcj02: boolean;
   fogPack: FogPackData | null;
+  fogStyle: FogRenderStyle;
   fogOpacity: number;
   fogGlow: number;
+  visitedRegions: VisitedRegion[];
+  selectedRegionRid: number | null;
   tracks: TrackMetadata[];
   selectedTrackIds: string[];
   loadedTrackPoints: Record<string, GpsPoint[]>;
@@ -76,6 +91,8 @@ type FogMapViewProps = {
   } | null;
   fitPadding?: FitPadding;
   onSelectTrack: (trackId: string, multi: boolean) => void;
+  onSelectRegion: (info: SelectedRegionInfo | null) => void;
+  onActiveLodChange?: (tier: LodTier) => void;
   onSpatialPointQuery: (lat: number, lon: number) => void;
   onSpatialBboxQuery: (
     minLat: number,
@@ -84,6 +101,187 @@ type FogMapViewProps = {
     maxLon: number
   ) => void;
 };
+
+const REGION_SOURCE_ID = "global-regions";
+const REGION_SOURCE_LAYERS = ["l0", "l1", "l2", "l3"] as const;
+const WORLD_SHROUD_GEOJSON: GeoJSON.FeatureCollection = {
+  type: "FeatureCollection",
+  features: [-180, -90, 0, 90].flatMap((west) =>
+    [-85.05, 0].map((south) => {
+      const east = west + 90;
+      const north = south === 0 ? 85.05 : 0;
+      return {
+        type: "Feature" as const,
+        geometry: {
+          type: "Polygon" as const,
+          coordinates: [
+            [
+              [west, south],
+              [east, south],
+              [east, north],
+              [west, north],
+              [west, south]
+            ]
+          ]
+        },
+        properties: {}
+      };
+    })
+  )
+};
+
+const REGION_HEAT_COLOR_EXPR: DataDrivenPropertyValueSpecification<string> = [
+  "case",
+  ["boolean", ["feature-state", "visited"], false],
+  [
+    "interpolate",
+    ["linear"],
+    ["coalesce", ["feature-state", "heat"], 0.25],
+    0.15,
+    "#0284c7",
+    0.35,
+    "#06b6d4",
+    0.55,
+    "#10b981",
+    0.72,
+    "#facc15",
+    0.88,
+    "#f97316",
+    1.0,
+    "#f43f5e"
+  ],
+  "#070c18"
+];
+
+const REGION_LINE_COLOR_EXPR: DataDrivenPropertyValueSpecification<string> = [
+  "case",
+  ["boolean", ["feature-state", "selected"], false],
+  "#ffffff",
+  ["boolean", ["feature-state", "visited"], false],
+  [
+    "interpolate",
+    ["linear"],
+    ["coalesce", ["feature-state", "heat"], 0.25],
+    0.15,
+    "#38bdf8",
+    0.35,
+    "#22d3ee",
+    0.55,
+    "#34d399",
+    0.72,
+    "#fde047",
+    0.88,
+    "#fb923c",
+    1.0,
+    "#fb7185"
+  ],
+  "rgba(148, 163, 184, 0.3)"
+];
+
+function computeLodTier(zoom: number, fogStyle: FogRenderStyle): LodTier {
+  if (fogStyle === "fine") return "fine";
+  if (zoom < 3.8) return "l0";
+  if (zoom < 6.4) return "l1";
+  if (zoom < 8.4) return "l2";
+  if (fogStyle === "hybrid" && zoom >= 10.2) return "fine";
+  return "l3";
+}
+
+function buildTierFillOpacityExpr(
+  tier: "l0" | "l1" | "l2" | "l3",
+  fogOpacity: number,
+  fogStyle: FogRenderStyle
+): DataDrivenPropertyValueSpecification<number> {
+  const shroudAlpha = Math.max(
+    0.2,
+    Math.min(0.92, fogOpacity * (fogStyle === "regions" ? 0.68 : 0.86))
+  );
+  const activeExpr: DataDrivenPropertyValueSpecification<number> = [
+    "case",
+    ["boolean", ["feature-state", "visited"], false],
+    [
+      "interpolate",
+      ["linear"],
+      ["coalesce", ["feature-state", "heat"], 0.25],
+      0.15,
+      0.24,
+      0.55,
+      0.34,
+      1.0,
+      0.48
+    ],
+    shroudAlpha
+  ];
+
+  if (tier === "l0") {
+    return ["interpolate", ["linear"], ["zoom"], 3.6, activeExpr, 4.2, 0] as unknown as DataDrivenPropertyValueSpecification<number>;
+  }
+  if (tier === "l1") {
+    return ["interpolate", ["linear"], ["zoom"], 3.4, 0, 4.0, activeExpr, 6.0, activeExpr, 6.6, 0] as unknown as DataDrivenPropertyValueSpecification<number>;
+  }
+  if (tier === "l2") {
+    return ["interpolate", ["linear"], ["zoom"], 5.8, 0, 6.4, activeExpr, 8.0, activeExpr, 8.6, 0] as unknown as DataDrivenPropertyValueSpecification<number>;
+  }
+  if (fogStyle === "regions") {
+    return ["interpolate", ["linear"], ["zoom"], 7.8, 0, 8.4, activeExpr] as unknown as DataDrivenPropertyValueSpecification<number>;
+  }
+  return ["interpolate", ["linear"], ["zoom"], 7.8, 0, 8.4, activeExpr, 9.8, activeExpr, 10.8, 0] as unknown as DataDrivenPropertyValueSpecification<number>;
+}
+
+function buildTierLineOpacityExpr(
+  tier: "l0" | "l1" | "l2" | "l3",
+  fogStyle: FogRenderStyle
+): DataDrivenPropertyValueSpecification<number> {
+  const activeExpr: DataDrivenPropertyValueSpecification<number> = [
+    "case",
+    ["boolean", ["feature-state", "selected"], false],
+    0.98,
+    ["boolean", ["feature-state", "visited"], false],
+    0.85,
+    0.34
+  ];
+
+  if (tier === "l0") {
+    return ["interpolate", ["linear"], ["zoom"], 3.6, activeExpr, 4.2, 0] as unknown as DataDrivenPropertyValueSpecification<number>;
+  }
+  if (tier === "l1") {
+    return ["interpolate", ["linear"], ["zoom"], 3.4, 0, 4.0, activeExpr, 6.0, activeExpr, 6.6, 0] as unknown as DataDrivenPropertyValueSpecification<number>;
+  }
+  if (tier === "l2") {
+    return ["interpolate", ["linear"], ["zoom"], 5.8, 0, 6.4, activeExpr, 8.0, activeExpr, 8.6, 0] as unknown as DataDrivenPropertyValueSpecification<number>;
+  }
+  if (fogStyle === "regions") {
+    return ["interpolate", ["linear"], ["zoom"], 7.8, 0, 8.4, activeExpr] as unknown as DataDrivenPropertyValueSpecification<number>;
+  }
+  return ["interpolate", ["linear"], ["zoom"], 7.8, 0, 8.4, activeExpr, 9.8, activeExpr, 10.8, 0] as unknown as DataDrivenPropertyValueSpecification<number>;
+}
+
+function parseBboxProp(raw: unknown): [number, number, number, number] {
+  if (Array.isArray(raw) && raw.length === 4) {
+    return [
+      Number(raw[0]) || 0,
+      Number(raw[1]) || 0,
+      Number(raw[2]) || 0,
+      Number(raw[3]) || 0
+    ];
+  }
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length === 4) {
+        return [
+          Number(parsed[0]) || 0,
+          Number(parsed[1]) || 0,
+          Number(parsed[2]) || 0,
+          Number(parsed[3]) || 0
+        ];
+      }
+    } catch {
+      // Ignore malformed bbox string
+    }
+  }
+  return [0, 0, 0, 0];
+}
 
 const MACRO_ZOOM = 10;
 const MACRO_SHIFT = FOG_TILE_ZOOM - MACRO_ZOOM; // 5 (32x32 Z15 tiles per Z10)
@@ -261,8 +459,11 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
   baseMapId,
   useGcj02,
   fogPack,
+  fogStyle,
   fogOpacity,
   fogGlow,
+  visitedRegions,
+  selectedRegionRid,
   tracks,
   selectedTrackIds,
   loadedTrackPoints,
@@ -275,6 +476,8 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
   fitBoundsTrigger,
   fitPadding,
   onSelectTrack,
+  onSelectRegion,
+  onActiveLodChange,
   onSpatialPointQuery,
   onSpatialBboxQuery
 }) => {
@@ -287,10 +490,20 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
   const pendingFitBoundsRef = useRef<[number, number, number, number] | null>(
     null
   );
+  const lastLodTierRef = useRef<LodTier | null>(null);
 
   const z15CanvasCacheRef = useRef<Map<number, HTMLCanvasElement>>(new Map());
   const z10CanvasCacheRef = useRef<Map<number, HTMLCanvasElement>>(new Map());
   const z10MacroMapRef = useRef<Map<number, Uint8Array>>(new Map());
+
+  const visitedRegionsMapRef = useRef<Map<number, VisitedRegion>>(new Map());
+  useMemo(() => {
+    const m = new Map<number, VisitedRegion>();
+    for (const r of visitedRegions) {
+      m.set(r.rid, r);
+    }
+    visitedRegionsMapRef.current = m;
+  }, [visitedRegions]);
 
   const [boxDragRect, setBoxDragRect] = useState<{
     x0: number;
@@ -307,8 +520,11 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
     baseMapId,
     useGcj02,
     fogPack,
+    fogStyle,
     fogOpacity,
     fogGlow,
+    visitedRegions,
+    selectedRegionRid,
     tracks,
     selectedTrackIds,
     loadedTrackPoints,
@@ -316,15 +532,20 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
     fitPadding,
     onSpatialPointQuery,
     onSpatialBboxQuery,
-    onSelectTrack
+    onSelectTrack,
+    onSelectRegion,
+    onActiveLodChange
   });
   propsRef.current = {
     mode,
     baseMapId,
     useGcj02,
     fogPack,
+    fogStyle,
     fogOpacity,
     fogGlow,
+    visitedRegions,
+    selectedRegionRid,
     tracks,
     selectedTrackIds,
     loadedTrackPoints,
@@ -332,7 +553,9 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
     fitPadding,
     onSpatialPointQuery,
     onSpatialBboxQuery,
-    onSelectTrack
+    onSelectTrack,
+    onSelectRegion,
+    onActiveLodChange
   };
 
   // Rebuild macro Z10 pyramid whenever fogPack updates
@@ -571,6 +794,8 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
     spatialGeoJson,
     hoverGeoJson,
     mode,
+    fogStyle,
+    fogOpacity,
     spatialShape,
     spatialMatchIds
   });
@@ -581,12 +806,94 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
     spatialGeoJson,
     hoverGeoJson,
     mode,
+    fogStyle,
+    fogOpacity,
     spatialShape,
     spatialMatchIds
   };
 
+  function syncRegionFeatureStates(map: MapLibreMap): void {
+    if (!map.getSource(REGION_SOURCE_ID)) return;
+    for (const sourceLayer of REGION_SOURCE_LAYERS) {
+      map.removeFeatureState({ source: REGION_SOURCE_ID, sourceLayer });
+    }
+
+    const { visitedRegions: list, selectedRegionRid: selRid } = propsRef.current;
+    const seenVisited = new Set<number>();
+    for (const r of list) {
+      seenVisited.add(r.rid);
+      const state = {
+        visited: true,
+        heat: r.heat,
+        selected: r.rid === selRid
+      };
+      for (const sourceLayer of REGION_SOURCE_LAYERS) {
+        map.setFeatureState(
+          { source: REGION_SOURCE_ID, sourceLayer, id: r.rid },
+          state
+        );
+      }
+    }
+
+    if (selRid !== null && !seenVisited.has(selRid)) {
+      for (const sourceLayer of REGION_SOURCE_LAYERS) {
+        map.setFeatureState(
+          { source: REGION_SOURCE_ID, sourceLayer, id: selRid },
+          { visited: false, selected: true }
+        );
+      }
+    }
+  }
+
   function updateAllTracksLayerAppearance(map: MapLibreMap): void {
     const data = latestDataRef.current;
+    const showRegions = data.mode === "fog" && data.fogStyle !== "fine";
+    const visValue = showRegions ? "visible" : "none";
+
+    if (map.getLayer("world-shroud-layer")) {
+      map.setLayoutProperty("world-shroud-layer", "visibility", visValue);
+      const shroudMax = Math.max(
+        0.15,
+        Math.min(0.88, data.fogOpacity * (data.fogStyle === "regions" ? 0.6 : 0.78))
+      );
+      map.setPaintProperty(
+        "world-shroud-layer",
+        "fill-opacity",
+        data.fogStyle === "regions"
+          ? shroudMax
+          : (["interpolate", ["linear"], ["zoom"], 9.8, shroudMax, 10.8, 0] as unknown as DataDrivenPropertyValueSpecification<number>)
+      );
+    }
+
+    for (const tier of REGION_SOURCE_LAYERS) {
+      const fillId = `regions-${tier}-fill`;
+      const lineId = `regions-${tier}-line`;
+      if (map.getLayer(fillId)) {
+        map.setLayoutProperty(fillId, "visibility", visValue);
+        map.setPaintProperty(
+          fillId,
+          "fill-opacity",
+          buildTierFillOpacityExpr(tier, data.fogOpacity, data.fogStyle)
+        );
+      }
+      if (map.getLayer(lineId)) {
+        map.setLayoutProperty(lineId, "visibility", visValue);
+        map.setPaintProperty(
+          lineId,
+          "line-opacity",
+          buildTierLineOpacityExpr(tier, data.fogStyle)
+        );
+      }
+    }
+
+    if (map.getLayer("regions-l3-context-line")) {
+      map.setLayoutProperty(
+        "regions-l3-context-line",
+        "visibility",
+        data.mode === "fog" && data.fogStyle === "hybrid" ? "visible" : "none"
+      );
+    }
+
     if (map.getLayer("heatmap-layer")) {
       map.setLayoutProperty(
         "heatmap-layer",
@@ -646,11 +953,118 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
       }
     };
 
+    if (!map.getSource(REGION_SOURCE_ID)) {
+      map.addSource(REGION_SOURCE_ID, {
+        type: "vector",
+        url: `pmtiles://${getRegionsPmtilesUrl()}`
+      });
+    }
+    ensureGeoJsonSource("world-shroud", WORLD_SHROUD_GEOJSON);
     ensureGeoJsonSource("heatmap-points", data.heatmapGeoJson);
     ensureGeoJsonSource("all-tracks", data.allTracksGeoJson);
     ensureGeoJsonSource("selected-tracks", data.selectedTracksGeoJson);
     ensureGeoJsonSource("spatial-query", data.spatialGeoJson);
     ensureGeoJsonSource("hover-marker", data.hoverGeoJson);
+
+    const firstSymbolId = map
+      .getStyle()
+      ?.layers?.find((l) => l.type === "symbol")?.id;
+
+    if (!map.getLayer("world-shroud-layer")) {
+      map.addLayer(
+        {
+          id: "world-shroud-layer",
+          type: "fill",
+          source: "world-shroud",
+          paint: {
+            "fill-color": "#070c18",
+            "fill-opacity": 0.62
+          }
+        },
+        firstSymbolId
+      );
+    }
+
+    const tierConfigs: Array<{
+      tier: "l0" | "l1" | "l2" | "l3";
+      minzoom: number;
+      maxzoom: number;
+    }> = [
+      { tier: "l0", minzoom: 0, maxzoom: 4.5 },
+      { tier: "l1", minzoom: 3.2, maxzoom: 6.9 },
+      { tier: "l2", minzoom: 5.6, maxzoom: 8.9 },
+      { tier: "l3", minzoom: 7.6, maxzoom: 22 }
+    ];
+
+    for (const cfg of tierConfigs) {
+      const fillId = `regions-${cfg.tier}-fill`;
+      const lineId = `regions-${cfg.tier}-line`;
+      if (!map.getLayer(fillId)) {
+        map.addLayer(
+          {
+            id: fillId,
+            type: "fill",
+            source: REGION_SOURCE_ID,
+            "source-layer": cfg.tier,
+            minzoom: cfg.minzoom,
+            maxzoom: cfg.maxzoom,
+            paint: {
+              "fill-color": REGION_HEAT_COLOR_EXPR,
+              "fill-opacity": buildTierFillOpacityExpr(
+                cfg.tier,
+                data.fogOpacity,
+                data.fogStyle
+              )
+            }
+          },
+          firstSymbolId
+        );
+      }
+      if (!map.getLayer(lineId)) {
+        map.addLayer(
+          {
+            id: lineId,
+            type: "line",
+            source: REGION_SOURCE_ID,
+            "source-layer": cfg.tier,
+            minzoom: cfg.minzoom,
+            maxzoom: cfg.maxzoom,
+            paint: {
+              "line-color": REGION_LINE_COLOR_EXPR,
+              "line-width": [
+                "case",
+                ["boolean", ["feature-state", "selected"], false],
+                2.4,
+                ["boolean", ["feature-state", "visited"], false],
+                1.3,
+                0.55
+              ],
+              "line-opacity": buildTierLineOpacityExpr(cfg.tier, data.fogStyle)
+            }
+          },
+          firstSymbolId
+        );
+      }
+    }
+
+    if (!map.getLayer("regions-l3-context-line")) {
+      map.addLayer(
+        {
+          id: "regions-l3-context-line",
+          type: "line",
+          source: REGION_SOURCE_ID,
+          "source-layer": "l3",
+          minzoom: 9.8,
+          maxzoom: 22,
+          paint: {
+            "line-color": "rgba(148, 163, 184, 0.25)",
+            "line-width": 0.8,
+            "line-opacity": ["interpolate", ["linear"], ["zoom"], 9.8, 0, 10.8, 0.45]
+          }
+        },
+        firstSymbolId
+      );
+    }
 
     if (!map.getLayer("heatmap-layer")) {
       map.addLayer({
@@ -922,6 +1336,7 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
     }
 
     updateAllTracksLayerAppearance(map);
+    syncRegionFeatureStates(map);
   }
 
   function applyFitBounds(
@@ -989,6 +1404,7 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
       mode: curMode,
       useGcj02: gcj,
       fogPack: pack,
+      fogStyle: curFogStyle,
       fogOpacity: opacity,
       fogGlow: glow,
       tracks: curTracks,
@@ -1015,6 +1431,19 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
 
     if (curMode !== "fog" || !pack) return;
 
+    const zoom = map.getZoom();
+    const fineBlend =
+      curFogStyle === "regions"
+        ? 0
+        : curFogStyle === "fine"
+          ? 1
+          : zoom <= 9.6
+            ? 0
+            : zoom >= 10.8
+              ? 1
+              : (zoom - 9.6) / 1.2;
+    if (fineBlend <= 0.01) return;
+
     let bufCanvas = fogBufferCanvasRef.current;
     if (!bufCanvas) {
       bufCanvas = document.createElement("canvas");
@@ -1034,7 +1463,6 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
     bufCtx.fillStyle = `rgba(7, 12, 24, ${opacity})`;
     bufCtx.fillRect(0, 0, cssW, cssH);
 
-    const zoom = map.getZoom();
     const useHighRes = zoom >= 10.5;
     const renderZoom = useHighRes ? FOG_TILE_ZOOM : MACRO_ZOOM;
     const maxTileIdx = (1 << renderZoom) - 1;
@@ -1244,14 +1672,17 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
       }
     }
 
-    // Blit fog cutout onto visible overlay canvas
+    // Blit fog cutout onto visible overlay canvas (scaled by fineBlend during Z9.6->Z10.8 cross-fade)
+    ctx.save();
+    ctx.globalAlpha = fineBlend;
     ctx.drawImage(bufCanvas, 0, 0, cssW, cssH);
+    ctx.restore();
 
     // Subtle cyan rim highlight along explored corridors at low/medium zoom
     if (corridorPath && corridorBlend > 0.05) {
       ctx.save();
       ctx.globalCompositeOperation = "source-over";
-      ctx.strokeStyle = `rgba(34, 211, 238, ${0.22 * corridorBlend})`;
+      ctx.strokeStyle = `rgba(34, 211, 238, ${0.22 * corridorBlend * fineBlend})`;
       ctx.lineWidth = corePx + 1.5;
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
@@ -1314,11 +1745,21 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
 
       mapRef.current = map;
 
+      const emitActiveLod = () => {
+        if (!map) return;
+        const tier = computeLodTier(map.getZoom(), propsRef.current.fogStyle);
+        if (tier !== lastLodTierRef.current) {
+          lastLodTierRef.current = tier;
+          propsRef.current.onActiveLodChange?.(tier);
+        }
+      };
+
       const onStyleReady = () => {
         if (!map) return;
         styleReadyRef.current = true;
         syncCustomSourcesAndLayers(map);
         drawFogCanvas();
+        emitActiveLod();
       };
 
       map.on("load", onStyleReady);
@@ -1333,6 +1774,8 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
       if (isStyleReady(map)) {
         onStyleReady();
       }
+
+      map.on("zoom", emitActiveLod);
 
       map.on("render", () => {
         drawFogCanvas();
@@ -1376,8 +1819,58 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
                 trackId,
                 e.originalEvent.ctrlKey || e.originalEvent.metaKey
               );
+              return;
             }
           }
+        }
+
+        if (
+          p.mode === "fog" &&
+          p.fogStyle !== "fine" &&
+          (p.fogStyle === "regions" || map.getZoom() < 10.4)
+        ) {
+          const zoom = map.getZoom();
+          const candidateLayers =
+            zoom < 3.8
+              ? ["regions-l0-fill", "regions-l1-fill"]
+              : zoom < 6.4
+                ? ["regions-l1-fill", "regions-l2-fill", "regions-l0-fill"]
+                : zoom < 8.4
+                  ? ["regions-l2-fill", "regions-l3-fill", "regions-l1-fill"]
+                  : ["regions-l3-fill", "regions-l2-fill"];
+
+          for (const layerId of candidateLayers) {
+            if (!map.getLayer(layerId)) continue;
+            const hits = map.queryRenderedFeatures(e.point, {
+              layers: [layerId]
+            });
+            if (hits.length === 0) continue;
+
+            const feat = hits[0];
+            const props = feat.properties ?? {};
+            const rid = Number(feat.id ?? props.rid);
+            if (!Number.isFinite(rid) || rid <= 0) continue;
+
+            const visited = visitedRegionsMapRef.current.get(rid) ?? null;
+            const lv = Number(props.lv ?? visited?.level ?? 0);
+            const bbox = visited?.bbox ?? parseBboxProp(props.b);
+            p.onSelectRegion({
+              rid,
+              level: Math.max(0, Math.min(3, lv)) as RegionLevel,
+              nameZh: String(props.n ?? visited?.nameZh ?? ""),
+              nameEn: String(props.ne ?? visited?.nameEn ?? ""),
+              country: String(props.c ?? visited?.country ?? ""),
+              directChildCount: Number(
+                props.cc ?? visited?.directChildCount ?? 0
+              ),
+              leafChildCount: Number(props.lc ?? visited?.leafChildCount ?? 0),
+              areaKm2: Number(props.a ?? visited?.areaKm2 ?? 0),
+              bbox,
+              visited
+            });
+            return;
+          }
+          p.onSelectRegion(null);
         }
       });
 
@@ -1470,9 +1963,15 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
     if (!map || (!styleReadyRef.current && !isStyleReady(map))) return;
     syncCustomSourcesAndLayers(map);
     drawFogCanvas();
+    const tier = computeLodTier(map.getZoom(), fogStyle);
+    if (tier !== lastLodTierRef.current) {
+      lastLodTierRef.current = tier;
+      propsRef.current.onActiveLodChange?.(tier);
+    }
   }, [
     mode,
     useGcj02,
+    fogStyle,
     fogOpacity,
     fogGlow,
     heatmapGeoJson,
@@ -1483,6 +1982,13 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
     spatialMatchIds,
     spatialRadiusM
   ]);
+
+  // Sync PMTiles feature-state whenever visited regions or selected region changes
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || (!styleReadyRef.current && !isStyleReady(map))) return;
+    syncRegionFeatureStates(map);
+  }, [visitedRegions, selectedRegionRid]);
 
   // Fly/fit bounds when requested (also queues if initial style is still fetching)
   useEffect(() => {

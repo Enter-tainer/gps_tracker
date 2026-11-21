@@ -12,7 +12,8 @@ import type {
   BootstrapStats,
   FogPackData,
   GpsPoint,
-  TrackMetadata
+  TrackMetadata,
+  VisitedRegion
 } from "./types/track.ts";
 
 const MapWorkspace = lazy(() => import("./components/MapWorkspace.tsx"));
@@ -43,6 +44,7 @@ export default function App() {
     () => readRoute() === "/map"
   );
   const [tracks, setTracks] = useState<TrackMetadata[]>([]);
+  const [visitedRegions, setVisitedRegions] = useState<VisitedRegion[]>([]);
   const [stats, setStats] = useState<BootstrapStats>(EMPTY_STATS);
   const [fogPack, setFogPack] = useState<FogPackData | null>(null);
   const [loadedTrackPoints, setLoadedTrackPoints] = useState<
@@ -84,21 +86,35 @@ export default function App() {
     }
   }, [fogPack]);
 
-  const handleFogRebuilt = useCallback((rebuiltPack: FogPackData) => {
-    setFogPack(rebuiltPack);
-    setStats((prev) => ({
-      ...prev,
-      visitedTilesZ15: rebuiltPack.tileCount,
-      exploredCellsZ21: rebuiltPack.totalCells,
-      exploredAreaKm2: rebuiltPack.exploredAreaKm2
-    }));
-  }, []);
+  const handleFogRebuilt = useCallback(
+    (rebuiltPack: FogPackData, rebuiltRegions?: VisitedRegion[]) => {
+      setFogPack(rebuiltPack);
+      if (rebuiltRegions) {
+        setVisitedRegions(rebuiltRegions);
+      }
+      setStats((prev) => ({
+        ...prev,
+        visitedTilesZ15: rebuiltPack.tileCount,
+        exploredCellsZ21: rebuiltPack.totalCells,
+        exploredAreaKm2: rebuiltPack.exploredAreaKm2
+      }));
+    },
+    []
+  );
 
   const handleTrackUploaded = useCallback(
-    (track: TrackMetadata, points: GpsPoint[], updatedFogPack: FogPackData) => {
+    (
+      track: TrackMetadata,
+      points: GpsPoint[],
+      updatedFogPack: FogPackData,
+      updatedVisitedRegions?: VisitedRegion[]
+    ) => {
       setTrackPointsInCache(track.id, points);
       setLoadedTrackPoints((prev) => ({ ...prev, [track.id]: points }));
       setFogPack(updatedFogPack);
+      if (updatedVisitedRegions) {
+        setVisitedRegions(updatedVisitedRegions);
+      }
       setTracks((prev) => {
         const nextTracks = [
           track,
@@ -177,6 +193,7 @@ export default function App() {
           variant="page"
           onOpenMap={() => navigate("/map")}
           fogPack={fogPack}
+          existingVisitedRegions={visitedRegions}
           ensureFogPack={ensureFogPack}
           onTrackUploaded={handleTrackUploaded}
           onPreviewLocalTrack={handlePreviewLocalTrack}
@@ -198,6 +215,8 @@ export default function App() {
             <MapWorkspace
               tracks={tracks}
               setTracks={setTracks}
+              visitedRegions={visitedRegions}
+              setVisitedRegions={setVisitedRegions}
               stats={stats}
               setStats={setStats}
               fogPack={fogPack}

@@ -41,7 +41,12 @@ import type { FindMyKeyBundle } from "../services/findmyKeyGen.ts";
 import { createGpsDecoder } from "../services/gpsDecoder.ts";
 import { createGpxConverter } from "../services/gpxConverter.ts";
 import type { FileEntry, SysInfo } from "../types/ble.ts";
-import type { FogPackData, GpsPoint, TrackMetadata } from "../types/track.ts";
+import type {
+  FogPackData,
+  GpsPoint,
+  TrackMetadata,
+  VisitedRegion
+} from "../types/track.ts";
 import { formatFileSize } from "../utils/helpers.ts";
 
 type DeviceSyncModalProps = {
@@ -50,14 +55,16 @@ type DeviceSyncModalProps = {
   onClose?: () => void;
   onOpenMap?: () => void;
   fogPack: FogPackData | null;
+  existingVisitedRegions?: VisitedRegion[];
   ensureFogPack: () => Promise<FogPackData>;
   onTrackUploaded: (
     track: TrackMetadata,
     points: GpsPoint[],
-    updatedFogPack: FogPackData
+    updatedFogPack: FogPackData,
+    updatedVisitedRegions?: VisitedRegion[]
   ) => void;
   onPreviewLocalTrack: (name: string, points: GpsPoint[]) => void;
-  onFogRebuilt?: (pack: FogPackData) => void;
+  onFogRebuilt?: (pack: FogPackData, regions?: VisitedRegion[]) => void;
 };
 
 type ModalTab = "upload" | "ble" | "findmy" | "logs";
@@ -151,6 +158,7 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
   onClose,
   onOpenMap,
   fogPack,
+  existingVisitedRegions = [],
   ensureFogPack,
   onTrackUploaded,
   onPreviewLocalTrack,
@@ -276,6 +284,7 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
       );
 
       let workingPack = fogPack ? cloneFogPack(fogPack) : await ensureFogPack();
+      let workingRegions = existingVisitedRegions;
 
       const setItemStatus = (idx: number, status: string, ok?: boolean) => {
         setUploadQueue((prev) =>
@@ -290,6 +299,7 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
           const etl = await runBrowserTrackEtl({
             file: f,
             baseFogPack: workingPack,
+            existingVisitedRegions: workingRegions,
             encodeFogBinary: isFinal,
             onStage: (stage) => setItemStatus(i, stage)
           });
@@ -305,11 +315,14 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
             track: etl.track,
             gpsl0Bytes: etl.gpsl0Bytes,
             tiles: etl.tiles,
-            fogBytes: etl.fogBytes
+            fogBytes: etl.fogBytes,
+            trackRegions: etl.trackRegions,
+            visitedRegions: etl.visitedRegions
           });
 
           workingPack = etl.fogPack;
-          onTrackUploaded(savedTrack, etl.points, etl.fogPack);
+          if (etl.visitedRegions) workingRegions = etl.visitedRegions;
+          onTrackUploaded(savedTrack, etl.points, etl.fogPack, etl.visitedRegions);
           logger.success(
             `浏览器 ETL 入库成功: ${f.name} (${savedTrack.point_count} 点 · ${(etl.gpsl0Bytes.byteLength / 1024).toFixed(1)} KB GPSL0 · ${etl.tiles.length} 瓦片)`
           );
@@ -326,7 +339,7 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
       }
       setIsUploading(false);
     },
-    [ensureFogPack, fogPack, logger, onTrackUploaded]
+    [ensureFogPack, existingVisitedRegions, fogPack, logger, onTrackUploaded]
   );
 
   const listDirectory = useCallback(
@@ -533,6 +546,7 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
         const etl = await runBrowserTrackEtl({
           file: { name: fileName, buffer: rawBuf },
           baseFogPack: basePack,
+          existingVisitedRegions,
           encodeFogBinary: true,
           onStage: (stage) => setStatusMessage(`${fileName}: ${stage}`)
         });
@@ -541,9 +555,11 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
           track: etl.track,
           gpsl0Bytes: etl.gpsl0Bytes,
           tiles: etl.tiles,
-          fogBytes: etl.fogBytes
+          fogBytes: etl.fogBytes,
+          trackRegions: etl.trackRegions,
+          visitedRegions: etl.visitedRegions
         });
-        onTrackUploaded(savedTrack, etl.points, etl.fogPack);
+        onTrackUploaded(savedTrack, etl.points, etl.fogPack, etl.visitedRegions);
         logger.success(`Synced ${fileName} to Cloud R2 + D1!`);
         setStatusMessage(`Synced ${fileName}`);
       } catch (err) {
@@ -555,7 +571,14 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
         resetStatus(1800);
       }
     },
-    [ensureFogPack, fogPack, logger, onTrackUploaded, resetStatus]
+    [
+      ensureFogPack,
+      existingVisitedRegions,
+      fogPack,
+      logger,
+      onTrackUploaded,
+      resetStatus
+    ]
   );
 
   const handleBlePreview = useCallback(
@@ -885,10 +908,14 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
                   onClick={async () => {
                     setRebuildStage("拉取 GPSL0...");
                     try {
-                      const rebuilt = await rebuildGlobalFogInBrowser((msg) =>
-                        setRebuildStage(msg)
+                      let rebuiltRegions: VisitedRegion[] | undefined;
+                      const rebuilt = await rebuildGlobalFogInBrowser(
+                        (msg) => setRebuildStage(msg),
+                        (regions) => {
+                          rebuiltRegions = regions;
+                        }
                       );
-                      onFogRebuilt?.(rebuilt);
+                      onFogRebuilt?.(rebuilt, rebuiltRegions);
                       logger.success(
                         `全局迷雾重刷完成: ${rebuilt.tileCount} 瓦片 · ${rebuilt.exploredAreaKm2} km²`
                       );
