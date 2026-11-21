@@ -3,7 +3,21 @@ import path from "node:path";
 import zlib from "node:zlib";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin } from "vite";
+import {
+  Compression,
+  EtagMismatch,
+  PMTiles,
+  ResolvedValueCache,
+  TileType,
+  type RangeResponse,
+  type Source
+} from "pmtiles";
 
+import {
+  archiveVersion,
+  parseRegionTilePath,
+  tileCacheControl
+} from "./src/worker/regionTiles.ts";
 import type {
   BootstrapStats,
   CompactTrackRegionTuple,
@@ -139,6 +153,80 @@ function recomputeLocalStats(
   };
 }
 
+async function nodeDecompress(
+  buf: ArrayBuffer,
+  compression: Compression
+): Promise<ArrayBuffer> {
+  if (
+    compression === Compression.None ||
+    compression === Compression.Unknown
+  ) {
+    return buf;
+  }
+  if (compression === Compression.Gzip) {
+    const out = zlib.gunzipSync(Buffer.from(buf));
+    return out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength);
+  }
+  throw new Error(`Unsupported compression: ${compression}`);
+}
+
+async function keepNodeGzipTiles(
+  buf: ArrayBuffer,
+  compression: Compression
+): Promise<ArrayBuffer> {
+  return compression === Compression.Gzip
+    ? buf
+    : nodeDecompress(buf, compression);
+}
+
+class LocalPmtilesSource implements Source {
+  private readonly filePath: string;
+
+  constructor(filePath: string) {
+    this.filePath = filePath;
+  }
+
+  getKey(): string {
+    return this.filePath;
+  }
+
+  async getBytes(
+    offset: number,
+    length: number,
+    _signal?: AbortSignal,
+    etag?: string
+  ): Promise<RangeResponse> {
+    if (!fs.existsSync(this.filePath)) {
+      throw new Error(`Archive not found: ${this.filePath}`);
+    }
+    const stat = fs.statSync(this.filePath);
+    const currentEtag = `${stat.size}-${Math.floor(stat.mtimeMs)}`;
+    if (etag && etag !== currentEtag) {
+      throw new EtagMismatch(`Archive changed: ${this.filePath}`);
+    }
+    const clampedLen = Math.max(0, Math.min(length, stat.size - offset));
+    const buf = Buffer.allocUnsafe(clampedLen);
+    if (clampedLen > 0) {
+      const fd = fs.openSync(this.filePath, "r");
+      try {
+        fs.readSync(fd, buf, 0, clampedLen, offset);
+      } finally {
+        fs.closeSync(fd);
+      }
+    }
+    return {
+      data: buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength),
+      etag: currentEtag
+    };
+  }
+}
+
+const LOCAL_REGION_DIR_CACHE = new ResolvedValueCache(
+  25,
+  undefined,
+  nodeDecompress
+);
+
 export function localTrackApiPlugin(frontendRoot: string): Plugin {
   const dataDir = path.join(frontendRoot, "local-data");
 
@@ -168,9 +256,15 @@ export function localTrackApiPlugin(frontendRoot: string): Plugin {
         }
 
         if (
-          urlPath === "/api/regions/global.pmtiles" &&
+          urlPath.startsWith("/api/regions/tiles") &&
           (req.method === "GET" || req.method === "HEAD")
         ) {
+          const parsedTileReq = parseRegionTilePath(urlPath);
+          if (!parsedTileReq.ok) {
+            sendJson(res, 404, { error: "Invalid region tile route" });
+            return;
+          }
+
           const pmtilesPath = path.join(
             dataDir,
             "r2",
@@ -181,59 +275,95 @@ export function localTrackApiPlugin(frontendRoot: string): Plugin {
             sendJson(res, 404, { error: "global-regions.pmtiles not built yet" });
             return;
           }
-          const stat = fs.statSync(pmtilesPath);
-          const totalSize = stat.size;
-          const etag = `"${stat.size}-${Math.floor(stat.mtimeMs)}"`;
 
-          res.setHeader("Content-Type", "application/octet-stream");
-          res.setHeader("Accept-Ranges", "bytes");
-          res.setHeader("ETag", etag);
-          res.setHeader("Cache-Control", "public, max-age=86400");
-
-          if (req.method === "HEAD") {
+          if (parsedTileReq.kind === "version") {
+            const stat = fs.statSync(pmtilesPath);
+            const rawEtag = `${stat.size}-${Math.floor(stat.mtimeMs)}`;
             res.statusCode = 200;
-            res.setHeader("Content-Length", String(totalSize));
+            res.setHeader("Content-Type", "application/json; charset=utf-8");
+            res.setHeader("Cache-Control", "public, max-age=60");
+            res.setHeader("Access-Control-Allow-Origin", "*");
+            res.end(
+              JSON.stringify({
+                version: archiveVersion(rawEtag),
+                uploaded: stat.mtime.toISOString()
+              })
+            );
+            return;
+          }
+
+          const source = new LocalPmtilesSource(pmtilesPath);
+          const isTile = parsedTileReq.kind === "tile";
+          const pm = new PMTiles(
+            source,
+            LOCAL_REGION_DIR_CACHE,
+            isTile ? keepNodeGzipTiles : nodeDecompress
+          );
+          const header = await pm.getHeader();
+
+          if (!isTile) {
+            const origin = `http://${req.headers.host || "localhost:3000"}`;
+            const tilejson = await pm.getTileJson(
+              `${origin}/api/regions/tiles`
+            );
+            res.statusCode = 200;
+            res.setHeader("Content-Type", "application/json; charset=utf-8");
+            res.setHeader("Cache-Control", "public, max-age=86400");
+            res.setHeader("Access-Control-Allow-Origin", "*");
+            res.end(JSON.stringify(tilejson));
+            return;
+          }
+
+          const [z, x, y] = parsedTileReq.tile;
+          const fullUrl = new URL(
+            rawUrl,
+            `http://${req.headers.host || "localhost:3000"}`
+          );
+          const sendNoTile = async (status: number) => {
+            const latest = await pm.getHeader();
+            const cc = tileCacheControl(
+              fullUrl,
+              latest.etag ? archiveVersion(latest.etag) : undefined
+            );
+            res.statusCode = status;
+            res.setHeader("Cache-Control", cc);
+            res.setHeader("Access-Control-Allow-Origin", "*");
             res.end();
+          };
+
+          if (z < header.minZoom || z > header.maxZoom) {
+            await sendNoTile(404);
             return;
           }
 
-          const rangeHeader = String(req.headers.range || "");
-          if (rangeHeader) {
-            const match = rangeHeader.match(/^bytes=(\d+)-(\d*)$/i);
-            if (!match) {
-              res.statusCode = 416;
-              res.setHeader("Content-Range", `bytes */${totalSize}`);
-              res.end();
-              return;
-            }
-            const start = Number(match[1]);
-            const end = match[2]
-              ? Math.min(totalSize - 1, Number(match[2]))
-              : totalSize - 1;
-            if (start >= totalSize || end < start) {
-              res.statusCode = 416;
-              res.setHeader("Content-Range", `bytes */${totalSize}`);
-              res.end();
-              return;
-            }
-            const len = end - start + 1;
-            const buf = Buffer.allocUnsafe(len);
-            const fd = fs.openSync(pmtilesPath, "r");
-            try {
-              fs.readSync(fd, buf, 0, len, start);
-            } finally {
-              fs.closeSync(fd);
-            }
-            res.statusCode = 206;
-            res.setHeader("Content-Range", `bytes ${start}-${end}/${totalSize}`);
-            res.setHeader("Content-Length", String(len));
-            res.end(buf);
+          const tiledata = await pm.getZxy(z, x, y);
+          if (!tiledata) {
+            await sendNoTile(204);
             return;
           }
 
+          const latest = await pm.getHeader();
+          const cc = tileCacheControl(
+            fullUrl,
+            latest.etag ? archiveVersion(latest.etag) : undefined
+          );
           res.statusCode = 200;
-          res.setHeader("Content-Length", String(totalSize));
-          fs.createReadStream(pmtilesPath).pipe(res);
+          res.setHeader(
+            "Content-Type",
+            latest.tileType === TileType.Mvt
+              ? "application/x-protobuf"
+              : "application/octet-stream"
+          );
+          res.setHeader("Cache-Control", cc);
+          res.setHeader("Access-Control-Allow-Origin", "*");
+          if (latest.tileCompression === Compression.Gzip) {
+            res.setHeader("Content-Encoding", "gzip");
+          }
+          if (req.method === "HEAD") {
+            res.end();
+          } else {
+            res.end(Buffer.from(tiledata.data));
+          }
           return;
         }
 

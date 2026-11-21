@@ -1,6 +1,5 @@
 import { classifyRings, VectorTile } from "@mapbox/vector-tile";
 import { PbfReader } from "pbf";
-import { PMTiles } from "pmtiles";
 
 import type {
   CompactTrackRegionTuple,
@@ -27,19 +26,39 @@ import {
   type LeafRegionHit
 } from "./regionEngine.ts";
 
-export function getRegionsPmtilesUrl(): string {
-  if (typeof window === "undefined") {
-    return "/api/regions/global.pmtiles";
+let versionPromise: Promise<string | null> | null = null;
+let cachedTileVersion: string | null | undefined;
+
+export async function fetchRegionsTileVersion(): Promise<string | null> {
+  if (cachedTileVersion !== undefined) return cachedTileVersion;
+  if (!versionPromise) {
+    versionPromise = (async () => {
+      try {
+        const resp = await fetch("/api/regions/tiles/version");
+        if (!resp.ok) {
+          versionPromise = null;
+          return null;
+        }
+        const json = (await resp.json()) as { version?: unknown };
+        const v = typeof json.version === "string" && json.version ? json.version : null;
+        cachedTileVersion = v;
+        return v;
+      } catch {
+        versionPromise = null;
+        return null;
+      }
+    })();
   }
-  return `${window.location.origin}/api/regions/global.pmtiles`;
+  return versionPromise;
 }
 
-let cachedPmtiles: PMTiles | null = null;
-function getPmtilesInstance(): PMTiles {
-  if (!cachedPmtiles) {
-    cachedPmtiles = new PMTiles(getRegionsPmtilesUrl());
-  }
-  return cachedPmtiles;
+export function getRegionsTileTemplateUrl(version?: string | null): string {
+  const suffix = version ? `?v=${encodeURIComponent(version)}` : "";
+  const base =
+    typeof window === "undefined"
+      ? "/api/regions/tiles/{z}/{x}/{y}.mvt"
+      : `${window.location.origin}/api/regions/tiles/{z}/{x}/{y}.mvt`;
+  return `${base}${suffix}`;
 }
 
 let metaPromise: Promise<Map<number, RegionMetaRecord> | null> | null = null;
@@ -211,8 +230,8 @@ async function runWithConcurrency<T>(
 
 /**
  * Classifies a list of Z15 tile keys into their global leaf region ID (`rid`)
- * by streaming only the covering Z10 vector tiles from `global-regions.pmtiles`
- * via HTTP Range requests and doing exact MVT-space Point-in-Polygon.
+ * by fetching only the covering Z10 vector tiles from `/api/regions/tiles/{z}/{x}/{y}.mvt`
+ * and doing exact MVT-space Point-in-Polygon.
  */
 export async function classifyZ15TilesViaPmtiles(
   tileKeys: number[]
@@ -220,12 +239,8 @@ export async function classifyZ15TilesViaPmtiles(
   const result = new Map<number, number>();
   if (tileKeys.length === 0) return result;
 
-  const pmtiles = getPmtilesInstance();
-  try {
-    await pmtiles.getHeader();
-  } catch {
-    return result;
-  }
+  const tileVer = await fetchRegionsTileVersion();
+  const qs = tileVer ? `?v=${encodeURIComponent(tileVer)}` : "";
 
   // Group Z15 tiles by their parent Z10 tile (15 - 10 = 5 bits)
   const byZ10 = new Map<
@@ -248,10 +263,13 @@ export async function classifyZ15TilesViaPmtiles(
   const groups = Array.from(byZ10.values());
   await runWithConcurrency(groups, 6, async (group) => {
     try {
-      const tileRes = await pmtiles.getZxy(10, group.z10x, group.z10y);
-      if (!tileRes || !tileRes.data) return;
+      const resp = await fetch(
+        `/api/regions/tiles/10/${group.z10x}/${group.z10y}.mvt${qs}`
+      );
+      if (resp.status === 204 || resp.status === 404 || !resp.ok) return;
 
-      const vt = new VectorTile(new PbfReader(new Uint8Array(tileRes.data)));
+      const buf = await resp.arrayBuffer();
+      const vt = new VectorTile(new PbfReader(new Uint8Array(buf)));
       const layer = vt.layers["l3"];
       if (!layer || layer.length === 0) return;
 

@@ -17,6 +17,7 @@ import type {
   UploadTrackMetaPayload,
   VisitedRegion
 } from "../types/track.ts";
+import { handleRegionTileRequest } from "./regionTiles.ts";
 
 export interface Env {
   ASSETS: Fetcher;
@@ -25,7 +26,6 @@ export interface Env {
 }
 
 const FOG_KEY = "fog/global-fog.bin";
-const REGIONS_PMTILES_KEY = "regions/global-regions.pmtiles";
 const REGIONS_META_KEY = "regions/regions-meta.json.gz";
 const MAX_QUERY_TILES = 1600;
 // Static 16-byte empty FGP1 header ("FGP1", version=1, tileCount=0, totalCells=0)
@@ -309,84 +309,6 @@ async function handleGetFog(request: Request, env: Env): Promise<Response> {
   }
 
   return new Response(obj.body as unknown as BodyInit, { headers });
-}
-
-async function handleGetRegionsPmtiles(
-  request: Request,
-  env: Env
-): Promise<Response> {
-  if (request.method === "HEAD") {
-    const headObj = await env.TRACKS_BUCKET.head(REGIONS_PMTILES_KEY);
-    if (!headObj) {
-      return jsonResponse({ error: "global-regions.pmtiles not found" }, 404);
-    }
-    const headers: Record<string, string> = {
-      "Content-Type": "application/octet-stream",
-      "Content-Length": String(headObj.size),
-      "Accept-Ranges": "bytes",
-      "Cache-Control": "public, max-age=86400"
-    };
-    if (headObj.httpEtag) headers["ETag"] = headObj.httpEtag;
-    return new Response(null, { status: 200, headers });
-  }
-
-  const rangeHeader = request.headers.get("range");
-  if (rangeHeader) {
-    const match = rangeHeader.match(/^bytes=(\d+)-(\d*)$/i);
-    if (!match) {
-      return new Response("Range Not Satisfiable", { status: 416 });
-    }
-    const start = Number(match[1]);
-    const reqEnd = match[2] ? Number(match[2]) : undefined;
-    if (
-      !Number.isFinite(start) ||
-      (reqEnd !== undefined && (!Number.isFinite(reqEnd) || reqEnd < start))
-    ) {
-      return new Response("Range Not Satisfiable", { status: 416 });
-    }
-
-    const reqLen = reqEnd !== undefined ? reqEnd - start + 1 : undefined;
-    const obj = await env.TRACKS_BUCKET.get(REGIONS_PMTILES_KEY, {
-      range: reqLen !== undefined ? { offset: start, length: reqLen } : { offset: start }
-    });
-    if (!obj) {
-      return jsonResponse({ error: "global-regions.pmtiles not found" }, 404);
-    }
-
-    const totalSize = obj.size;
-    if (start >= totalSize) {
-      return new Response("Range Not Satisfiable", {
-        status: 416,
-        headers: { "Content-Range": `bytes */${totalSize}` }
-      });
-    }
-
-    const actualEnd =
-      reqLen !== undefined ? Math.min(totalSize - 1, start + reqLen - 1) : totalSize - 1;
-    const actualLen = actualEnd - start + 1;
-    const headers: Record<string, string> = {
-      "Content-Type": "application/octet-stream",
-      "Content-Range": `bytes ${start}-${actualEnd}/${totalSize}`,
-      "Content-Length": String(actualLen),
-      "Accept-Ranges": "bytes",
-      "Cache-Control": "public, max-age=86400"
-    };
-    if (obj.httpEtag) headers["ETag"] = obj.httpEtag;
-    return new Response(obj.body as unknown as BodyInit, { status: 206, headers });
-  }
-
-  const obj = await env.TRACKS_BUCKET.get(REGIONS_PMTILES_KEY);
-  if (!obj) {
-    return jsonResponse({ error: "global-regions.pmtiles not found" }, 404);
-  }
-  const headers: Record<string, string> = {
-    "Content-Type": "application/octet-stream",
-    "Content-Length": String(obj.size),
-    "Accept-Ranges": "bytes",
-    "Cache-Control": "public, max-age=86400"
-  };
-  if (obj.httpEtag) headers["ETag"] = obj.httpEtag;
-  return new Response(obj.body as unknown as BodyInit, { status: 200, headers });
 }
 
 async function handleGetRegionsMeta(
@@ -869,7 +791,7 @@ export default {
   async fetch(
     request: Request,
     env: Env,
-    _ctx: ExecutionContext
+    ctx: ExecutionContext
   ): Promise<Response> {
     const url = new URL(request.url);
     const pathname = url.pathname;
@@ -883,11 +805,13 @@ export default {
     if (pathname === "/api/fog" && request.method === "PUT") {
       return handlePutFog(request, env);
     }
-    if (
-      pathname === "/api/regions/global.pmtiles" &&
-      (request.method === "GET" || request.method === "HEAD")
-    ) {
-      return handleGetRegionsPmtiles(request, env);
+    if (pathname.startsWith("/api/regions/tiles")) {
+      const tileResp = await handleRegionTileRequest(
+        request,
+        env.TRACKS_BUCKET,
+        ctx
+      );
+      if (tileResp) return tileResp;
     }
     if (pathname === "/api/regions/meta" && request.method === "GET") {
       return handleGetRegionsMeta(request, env);

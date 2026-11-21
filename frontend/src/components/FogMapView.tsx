@@ -1,22 +1,16 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  addProtocol,
   Map as MapLibreMap,
   NavigationControl,
   ScaleControl,
   setWorkerUrl,
-  type AddProtocolAction,
   type DataDrivenPropertyValueSpecification,
   type GeoJSONSource,
   type MapMouseEvent
 } from "maplibre-gl";
 import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
-import { Protocol } from "pmtiles";
 
 setWorkerUrl(maplibreWorkerUrl);
-
-const pmtilesProtocol = new Protocol();
-addProtocol("pmtiles", pmtilesProtocol.tile as unknown as AddProtocolAction);
 
 import type {
   BaseMapId,
@@ -46,7 +40,10 @@ import {
   FOG_SUBGRID_SIZE,
   FOG_TILE_ZOOM
 } from "../services/fogEngine.ts";
-import { getRegionsPmtilesUrl } from "../services/regionClassifier.ts";
+import {
+  fetchRegionsTileVersion,
+  getRegionsTileTemplateUrl
+} from "../services/regionClassifier.ts";
 
 export type SpatialOverlayShape =
   | { kind: "point"; lat: number; lon: number; radiusM: number }
@@ -486,6 +483,7 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
   const fogBufferCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const styleReadyRef = useRef(false);
+  const regionsTileVersionRef = useRef<string | null>(null);
   const appliedBaseMapIdRef = useRef<BaseMapId>(baseMapId);
   const pendingFitBoundsRef = useRef<[number, number, number, number] | null>(
     null
@@ -956,7 +954,9 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
     if (!map.getSource(REGION_SOURCE_ID)) {
       map.addSource(REGION_SOURCE_ID, {
         type: "vector",
-        url: `pmtiles://${getRegionsPmtilesUrl()}`
+        tiles: [getRegionsTileTemplateUrl(regionsTileVersionRef.current)],
+        minzoom: 0,
+        maxzoom: 10
       });
     }
     ensureGeoJsonSource("world-shroud", WORLD_SHROUD_GEOJSON);
@@ -1715,8 +1715,10 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
     const initialBaseMapId = propsRef.current.baseMapId;
     appliedBaseMapIdRef.current = initialBaseMapId;
 
-    loadMapStyle(initialBaseMapId).then((initialStyle) => {
-      if (cancelled || !containerRef.current) return;
+    Promise.all([loadMapStyle(initialBaseMapId), fetchRegionsTileVersion()]).then(
+      ([initialStyle, tileVersion]) => {
+        if (cancelled || !containerRef.current) return;
+        regionsTileVersionRef.current = tileVersion;
 
       map = new MapLibreMap({
         container,
