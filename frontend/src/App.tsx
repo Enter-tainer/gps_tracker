@@ -189,7 +189,7 @@ export default function App() {
         <div className={route === "/map" ? "contents" : "hidden"}>
           <Suspense
             fallback={
-              <div className="flex h-screen w-screen items-center justify-center bg-background text-sm text-muted-foreground">
+              <div className="flex h-viewport w-screen items-center justify-center bg-background text-sm text-muted-foreground">
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 <span>正在加载地图引擎...</span>
               </div>

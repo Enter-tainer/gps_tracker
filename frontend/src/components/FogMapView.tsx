@@ -47,6 +47,13 @@ export type SpatialOverlayShape =
     }
   | null;
 
+export type FitPadding = {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+};
+
 type FogMapViewProps = {
   mode: MapVisualizationMode;
   baseMapId: BaseMapId;
@@ -67,6 +74,7 @@ type FogMapViewProps = {
     bbox: [number, number, number, number];
     nonce: number;
   } | null;
+  fitPadding?: FitPadding;
   onSelectTrack: (trackId: string, multi: boolean) => void;
   onSpatialPointQuery: (lat: number, lon: number) => void;
   onSpatialBboxQuery: (
@@ -265,6 +273,7 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
   spatialDrawTool,
   hoverPoint,
   fitBoundsTrigger,
+  fitPadding,
   onSelectTrack,
   onSpatialPointQuery,
   onSpatialBboxQuery
@@ -290,6 +299,8 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
     y1: number;
   } | null>(null);
   const dragStartRef = useRef<{ x: number; y: number } | null>(null);
+  const activeTouchesRef = useRef<Set<number>>(new Set());
+  const activePointerIdRef = useRef<number | null>(null);
 
   const propsRef = useRef({
     mode,
@@ -302,6 +313,7 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
     selectedTrackIds,
     loadedTrackPoints,
     spatialDrawTool,
+    fitPadding,
     onSpatialPointQuery,
     onSpatialBboxQuery,
     onSelectTrack
@@ -317,6 +329,7 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
     selectedTrackIds,
     loadedTrackPoints,
     spatialDrawTool,
+    fitPadding,
     onSpatialPointQuery,
     onSpatialBboxQuery,
     onSelectTrack
@@ -914,7 +927,9 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
   function applyFitBounds(
     map: MapLibreMap,
     bbox: [number, number, number, number],
-    gcj: boolean
+    gcj: boolean,
+    container?: HTMLElement | null,
+    customPadding?: FitPadding
   ): void {
     const [minLon, minLat, maxLon, maxLat] = bbox;
     if (
@@ -925,10 +940,37 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
     ) {
       return;
     }
+    const w = container?.clientWidth || (typeof window !== "undefined" ? window.innerWidth : 1024);
+    const h = container?.clientHeight || (typeof window !== "undefined" ? window.innerHeight : 768);
+    const basePadding: FitPadding = customPadding
+      ? { ...customPadding }
+      : w < 768
+        ? { top: 76, bottom: 96, left: 24, right: 24 }
+        : { top: 80, bottom: 120, left: 380, right: 60 };
+
+    const maxHoriz = Math.max(16, Math.floor(w * 0.55));
+    const maxVert = Math.max(16, Math.floor(h * 0.55));
+    const horizSum = basePadding.left + basePadding.right;
+    if (horizSum > maxHoriz && horizSum > 0) {
+      const scale = maxHoriz / horizSum;
+      basePadding.left = Math.round(basePadding.left * scale);
+      basePadding.right = Math.round(basePadding.right * scale);
+    }
+    const vertSum = basePadding.top + basePadding.bottom;
+    if (vertSum > maxVert && vertSum > 0) {
+      const scale = maxVert / vertSum;
+      basePadding.top = Math.round(basePadding.top * scale);
+      basePadding.bottom = Math.round(basePadding.bottom * scale);
+    }
+
     const sw = applyDisplayLonLat(minLon, minLat, gcj);
     const ne = applyDisplayLonLat(maxLon, maxLat, gcj);
+    if (Math.abs(sw[0] - ne[0]) < 1e-6 && Math.abs(sw[1] - ne[1]) < 1e-6) {
+      map.easeTo({ center: sw, zoom: 14, duration: 650 });
+      return;
+    }
     map.fitBounds([sw, ne], {
-      padding: { top: 80, bottom: 120, left: 380, right: 60 },
+      padding: basePadding,
       maxZoom: 15,
       duration: 650
     });
@@ -939,6 +981,9 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
     const map = mapRef.current;
     const canvas = fogCanvasRef.current;
     if (!map || !canvas) return;
+
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width < 2 || rect.height < 2) return;
 
     const {
       mode: curMode,
@@ -951,7 +996,6 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
       loadedTrackPoints: curLoadedPoints
     } = propsRef.current;
 
-    const rect = canvas.getBoundingClientRect();
     const cssW = Math.max(1, Math.round(rect.width));
     const cssH = Math.max(1, Math.round(rect.height));
     const dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -1161,6 +1205,8 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
 
     if (useHighRes) {
       const cache = z15CanvasCacheRef.current;
+      const maxCache =
+        typeof window !== "undefined" && window.innerWidth < 768 ? 500 : 1600;
       for (let tx = txMin; tx <= txMax; tx++) {
         for (let ty = tyMin; ty <= tyMax; ty++) {
           const key = encodeTileKey(tx, ty);
@@ -1169,7 +1215,7 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
 
           let tileCanvas = cache.get(key);
           if (!tileCanvas) {
-            if (cache.size > 1600) {
+            if (cache.size > maxCache) {
               const oldest = cache.keys().next().value;
               if (oldest !== undefined) cache.delete(oldest);
             }
@@ -1222,6 +1268,18 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
     let cancelled = false;
     let map: MapLibreMap | null = null;
     let resizeObs: ResizeObserver | null = null;
+    let orientationRaf: number | null = null;
+
+    const handleOrientationChange = () => {
+      if (orientationRaf !== null) {
+        cancelAnimationFrame(orientationRaf);
+      }
+      orientationRaf = requestAnimationFrame(() => {
+        orientationRaf = null;
+        map?.resize();
+        drawFogCanvas();
+      });
+    };
 
     const initialBaseMapId = propsRef.current.baseMapId;
     appliedBaseMapIdRef.current = initialBaseMapId;
@@ -1238,16 +1296,20 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
         renderWorldCopies: false,
         dragRotate: false,
         pitchWithRotate: false,
+        touchPitch: false,
         maxZoom: 20
       });
+
+      map.touchZoomRotate.disableRotation();
+      map.keyboard.disableRotation();
 
       map.addControl(
         new NavigationControl({ showCompass: false }),
         "bottom-right"
       );
       map.addControl(
-        new ScaleControl({ maxWidth: 110, unit: "metric" }),
-        "bottom-right"
+        new ScaleControl({ maxWidth: 96, unit: "metric" }),
+        "bottom-left"
       );
 
       mapRef.current = map;
@@ -1296,9 +1358,17 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
         }
 
         if (map.getLayer("all-tracks-layer")) {
-          const hits = map.queryRenderedFeatures(e.point, {
-            layers: ["all-tracks-layer"]
-          });
+          const isCoarse =
+            typeof window !== "undefined" &&
+            (window.matchMedia?.("(pointer: coarse)").matches ?? false);
+          const tol = isCoarse ? 14 : 6;
+          const hits = map.queryRenderedFeatures(
+            [
+              [e.point.x - tol, e.point.y - tol],
+              [e.point.x + tol, e.point.y + tol]
+            ],
+            { layers: ["all-tracks-layer"] }
+          );
           if (hits.length > 0) {
             const trackId = hits[0].properties?.id;
             if (typeof trackId === "string" && trackId) {
@@ -1325,7 +1395,13 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
       if (pendingFitBoundsRef.current) {
         const bbox = pendingFitBoundsRef.current;
         pendingFitBoundsRef.current = null;
-        applyFitBounds(map, bbox, propsRef.current.useGcj02);
+        applyFitBounds(
+          map,
+          bbox,
+          propsRef.current.useGcj02,
+          containerRef.current,
+          propsRef.current.fitPadding
+        );
       }
 
       resizeObs = new ResizeObserver(() => {
@@ -1333,10 +1409,15 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
         drawFogCanvas();
       });
       resizeObs.observe(container);
+      window.addEventListener("orientationchange", handleOrientationChange);
     });
 
     return () => {
       cancelled = true;
+      if (orientationRaf !== null) {
+        cancelAnimationFrame(orientationRaf);
+      }
+      window.removeEventListener("orientationchange", handleOrientationChange);
       resizeObs?.disconnect();
       styleReadyRef.current = false;
       if (map) {
@@ -1412,23 +1493,60 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
       return;
     }
     pendingFitBoundsRef.current = null;
-    applyFitBounds(map, fitBoundsTrigger.bbox, useGcj02);
+    applyFitBounds(
+      map,
+      fitBoundsTrigger.bbox,
+      useGcj02,
+      containerRef.current,
+      propsRef.current.fitPadding
+    );
   }, [fitBoundsTrigger, useGcj02]);
 
+  const releaseCaptureQuietly = (
+    el: HTMLDivElement,
+    pointerId: number | null
+  ) => {
+    if (pointerId === null) return;
+    try {
+      if (el.hasPointerCapture(pointerId)) {
+        el.releasePointerCapture(pointerId);
+      }
+    } catch {
+      // Ignore if pointer capture is already released
+    }
+  };
+
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    activeTouchesRef.current.add(e.pointerId);
+    if (activeTouchesRef.current.size > 1) {
+      releaseCaptureQuietly(e.currentTarget, activePointerIdRef.current);
+      activePointerIdRef.current = null;
+      dragStartRef.current = null;
+      setBoxDragRect(null);
+      return;
+    }
+
     if (mode !== "spatial") return;
     const isBbox = spatialDrawTool === "bbox" || e.shiftKey;
-    if (!isBbox) return;
+    if (!isBbox || !e.isPrimary) return;
 
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
+    activePointerIdRef.current = e.pointerId;
     dragStartRef.current = { x, y };
     setBoxDragRect({ x0: x, y0: y, x1: x, y1: y });
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // Ignore capture errors on unsupported targets
+    }
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!dragStartRef.current) return;
+    if (activePointerIdRef.current !== e.pointerId || !dragStartRef.current) {
+      return;
+    }
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
@@ -1441,8 +1559,14 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
   };
 
   const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    activeTouchesRef.current.delete(e.pointerId);
+    if (activePointerIdRef.current !== e.pointerId || !dragStartRef.current) {
+      return;
+    }
+
+    releaseCaptureQuietly(e.currentTarget, e.pointerId);
+    activePointerIdRef.current = null;
     const start = dragStartRef.current;
-    if (!start) return;
     dragStartRef.current = null;
     setBoxDragRect(null);
 
@@ -1453,7 +1577,8 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
     const x1 = e.clientX - rect.left;
     const y1 = e.clientY - rect.top;
 
-    if (Math.abs(x1 - start.x) < 6 && Math.abs(y1 - start.y) < 6) {
+    const minDrag = e.pointerType === "touch" ? 10 : 6;
+    if (Math.abs(x1 - start.x) < minDrag && Math.abs(y1 - start.y) < minDrag) {
       return;
     }
 
@@ -1480,12 +1605,23 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
     );
   };
 
+  const handlePointerCancel = (e: React.PointerEvent<HTMLDivElement>) => {
+    activeTouchesRef.current.delete(e.pointerId);
+    if (activePointerIdRef.current === e.pointerId) {
+      releaseCaptureQuietly(e.currentTarget, e.pointerId);
+      activePointerIdRef.current = null;
+      dragStartRef.current = null;
+      setBoxDragRect(null);
+    }
+  };
+
   return (
     <div
-      className="relative h-full w-full select-none overflow-hidden bg-slate-950"
+      className="relative h-full w-full touch-none select-none overflow-hidden bg-slate-950"
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerCancel}
     >
       <div ref={containerRef} className="h-full w-full" />
       <canvas

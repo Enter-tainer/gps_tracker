@@ -1,5 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Compass, Download, Palette, X } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronUp,
+  Compass,
+  Download,
+  Palette,
+  X
+} from "lucide-react";
 
 import type {
   GpsPoint,
@@ -12,6 +19,9 @@ type ElevationProfileChartProps = {
   track: TrackMetadata;
   points: GpsPoint[];
   colorMode: TrackColorMode;
+  isMobile?: boolean;
+  minimized?: boolean;
+  onToggleMinimize?: () => void;
   onChangeColorMode: (mode: TrackColorMode) => void;
   onHoverPoint: (pt: { lat: number; lon: number } | null) => void;
   onFitBounds: () => void;
@@ -27,20 +37,51 @@ type HoverSample = {
   timestamp: number;
 };
 
+function getChartMargins(cssW: number) {
+  const narrow = cssW < 420;
+  return {
+    padL: narrow ? 36 : 44,
+    padR: narrow ? 30 : 44,
+    ticks: narrow ? 3 : 5
+  };
+}
+
 export const ElevationProfileChart: React.FC<ElevationProfileChartProps> = ({
   track,
   points,
   colorMode,
+  isMobile = false,
+  minimized = false,
+  onToggleMinimize,
   onChangeColorMode,
   onHoverPoint,
   onFitBounds,
   onDownloadGpx,
   onClose
 }) => {
+  const plotContainerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const isScrubbingRef = useRef(false);
   const [hoverSample, setHoverSample] = useState<HoverSample | null>(null);
+  const [resizeTick, setResizeTick] = useState(0);
 
   const series = useMemo(() => computePointSeries(points), [points]);
+
+  useEffect(() => {
+    setHoverSample(null);
+  }, [track.id]);
+
+  useEffect(() => {
+    if (isMobile && minimized) return;
+    const el = plotContainerRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+
+    const obs = new ResizeObserver(() => {
+      setResizeTick((t) => t + 1);
+    });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [isMobile, minimized]);
 
   const { totalKm, minEle, maxEle, maxSpeed } = useMemo(() => {
     const n = points.length;
@@ -68,11 +109,14 @@ export const ElevationProfileChart: React.FC<ElevationProfileChartProps> = ({
   }, [points.length, series]);
 
   useEffect(() => {
+    if (isMobile && minimized) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
-    const cssW = Math.max(200, Math.round(rect.width));
-    const cssH = Math.max(80, Math.round(rect.height));
+    if (rect.width < 20 || rect.height < 20) return;
+
+    const cssW = Math.max(180, Math.round(rect.width));
+    const cssH = Math.max(72, Math.round(rect.height));
     const dpr = Math.min(2, window.devicePixelRatio || 1);
 
     if (
@@ -91,10 +135,9 @@ export const ElevationProfileChart: React.FC<ElevationProfileChartProps> = ({
     const n = points.length;
     if (n < 2) return;
 
-    const padL = 44;
-    const padR = 44;
+    const { padL, padR, ticks } = getChartMargins(cssW);
     const padT = 10;
-    const padB = 20;
+    const padB = 18;
     const plotW = Math.max(10, cssW - padL - padR);
     const plotH = Math.max(10, cssH - padT - padB);
     const eleSpan = Math.max(1, maxEle - minEle);
@@ -103,7 +146,7 @@ export const ElevationProfileChart: React.FC<ElevationProfileChartProps> = ({
     ctx.strokeStyle = "rgba(148, 163, 184, 0.14)";
     ctx.lineWidth = 1;
     ctx.fillStyle = "rgba(148, 163, 184, 0.7)";
-    ctx.font = "10px 'JetBrains Mono', monospace";
+    ctx.font = `${cssW < 420 ? 9 : 10}px 'JetBrains Mono', monospace`;
 
     for (let g = 0; g <= 2; g++) {
       const ratio = g / 2;
@@ -115,11 +158,11 @@ export const ElevationProfileChart: React.FC<ElevationProfileChartProps> = ({
 
       const eleLabel = Math.round(minEle + eleSpan * ratio);
       ctx.textAlign = "right";
-      ctx.fillText(`${eleLabel}m`, padL - 6, y + 3);
+      ctx.fillText(`${eleLabel}m`, padL - 5, y + 3);
 
       const spdLabel = Math.round(maxSpeed * ratio);
       ctx.textAlign = "left";
-      ctx.fillText(`${spdLabel}`, padL + plotW + 6, y + 3);
+      ctx.fillText(`${spdLabel}`, padL + plotW + 5, y + 3);
     }
 
     // Decimate indices to at most plotW * 2 samples for crisp fast stroke
@@ -176,7 +219,6 @@ export const ElevationProfileChart: React.FC<ElevationProfileChartProps> = ({
     // X-axis distance ticks
     ctx.fillStyle = "rgba(148, 163, 184, 0.7)";
     ctx.textAlign = "center";
-    const ticks = 5;
     for (let t = 0; t <= ticks; t++) {
       const ratio = t / ticks;
       const x = padL + plotW * ratio;
@@ -184,10 +226,10 @@ export const ElevationProfileChart: React.FC<ElevationProfileChartProps> = ({
       ctx.fillText(`${kmVal}km`, x, cssH - 4);
     }
 
-    // Hover crosshair
+    // Hover / scrub crosshair
     if (hoverSample) {
       const hx = Math.max(padL, Math.min(padL + plotW, hoverSample.x));
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.55)";
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.6)";
       ctx.setLineDash([3, 3]);
       ctx.beginPath();
       ctx.moveTo(hx, padT);
@@ -195,15 +237,25 @@ export const ElevationProfileChart: React.FC<ElevationProfileChartProps> = ({
       ctx.stroke();
       ctx.setLineDash([]);
     }
-  }, [points, series, totalKm, minEle, maxEle, maxSpeed, hoverSample]);
+  }, [
+    points,
+    series,
+    totalKm,
+    minEle,
+    maxEle,
+    maxSpeed,
+    hoverSample,
+    resizeTick,
+    isMobile,
+    minimized
+  ]);
 
-  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const updateSampleFromClientX = (clientX: number) => {
     const canvas = canvasRef.current;
     if (!canvas || points.length === 0) return;
     const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const padL = 44;
-    const padR = 44;
+    const x = clientX - rect.left;
+    const { padL, padR } = getChartMargins(rect.width);
     const plotW = Math.max(10, rect.width - padL - padR);
     const ratio = Math.max(0, Math.min(1, (x - padL) / plotW));
     const targetKm = ratio * totalKm;
@@ -231,9 +283,46 @@ export const ElevationProfileChart: React.FC<ElevationProfileChartProps> = ({
     });
   };
 
-  const handleMouseLeave = () => {
-    setHoverSample(null);
-    onHoverPoint(null);
+  const releasePointerCaptureQuietly = (
+    el: HTMLCanvasElement,
+    pointerId: number
+  ) => {
+    try {
+      if (el.hasPointerCapture(pointerId)) {
+        el.releasePointerCapture(pointerId);
+      }
+    } catch {
+      // Ignore if pointer capture is already released
+    }
+  };
+
+  const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    isScrubbingRef.current = true;
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // Ignore unsupported targets
+    }
+    updateSampleFromClientX(e.clientX);
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (e.pointerType === "mouse" || isScrubbingRef.current) {
+      updateSampleFromClientX(e.clientX);
+    }
+  };
+
+  const handlePointerEnd = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    isScrubbingRef.current = false;
+    releasePointerCaptureQuietly(e.currentTarget, e.pointerId);
+  };
+
+  const handlePointerLeave = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (e.pointerType === "mouse") {
+      isScrubbingRef.current = false;
+      setHoverSample(null);
+      onHoverPoint(null);
+    }
   };
 
   const formatTime = (ts: number) => {
@@ -241,6 +330,176 @@ export const ElevationProfileChart: React.FC<ElevationProfileChartProps> = ({
     const d = new Date(ts * 1000);
     return d.toLocaleTimeString("zh-CN", { hour12: false });
   };
+
+  if (isMobile && minimized) {
+    return (
+      <div className="pointer-events-auto flex items-center justify-between gap-2 rounded-xl border border-border bg-card/95 px-3 py-2 text-card-foreground shadow-xl backdrop-blur-md">
+        <button
+          type="button"
+          onClick={onToggleMinimize}
+          className="flex min-w-0 flex-1 items-center gap-2 text-left"
+        >
+          <span className="truncate text-xs font-semibold text-foreground">
+            {track.title}
+          </span>
+          <span className="shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground">
+            {(track.distance_m / 1000).toFixed(2)} km
+          </span>
+          <span className="shrink-0 font-mono text-[11px] tabular-nums text-emerald-400">
+            +{Math.round(track.elev_gain_m)}m
+          </span>
+        </button>
+        <div className="flex shrink-0 items-center gap-1">
+          {onToggleMinimize && (
+            <button
+              type="button"
+              onClick={onToggleMinimize}
+              title="展开海拔曲线"
+              aria-label="展开海拔曲线"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background text-foreground transition-colors hover:bg-accent"
+            >
+              <ChevronUp className="h-4 w-4" />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onFitBounds}
+            title="定位轨迹"
+            aria-label="定位轨迹"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background text-foreground transition-colors hover:bg-accent"
+          >
+            <Compass className="h-3.5 w-3.5 text-muted-foreground" />
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            title="关闭图表"
+            aria-label="关闭图表"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (isMobile) {
+    return (
+      <div className="pointer-events-auto rounded-xl border border-border bg-card/95 px-3 py-2.5 text-card-foreground shadow-xl backdrop-blur-md">
+        {/* Row 1: Title + metrics + actions */}
+        <div className="mb-1.5 flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span className="truncate text-xs font-semibold tracking-tight text-foreground">
+              {track.title}
+            </span>
+            <span className="shrink-0 rounded border border-border bg-secondary px-1.5 py-0.5 font-mono text-[10px] font-medium tabular-nums text-secondary-foreground">
+              {(track.distance_m / 1000).toFixed(1)}km
+            </span>
+            <span className="shrink-0 rounded border border-border bg-secondary px-1.5 py-0.5 font-mono text-[10px] font-medium tabular-nums text-emerald-400">
+              +{Math.round(track.elev_gain_m)}m
+            </span>
+          </div>
+
+          <div className="flex shrink-0 items-center gap-1">
+            {onToggleMinimize && (
+              <button
+                type="button"
+                onClick={onToggleMinimize}
+                title="收起曲线"
+                aria-label="收起曲线"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              >
+                <ChevronDown className="h-4 w-4" />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onFitBounds}
+              title="定位轨迹"
+              aria-label="定位轨迹"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            >
+              <Compass className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={onDownloadGpx}
+              title="导出 GPX"
+              aria-label="导出 GPX"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            >
+              <Download className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              title="关闭图表"
+              aria-label="关闭图表"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+
+        {/* Row 2: Live scrub readout + color mode switcher */}
+        <div className="mb-1.5 flex items-center justify-between gap-2">
+          <div className="min-w-0 truncate font-mono text-[11px] tabular-nums text-muted-foreground">
+            {hoverSample ? (
+              <span className="text-foreground">
+                {hoverSample.distKm.toFixed(2)}km · {hoverSample.eleM.toFixed(0)}m ·{" "}
+                {hoverSample.speedKmh.toFixed(1)}km/h ·{" "}
+                {formatTime(hoverSample.timestamp)}
+              </span>
+            ) : (
+              <span>滑动下方曲线查看轨迹点</span>
+            )}
+          </div>
+
+          <div className="inline-flex shrink-0 items-center rounded-md bg-muted p-0.5 text-[11px]">
+            {(["speed", "elevation", "track"] as TrackColorMode[]).map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => onChangeColorMode(m)}
+                className={`rounded-sm px-2 py-0.5 font-medium transition-colors ${
+                  colorMode === m
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {m === "speed" ? "速度" : m === "elevation" ? "海拔" : "纯色"}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Plot canvas */}
+        <div ref={plotContainerRef} className="relative h-20 w-full">
+          <canvas
+            ref={canvasRef}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerEnd}
+            onPointerCancel={handlePointerEnd}
+            onPointerLeave={handlePointerLeave}
+            className="h-full w-full touch-none cursor-crosshair"
+          />
+          <div className="pointer-events-none absolute left-10 top-0.5 flex gap-2.5 text-[10px] text-muted-foreground">
+            <span className="flex items-center gap-1">
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-cyan-400" />
+              海拔
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-400" />
+              速度
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="pointer-events-auto rounded-lg border border-border bg-card/95 px-4 py-3 text-card-foreground shadow-xl backdrop-blur-md">
@@ -314,12 +573,15 @@ export const ElevationProfileChart: React.FC<ElevationProfileChartProps> = ({
         </div>
       </div>
 
-      <div className="relative h-28 w-full">
+      <div ref={plotContainerRef} className="relative h-28 w-full">
         <canvas
           ref={canvasRef}
-          onMouseMove={handleMouseMove}
-          onMouseLeave={handleMouseLeave}
-          className="h-full w-full cursor-crosshair"
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerEnd}
+          onPointerCancel={handlePointerEnd}
+          onPointerLeave={handlePointerLeave}
+          className="h-full w-full touch-none cursor-crosshair"
         />
         <div className="pointer-events-none absolute left-12 top-0.5 flex gap-3 text-[10px] text-muted-foreground">
           <span className="flex items-center gap-1">

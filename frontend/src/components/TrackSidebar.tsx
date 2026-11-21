@@ -1,10 +1,13 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Calendar,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   Crosshair,
   Footprints,
+  Layers2,
   MapPin,
   Search,
   Square,
@@ -20,8 +23,13 @@ import type {
 } from "../types/track.ts";
 import type { SpatialOverlayShape } from "./FogMapView.tsx";
 
+export type MobileSheetSnap = "closed" | "half" | "full";
+
 type TrackSidebarProps = {
   isOpen: boolean;
+  isMobile: boolean;
+  mobileSnap?: MobileSheetSnap;
+  onChangeMobileSnap?: (snap: MobileSheetSnap) => void;
   onToggleOpen: () => void;
   stats: BootstrapStats;
   tracks: TrackMetadata[];
@@ -64,6 +72,9 @@ function formatTsDateTime(ts: number): string {
 
 export const TrackSidebar: React.FC<TrackSidebarProps> = ({
   isOpen,
+  isMobile,
+  mobileSnap = "closed",
+  onChangeMobileSnap,
   onToggleOpen,
   stats,
   tracks,
@@ -85,6 +96,34 @@ export const TrackSidebar: React.FC<TrackSidebarProps> = ({
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [activeMonth, setActiveMonth] = useState<string | null>(null);
+  const [multiSelectMode, setMultiSelectMode] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  // Mobile sheet drag state
+  const [dragOffsetY, setDragOffsetY] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStartYRef = useRef(0);
+  const dragStartTimeRef = useRef(0);
+  const dragPointerIdRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (isMobile && mobileSnap === "closed") {
+      setConfirmDeleteId(null);
+      setDragOffsetY(0);
+      setIsDragging(false);
+    }
+  }, [isMobile, mobileSnap]);
+
+  useEffect(() => {
+    if (!isMobile || mobileSnap === "closed") return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        onChangeMobileSnap?.("closed");
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isMobile, mobileSnap, onChangeMobileSnap]);
 
   const trackMap = useMemo(() => {
     const m = new Map<string, TrackMetadata>();
@@ -125,12 +164,79 @@ export const TrackSidebar: React.FC<TrackSidebarProps> = ({
     });
   }, [tracks, searchQuery, activeMonth]);
 
-  if (!isOpen) {
+  const handleGrabPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    dragPointerIdRef.current = e.pointerId;
+    dragStartYRef.current = e.clientY;
+    dragStartTimeRef.current = performance.now();
+    setIsDragging(true);
+    setDragOffsetY(0);
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // Ignore unsupported targets
+    }
+  };
+
+  const handleGrabPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isDragging || dragPointerIdRef.current !== e.pointerId) return;
+    const dy = e.clientY - dragStartYRef.current;
+    if (dy < 0) {
+      const limited =
+        mobileSnap === "full" ? dy * 0.15 : Math.max(-140, dy);
+      setDragOffsetY(limited);
+    } else {
+      setDragOffsetY(dy);
+    }
+  };
+
+  const finishGrabDrag = (e: React.PointerEvent<HTMLDivElement>, cancelled = false) => {
+    if (!isDragging || dragPointerIdRef.current !== e.pointerId) return;
+    try {
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
+    } catch {
+      // Ignore
+    }
+    dragPointerIdRef.current = null;
+    setIsDragging(false);
+
+    if (cancelled) {
+      setDragOffsetY(0);
+      return;
+    }
+
+    const dy = e.clientY - dragStartYRef.current;
+    const elapsed = Math.max(16, performance.now() - dragStartTimeRef.current);
+    const velocity = dy / elapsed;
+
+    setDragOffsetY(0);
+
+    if (Math.abs(dy) < 8 && elapsed < 250) {
+      onChangeMobileSnap?.(mobileSnap === "full" ? "half" : "full");
+      return;
+    }
+
+    if (dy > 65 || velocity > 0.45) {
+      onChangeMobileSnap?.(mobileSnap === "full" ? "half" : "closed");
+      return;
+    }
+
+    if (dy < -50 || velocity < -0.45) {
+      onChangeMobileSnap?.("full");
+    }
+  };
+
+  if (isMobile && mobileSnap === "closed") {
+    return null;
+  }
+
+  if (!isMobile && !isOpen) {
     return (
       <button
         type="button"
         onClick={onToggleOpen}
-        className="pointer-events-auto absolute left-3 top-3 z-20 inline-flex h-8 items-center gap-2 rounded-md border border-border bg-background/90 px-3 text-xs font-medium text-foreground shadow-md backdrop-blur-md transition-colors hover:bg-accent hover:text-accent-foreground"
+        className="pointer-events-auto absolute left-3 top-3 z-30 inline-flex h-8 items-center gap-2 rounded-md border border-border bg-background/90 px-3 text-xs font-medium text-foreground shadow-md backdrop-blur-md transition-colors hover:bg-accent hover:text-accent-foreground"
       >
         <Footprints className="h-3.5 w-3.5 text-muted-foreground" />
         <span>足迹档案 ({tracks.length})</span>
@@ -139,9 +245,538 @@ export const TrackSidebar: React.FC<TrackSidebarProps> = ({
     );
   }
 
+  const totalKm = stats.totalDistanceM / 1000;
+  const kpiBlock = isMobile ? (
+    <div className="grid grid-cols-4 gap-1.5 border-b border-border px-3 py-2">
+      <div className="rounded-md border border-border bg-muted/35 px-2 py-1.5">
+        <div className="text-[10px] text-muted-foreground">总里程</div>
+        <div className="mt-0.5 truncate font-mono text-xs font-semibold tabular-nums text-foreground">
+          {totalKm.toLocaleString("en-US", {
+            maximumFractionDigits: totalKm >= 100 ? 0 : 1
+          })}
+          <span className="ml-0.5 text-[10px] font-normal text-muted-foreground">
+            km
+          </span>
+        </div>
+      </div>
+      <div className="rounded-md border border-border bg-muted/35 px-2 py-1.5">
+        <div className="text-[10px] text-muted-foreground">已点亮</div>
+        <div className="mt-0.5 truncate font-mono text-xs font-semibold tabular-nums text-emerald-400">
+          {stats.exploredAreaKm2.toFixed(1)}
+          <span className="ml-0.5 text-[10px] font-normal text-muted-foreground">
+            km²
+          </span>
+        </div>
+      </div>
+      <div className="rounded-md border border-border bg-muted/35 px-2 py-1.5">
+        <div className="text-[10px] text-muted-foreground">轨迹数</div>
+        <div className="mt-0.5 truncate font-mono text-xs font-semibold tabular-nums text-foreground">
+          {stats.trackCount}
+          <span className="ml-0.5 text-[10px] font-normal text-muted-foreground">
+            条
+          </span>
+        </div>
+      </div>
+      <div className="rounded-md border border-border bg-muted/35 px-2 py-1.5">
+        <div className="text-[10px] text-muted-foreground">总爬升</div>
+        <div className="mt-0.5 truncate font-mono text-xs font-semibold tabular-nums text-foreground">
+          {stats.totalElevGainM >= 1000
+            ? `+${(stats.totalElevGainM / 1000).toFixed(1)}k`
+            : `+${Math.round(stats.totalElevGainM)}m`}
+        </div>
+      </div>
+    </div>
+  ) : (
+    <div className="grid grid-cols-2 gap-2 border-b border-border p-3">
+      <div className="rounded-md border border-border bg-muted/35 px-3 py-2">
+        <div className="text-[11px] font-medium text-muted-foreground">
+          总里程
+        </div>
+        <div className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
+          {totalKm.toLocaleString("en-US", {
+            maximumFractionDigits: 1
+          })}{" "}
+          <span className="text-xs font-normal text-muted-foreground">km</span>
+        </div>
+      </div>
+      <div className="rounded-md border border-border bg-muted/35 px-3 py-2">
+        <div className="text-[11px] font-medium text-muted-foreground">
+          已点亮面积
+        </div>
+        <div className="mt-0.5 font-mono text-base font-semibold tabular-nums text-emerald-400">
+          {stats.exploredAreaKm2.toFixed(1)}{" "}
+          <span className="text-xs font-normal text-muted-foreground">km²</span>
+        </div>
+      </div>
+      <div className="rounded-md border border-border bg-muted/35 px-3 py-2">
+        <div className="text-[11px] font-medium text-muted-foreground">
+          轨迹天数 / 瓦片
+        </div>
+        <div className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-foreground">
+          {stats.trackCount} 条 ·{" "}
+          <span className="text-muted-foreground">
+            {stats.visitedTilesZ15.toLocaleString()}
+          </span>
+        </div>
+      </div>
+      <div className="rounded-md border border-border bg-muted/35 px-3 py-2">
+        <div className="text-[11px] font-medium text-muted-foreground">
+          累计点位 / 爬升
+        </div>
+        <div className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-foreground">
+          {(stats.totalPoints / 10000).toFixed(1)}w ·{" "}
+          <span className="text-muted-foreground">
+            +{Math.round(stats.totalElevGainM / 1000)}km
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+
+  const innerContent = (
+    <>
+      {/* KPI Grid */}
+      {kpiBlock}
+
+      {/* Spatial Inspector Box (active in spatial mode or when results exist) */}
+      {(mode === "spatial" || spatialShape !== null) && (
+        <div className="border-b border-border bg-muted/30 p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <div className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+              <MapPin className="h-3.5 w-3.5 text-amber-400" />
+              <span>空间反查 (Z15 索引 + 精确匹配)</span>
+            </div>
+            {spatialShape && (
+              <button
+                type="button"
+                onClick={onClearSpatial}
+                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              >
+                <X className="h-3 w-3" />
+                清除
+              </button>
+            )}
+          </div>
+
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <div className="inline-flex rounded-md bg-muted p-0.5 text-[11px]">
+              <button
+                type="button"
+                onClick={() => onChangeSpatialDrawTool("point")}
+                className={`flex items-center gap-1 rounded-sm ${
+                  isMobile ? "px-2.5 py-1.5" : "px-2 py-1"
+                } font-medium transition-colors ${
+                  spatialDrawTool === "point"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <Crosshair className="h-3 w-3" />
+                点击选点
+              </button>
+              <button
+                type="button"
+                onClick={() => onChangeSpatialDrawTool("bbox")}
+                className={`flex items-center gap-1 rounded-sm ${
+                  isMobile ? "px-2.5 py-1.5" : "px-2 py-1"
+                } font-medium transition-colors ${
+                  spatialDrawTool === "bbox"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <Square className="h-3 w-3" />
+                框选区域
+              </button>
+            </div>
+
+            {spatialDrawTool === "point" && (
+              <div className="flex min-w-[140px] flex-1 items-center gap-1.5 text-[11px] text-muted-foreground">
+                <span>半径</span>
+                <input
+                  type="range"
+                  min={50}
+                  max={1000}
+                  step={50}
+                  value={spatialRadiusM}
+                  onChange={(e) => onChangeSpatialRadius(Number(e.target.value))}
+                  className={`${isMobile ? "h-2" : "h-1"} flex-1 cursor-pointer accent-primary`}
+                />
+                <span className="w-11 text-right font-mono tabular-nums text-foreground">
+                  {spatialRadiusM}m
+                </span>
+              </div>
+            )}
+          </div>
+
+          {!spatialShape && (
+            <p className="text-[11px] text-muted-foreground">
+              {isMobile
+                ? spatialDrawTool === "point"
+                  ? "收起抽屉后，在上方地图任意位置轻点即可反查经过该处的所有日期。"
+                  : "收起抽屉后，在上方地图单指拖拽画框（双指仍可缩放）即可反查。"
+                : spatialDrawTool === "point"
+                  ? "在右侧地图任意位置单击（或按住 Shift 拖拽框选），即可查出经过该处的所有日期。"
+                  : "在地图上按住鼠标左键拖拽画框，松开后查询框内所有历史轨迹。"}
+            </p>
+          )}
+
+          {spatialSearching && (
+            <div className="py-2 text-xs text-muted-foreground">
+              正在检索 D1 空间索引并校验精确距离...
+            </div>
+          )}
+
+          {!spatialSearching && spatialShape && (
+            <div
+              className={`${
+                isMobile ? "max-h-36" : "max-h-40"
+              } space-y-1.5 overflow-y-auto overscroll-contain pr-1 scrollbar-thin`}
+            >
+              {spatialMatches.length === 0 ? (
+                <div className="text-xs text-muted-foreground">
+                  该范围内没有找到经过的轨迹。
+                </div>
+              ) : (
+                spatialMatches.map((m) => {
+                  const t = trackMap.get(m.trackId);
+                  return (
+                    <button
+                      key={m.trackId}
+                      type="button"
+                      onClick={(e) => {
+                        const multi = isMobile
+                          ? multiSelectMode
+                          : e.ctrlKey || e.metaKey;
+                        onSelectTrack(m.trackId, multi);
+                        if (t) onFitTrackBounds(t);
+                        if (isMobile && !multi) {
+                          onChangeMobileSnap?.("closed");
+                        }
+                      }}
+                      className="flex w-full items-center justify-between rounded-md border border-border bg-background/70 px-2.5 py-2 text-left transition-colors hover:bg-accent"
+                    >
+                      <div className="min-w-0 pr-2">
+                        <div className="truncate text-xs font-medium text-foreground">
+                          {t?.title ?? m.trackId}
+                        </div>
+                        <div className="font-mono text-[10px] text-muted-foreground">
+                          经过时间: {formatTsDateTime(m.closestTs ?? m.firstTs)}
+                        </div>
+                      </div>
+                      <div className="shrink-0 text-right font-mono text-[10px] tabular-nums">
+                        {m.minDistanceM !== undefined && (
+                          <div className="text-emerald-400">
+                            最近 {m.minDistanceM}m
+                          </div>
+                        )}
+                        <div className="text-muted-foreground">
+                          {m.matchedPoints} 点
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Monthly Distance Histogram */}
+      {monthlyBuckets.length > 0 && (
+        <div className="border-b border-border px-3 py-2">
+          <div className="mb-1.5 flex items-center justify-between text-[11px] text-muted-foreground">
+            <span className="flex items-center gap-1">
+              <Calendar className="h-3 w-3" />
+              月度足迹分布
+            </span>
+            {activeMonth && (
+              <button
+                type="button"
+                onClick={() => setActiveMonth(null)}
+                className="text-foreground hover:underline"
+              >
+                {activeMonth} (清除)
+              </button>
+            )}
+          </div>
+          <div className="flex h-10 items-end gap-1 overflow-x-auto pb-0.5 scrollbar-thin">
+            {monthlyBuckets.map((b) => {
+              const hPct = Math.max(12, Math.round((b.km / maxMonthKm) * 100));
+              const isSelected = activeMonth === b.month;
+              return (
+                <button
+                  key={b.month}
+                  type="button"
+                  title={`${b.month}: ${b.km.toFixed(1)} km (${b.count} 条)`}
+                  onClick={() =>
+                    setActiveMonth(isSelected ? null : b.month)
+                  }
+                  className={`group flex h-full ${
+                    isMobile ? "min-w-[16px]" : "min-w-[12px]"
+                  } flex-1 flex-col items-center justify-end`}
+                >
+                  <div
+                    className={`w-full rounded-t-sm transition-all ${
+                      isSelected
+                        ? "bg-primary"
+                        : "bg-muted-foreground/30 group-hover:bg-primary/70"
+                    }`}
+                    style={{ height: `${hPct}%` }}
+                  />
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Search + Selection Controls */}
+      <div className="space-y-2 border-b border-border p-3">
+        <div className="flex items-center gap-2">
+          <div className="relative flex-1">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="搜索日期或轨迹名称 (如 2026-10)..."
+              className="flex h-9 w-full rounded-md border border-input bg-background/60 pl-8 pr-8 text-base text-foreground shadow-sm transition-colors placeholder:text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring md:h-8 md:text-xs"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                aria-label="清空搜索"
+                className="absolute right-1.5 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded text-muted-foreground hover:text-foreground"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+
+          {isMobile && (
+            <button
+              type="button"
+              onClick={() => setMultiSelectMode((v) => !v)}
+              aria-pressed={multiSelectMode}
+              className={`inline-flex h-9 shrink-0 items-center gap-1 rounded-md border px-2.5 text-xs font-medium transition-colors ${
+                multiSelectMode
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-border bg-background/70 text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Layers2 className="h-3.5 w-3.5" />
+              <span>多选</span>
+            </button>
+          )}
+        </div>
+
+        {(selectedTrackIds.length > 0 || (isMobile && multiSelectMode)) && (
+          <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+            <span>
+              已选中 <strong className="text-foreground">{selectedTrackIds.length}</strong> 条轨迹
+              {!isMobile && " (Ctrl/Cmd 多选)"}
+              {isMobile && multiSelectMode && " · 多选模式已开"}
+            </span>
+            {selectedTrackIds.length > 0 && (
+              <button
+                type="button"
+                onClick={onClearSelection}
+                className="text-foreground hover:underline"
+              >
+                取消选择
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Scrollable Track List */}
+      <div className="flex-1 space-y-1 overflow-y-auto overscroll-contain p-2.5 scrollbar-thin">
+        {filteredTracks.length === 0 ? (
+          <div className="py-8 text-center text-xs text-muted-foreground">
+            没有匹配的轨迹记录
+          </div>
+        ) : (
+          filteredTracks.map((track) => {
+            const isSelected = selectedTrackIds.includes(track.id);
+            const isLoading = loadingTrackId === track.id;
+            const isConfirmingDelete = confirmDeleteId === track.id;
+            return (
+              <div
+                key={track.id}
+                onClick={(e) => {
+                  setConfirmDeleteId(null);
+                  const multi = isMobile
+                    ? multiSelectMode
+                    : e.ctrlKey || e.metaKey;
+                  onSelectTrack(track.id, multi);
+                  if (!multi) {
+                    onFitTrackBounds(track);
+                    if (isMobile) {
+                      onChangeMobileSnap?.("closed");
+                    }
+                  }
+                }}
+                className={`group cursor-pointer rounded-md border px-3 ${
+                  isMobile ? "py-2.5" : "py-2"
+                } transition-colors ${
+                  isSelected
+                    ? "border-foreground/40 bg-accent text-accent-foreground"
+                    : "border-transparent hover:border-border hover:bg-accent/50"
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="truncate text-xs font-medium text-foreground">
+                    {track.title}
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    <span className="font-mono text-[11px] font-medium tabular-nums text-foreground">
+                      {(track.distance_m / 1000).toFixed(1)} km
+                    </span>
+                    {isConfirmingDelete ? (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setConfirmDeleteId(null);
+                          onDeleteTrack(track.id);
+                        }}
+                        className="inline-flex items-center rounded bg-destructive px-1.5 py-0.5 text-[10px] font-medium text-destructive-foreground shadow-sm hover:bg-destructive/90"
+                      >
+                        确认删除
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        title="删除轨迹"
+                        aria-label={`删除 ${track.title}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setConfirmDeleteId(track.id);
+                        }}
+                        className={`${
+                          isMobile
+                            ? "inline-flex p-1"
+                            : "hidden p-0.5 group-hover:inline-flex"
+                        } rounded text-muted-foreground transition-colors hover:bg-destructive/20 hover:text-red-400`}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div className="mt-1 flex items-center justify-between font-mono text-[10px] tabular-nums text-muted-foreground">
+                  <span>
+                    {formatDuration(track.duration_s)} · +{Math.round(track.elev_gain_m)}m
+                  </span>
+                  <span>
+                    {isLoading
+                      ? "加载 GPZ..."
+                      : `${track.point_count.toLocaleString()} pts`}
+                  </span>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </>
+  );
+
+  if (isMobile) {
+    const baseHeight = mobileSnap === "full" ? "88dvh" : "56dvh";
+    const dynamicHeight =
+      dragOffsetY < 0
+        ? `calc(${baseHeight} + ${Math.round(-dragOffsetY)}px)`
+        : baseHeight;
+
+    return (
+      <>
+        <div
+          className="fixed inset-0 z-40 bg-black/45 transition-opacity"
+          onClick={() => onChangeMobileSnap?.("closed")}
+          aria-hidden="true"
+        />
+        <aside
+          role="dialog"
+          aria-modal="true"
+          aria-label="足迹档案"
+          style={{
+            height: dynamicHeight,
+            transform: `translateY(${Math.max(0, dragOffsetY)}px)`,
+            paddingBottom: "var(--safe-bottom)"
+          }}
+          className={`pointer-events-auto fixed inset-x-0 bottom-0 z-40 flex flex-col overflow-hidden rounded-t-2xl border-t border-border bg-card/96 text-card-foreground shadow-2xl backdrop-blur-xl ${
+            isDragging ? "" : "transition-[height,transform] duration-200 ease-out"
+          }`}
+        >
+          {/* Draggable Grab Handle */}
+          <div
+            onPointerDown={handleGrabPointerDown}
+            onPointerMove={handleGrabPointerMove}
+            onPointerUp={(e) => finishGrabDrag(e, false)}
+            onPointerCancel={(e) => finishGrabDrag(e, true)}
+            className="flex cursor-grab touch-none justify-center pb-1 pt-2.5 active:cursor-grabbing"
+          >
+            <div className="h-1.5 w-10 rounded-full bg-muted-foreground/35" />
+          </div>
+
+          {/* Mobile Sheet Header */}
+          <div className="flex items-center justify-between border-b border-border px-4 pb-2.5 pt-1">
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-8 w-8 items-center justify-center rounded-md border border-border bg-muted text-foreground">
+                <Footprints className="h-4 w-4" />
+              </div>
+              <div>
+                <h1 className="text-sm font-semibold tracking-tight text-foreground">
+                  足迹档案
+                </h1>
+                <p className="text-[11px] text-muted-foreground">
+                  {stats.firstDate && stats.lastDate
+                    ? `${stats.firstDate} ~ ${stats.lastDate}`
+                    : "暂无轨迹记录"}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() =>
+                  onChangeMobileSnap?.(mobileSnap === "full" ? "half" : "full")
+                }
+                aria-label={mobileSnap === "full" ? "缩减高度" : "全屏展开"}
+                className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              >
+                {mobileSnap === "full" ? (
+                  <ChevronDown className="h-4 w-4" />
+                ) : (
+                  <ChevronUp className="h-4 w-4" />
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => onChangeMobileSnap?.("closed")}
+                aria-label="关闭档案"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+
+          {innerContent}
+        </aside>
+      </>
+    );
+  }
+
   return (
-    <aside className="pointer-events-auto absolute bottom-3 left-3 top-3 z-20 flex w-[340px] max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-lg border border-border bg-card/92 text-card-foreground shadow-xl backdrop-blur-md">
-      {/* Header */}
+    <aside className="pointer-events-auto absolute bottom-3 left-3 top-3 z-30 flex w-[340px] max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-lg border border-border bg-card/92 text-card-foreground shadow-xl backdrop-blur-md">
+      {/* Desktop Header */}
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <div className="flex items-center gap-2.5">
           <div className="flex h-8 w-8 items-center justify-center rounded-md border border-border bg-muted text-foreground">
@@ -168,315 +803,7 @@ export const TrackSidebar: React.FC<TrackSidebarProps> = ({
         </button>
       </div>
 
-      {/* KPI Grid */}
-      <div className="grid grid-cols-2 gap-2 border-b border-border p-3">
-        <div className="rounded-md border border-border bg-muted/35 px-3 py-2">
-          <div className="text-[11px] font-medium text-muted-foreground">
-            总里程
-          </div>
-          <div className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
-            {(stats.totalDistanceM / 1000).toLocaleString("en-US", {
-              maximumFractionDigits: 1
-            })}{" "}
-            <span className="text-xs font-normal text-muted-foreground">km</span>
-          </div>
-        </div>
-        <div className="rounded-md border border-border bg-muted/35 px-3 py-2">
-          <div className="text-[11px] font-medium text-muted-foreground">
-            已点亮面积
-          </div>
-          <div className="mt-0.5 font-mono text-base font-semibold tabular-nums text-emerald-400">
-            {stats.exploredAreaKm2.toFixed(1)}{" "}
-            <span className="text-xs font-normal text-muted-foreground">km²</span>
-          </div>
-        </div>
-        <div className="rounded-md border border-border bg-muted/35 px-3 py-2">
-          <div className="text-[11px] font-medium text-muted-foreground">
-            轨迹天数 / 瓦片
-          </div>
-          <div className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-foreground">
-            {stats.trackCount} 条 ·{" "}
-            <span className="text-muted-foreground">
-              {stats.visitedTilesZ15.toLocaleString()}
-            </span>
-          </div>
-        </div>
-        <div className="rounded-md border border-border bg-muted/35 px-3 py-2">
-          <div className="text-[11px] font-medium text-muted-foreground">
-            累计点位 / 爬升
-          </div>
-          <div className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-foreground">
-            {(stats.totalPoints / 10000).toFixed(1)}w ·{" "}
-            <span className="text-muted-foreground">
-              +{Math.round(stats.totalElevGainM / 1000)}km
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* Spatial Inspector Box (active in spatial mode or when results exist) */}
-      {(mode === "spatial" || spatialShape !== null) && (
-        <div className="border-b border-border bg-muted/30 p-3">
-          <div className="mb-2 flex items-center justify-between">
-            <div className="flex items-center gap-1.5 text-xs font-medium text-foreground">
-              <MapPin className="h-3.5 w-3.5 text-amber-400" />
-              <span>空间反查 (Z15 索引 + 精确匹配)</span>
-            </div>
-            {spatialShape && (
-              <button
-                type="button"
-                onClick={onClearSpatial}
-                className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-              >
-                <X className="h-3 w-3" />
-                清除
-              </button>
-            )}
-          </div>
-
-          <div className="mb-2 flex flex-wrap items-center gap-2">
-            <div className="inline-flex rounded-md bg-muted p-0.5 text-[11px]">
-              <button
-                type="button"
-                onClick={() => onChangeSpatialDrawTool("point")}
-                className={`flex items-center gap-1 rounded-sm px-2 py-1 font-medium transition-colors ${
-                  spatialDrawTool === "point"
-                    ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                <Crosshair className="h-3 w-3" />
-                点击选点
-              </button>
-              <button
-                type="button"
-                onClick={() => onChangeSpatialDrawTool("bbox")}
-                className={`flex items-center gap-1 rounded-sm px-2 py-1 font-medium transition-colors ${
-                  spatialDrawTool === "bbox"
-                    ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                <Square className="h-3 w-3" />
-                框选区域
-              </button>
-            </div>
-
-            {spatialDrawTool === "point" && (
-              <div className="flex flex-1 items-center gap-1.5 text-[11px] text-muted-foreground">
-                <span>半径</span>
-                <input
-                  type="range"
-                  min={50}
-                  max={1000}
-                  step={50}
-                  value={spatialRadiusM}
-                  onChange={(e) => onChangeSpatialRadius(Number(e.target.value))}
-                  className="h-1 flex-1 cursor-pointer accent-primary"
-                />
-                <span className="w-11 text-right font-mono tabular-nums text-foreground">
-                  {spatialRadiusM}m
-                </span>
-              </div>
-            )}
-          </div>
-
-          {!spatialShape && (
-            <p className="text-[11px] text-muted-foreground">
-              {spatialDrawTool === "point"
-                ? "在右侧地图任意位置单击（或按住 Shift 拖拽框选），即可查出经过该处的所有日期。"
-                : "在地图上按住鼠标左键拖拽画框，松开后查询框内所有历史轨迹。"}
-            </p>
-          )}
-
-          {spatialSearching && (
-            <div className="py-2 text-xs text-muted-foreground">
-              正在检索 D1 空间索引并校验精确距离...
-            </div>
-          )}
-
-          {!spatialSearching && spatialShape && (
-            <div className="max-h-40 space-y-1.5 overflow-y-auto pr-1 scrollbar-thin">
-              {spatialMatches.length === 0 ? (
-                <div className="text-xs text-muted-foreground">
-                  该范围内没有找到经过的轨迹。
-                </div>
-              ) : (
-                spatialMatches.map((m) => {
-                  const t = trackMap.get(m.trackId);
-                  return (
-                    <button
-                      key={m.trackId}
-                      type="button"
-                      onClick={(e) => {
-                        onSelectTrack(m.trackId, e.ctrlKey || e.metaKey);
-                        if (t) onFitTrackBounds(t);
-                      }}
-                      className="flex w-full items-center justify-between rounded-md border border-border bg-background/70 px-2.5 py-1.5 text-left transition-colors hover:bg-accent"
-                    >
-                      <div>
-                        <div className="text-xs font-medium text-foreground">
-                          {t?.title ?? m.trackId}
-                        </div>
-                        <div className="font-mono text-[10px] text-muted-foreground">
-                          经过时间: {formatTsDateTime(m.closestTs ?? m.firstTs)}
-                        </div>
-                      </div>
-                      <div className="text-right font-mono text-[10px] tabular-nums">
-                        {m.minDistanceM !== undefined && (
-                          <div className="text-emerald-400">
-                            最近 {m.minDistanceM}m
-                          </div>
-                        )}
-                        <div className="text-muted-foreground">
-                          {m.matchedPoints} 点
-                        </div>
-                      </div>
-                    </button>
-                  );
-                })
-              )}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Monthly Distance Histogram */}
-      {monthlyBuckets.length > 0 && (
-        <div className="border-b border-border px-3 py-2.5">
-          <div className="mb-1.5 flex items-center justify-between text-[11px] text-muted-foreground">
-            <span className="flex items-center gap-1">
-              <Calendar className="h-3 w-3" />
-              月度足迹分布
-            </span>
-            {activeMonth && (
-              <button
-                type="button"
-                onClick={() => setActiveMonth(null)}
-                className="text-foreground hover:underline"
-              >
-                {activeMonth} (清除)
-              </button>
-            )}
-          </div>
-          <div className="flex h-11 items-end gap-1 overflow-x-auto pb-0.5 scrollbar-thin">
-            {monthlyBuckets.map((b) => {
-              const hPct = Math.max(12, Math.round((b.km / maxMonthKm) * 100));
-              const isSelected = activeMonth === b.month;
-              return (
-                <button
-                  key={b.month}
-                  type="button"
-                  title={`${b.month}: ${b.km.toFixed(1)} km (${b.count} 条)`}
-                  onClick={() =>
-                    setActiveMonth(isSelected ? null : b.month)
-                  }
-                  className="group flex h-full min-w-[12px] flex-1 flex-col items-center justify-end"
-                >
-                  <div
-                    className={`w-full rounded-t-sm transition-all ${
-                      isSelected
-                        ? "bg-primary"
-                        : "bg-muted-foreground/30 group-hover:bg-primary/70"
-                    }`}
-                    style={{ height: `${hPct}%` }}
-                  />
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Search + Selection Controls */}
-      <div className="space-y-2 border-b border-border p-3">
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="搜索日期或轨迹名称 (如 2026-10)..."
-            className="flex h-8 w-full rounded-md border border-input bg-background/60 pl-8 pr-3 text-xs text-foreground shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-          />
-        </div>
-        {selectedTrackIds.length > 0 && (
-          <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-            <span>
-              已选中 <strong className="text-foreground">{selectedTrackIds.length}</strong> 条轨迹 (Ctrl/Cmd 多选)
-            </span>
-            <button
-              type="button"
-              onClick={onClearSelection}
-              className="text-foreground hover:underline"
-            >
-              取消选择
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Scrollable Track List */}
-      <div className="flex-1 space-y-1 overflow-y-auto p-2.5 scrollbar-thin">
-        {filteredTracks.length === 0 ? (
-          <div className="py-8 text-center text-xs text-muted-foreground">
-            没有匹配的轨迹记录
-          </div>
-        ) : (
-          filteredTracks.map((track) => {
-            const isSelected = selectedTrackIds.includes(track.id);
-            const isLoading = loadingTrackId === track.id;
-            return (
-              <div
-                key={track.id}
-                onClick={(e) => {
-                  onSelectTrack(track.id, e.ctrlKey || e.metaKey);
-                  if (!e.ctrlKey && !e.metaKey) {
-                    onFitTrackBounds(track);
-                  }
-                }}
-                className={`group cursor-pointer rounded-md border px-3 py-2 transition-colors ${
-                  isSelected
-                    ? "border-foreground/40 bg-accent text-accent-foreground"
-                    : "border-transparent hover:border-border hover:bg-accent/50"
-                }`}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <div className="truncate text-xs font-medium text-foreground">
-                    {track.title}
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="font-mono text-[11px] font-medium tabular-nums text-foreground">
-                      {(track.distance_m / 1000).toFixed(1)} km
-                    </span>
-                    <button
-                      type="button"
-                      title="删除轨迹"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onDeleteTrack(track.id);
-                      }}
-                      className="hidden rounded p-0.5 text-muted-foreground hover:bg-destructive/20 hover:text-red-400 group-hover:inline-flex"
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </button>
-                  </div>
-                </div>
-                <div className="mt-1 flex items-center justify-between font-mono text-[10px] tabular-nums text-muted-foreground">
-                  <span>
-                    {formatDuration(track.duration_s)} · +{Math.round(track.elev_gain_m)}m
-                  </span>
-                  <span>
-                    {isLoading
-                      ? "加载 GPZ..."
-                      : `${track.point_count.toLocaleString()} pts`}
-                  </span>
-                </div>
-              </div>
-            );
-          })
-        )}
-      </div>
+      {innerContent}
     </aside>
   );
 };

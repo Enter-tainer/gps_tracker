@@ -2,20 +2,26 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bluetooth,
   Compass,
+  Crosshair,
   EyeOff,
   Flame,
+  Footprints,
   Layers,
   Loader2,
   MapPin,
-  RefreshCw,
   Route,
-  SlidersHorizontal
+  SlidersHorizontal,
+  Square,
+  X
 } from "lucide-react";
 
+import { useIsMobile } from "../hooks/useIsMobile.ts";
 import { ElevationProfileChart } from "./ElevationProfileChart.tsx";
 import { FogMapView } from "./FogMapView.tsx";
-import type { SpatialOverlayShape } from "./FogMapView.tsx";
+import type { FitPadding, SpatialOverlayShape } from "./FogMapView.tsx";
+import { LayerSettingsPanel } from "./LayerSettingsPanel.tsx";
 import { TrackSidebar } from "./TrackSidebar.tsx";
+import type { MobileSheetSnap } from "./TrackSidebar.tsx";
 import { rebuildGlobalFogInBrowser } from "../services/clientEtl.ts";
 import { pointsToGpxXml } from "../services/gpsCodec.ts";
 import {
@@ -59,6 +65,13 @@ export type MapWorkspaceProps = {
   onFogRebuilt: (pack: FogPackData) => void;
 };
 
+const MODE_TABS = [
+  { id: "fog", desktopLabel: "世界迷雾", mobileLabel: "迷雾", Icon: EyeOff },
+  { id: "heatmap", desktopLabel: "足迹热力", mobileLabel: "热力", Icon: Flame },
+  { id: "tracks", desktopLabel: "全部轨迹", mobileLabel: "轨迹", Icon: Route },
+  { id: "spatial", desktopLabel: "空间反查", mobileLabel: "反查", Icon: MapPin }
+] as const;
+
 export default function MapWorkspace({
   tracks,
   setTracks,
@@ -75,6 +88,8 @@ export default function MapWorkspace({
   onNavigateDevice,
   onFogRebuilt
 }: MapWorkspaceProps) {
+  const isMobile = useIsMobile();
+
   const [isBootstrapping, setIsBootstrapping] = useState(!hasBootstrapped);
   const [bootError, setBootError] = useState<string | null>(null);
   const [rebuildStatus, setRebuildStatus] = useState<string | null>(null);
@@ -85,7 +100,11 @@ export default function MapWorkspace({
   const [fogOpacity, setFogOpacity] = useState(0.8);
   const [fogGlow, setFogGlow] = useState(1.5);
   const [showLayerMenu, setShowLayerMenu] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+
+  const [desktopSidebarOpen, setDesktopSidebarOpen] = useState(true);
+  const [mobileSheetSnap, setMobileSheetSnap] =
+    useState<MobileSheetSnap>("closed");
+  const [elevationMinimized, setElevationMinimized] = useState(false);
 
   const [loadingTrackId, setLoadingTrackId] = useState<string | null>(null);
   const [trackColorMode, setTrackColorMode] =
@@ -125,8 +144,7 @@ export default function MapWorkspace({
       setTracks((prev) => {
         const previewOnly = prev.filter((t) => t.id.startsWith("preview-"));
         const serverTracks = boot.tracks ?? [];
-        const merged = [...previewOnly, ...serverTracks];
-        return merged;
+        return [...previewOnly, ...serverTracks];
       });
       if (fog) {
         setFogPack(fog);
@@ -220,23 +238,7 @@ export default function MapWorkspace({
       }
     })();
 
-    const handleRebuildFog = useCallback(async () => {
-    if (rebuildStatus) return;
-    setRebuildStatus("准备重刷...");
-    try {
-      const rebuilt = await rebuildGlobalFogInBrowser((msg) =>
-        setRebuildStatus(msg)
-      );
-      onFogRebuilt(rebuilt);
-    } catch (err) {
-      console.error("Rebuild fog failed:", err);
-      setBootError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setRebuildStatus(null);
-    }
-  }, [onFogRebuilt, rebuildStatus]);
-
-  return () => {
+    return () => {
       cancelled = true;
     };
   }, [selectedTrackIds, loadedTrackPoints, setLoadedTrackPoints]);
@@ -290,7 +292,11 @@ export default function MapWorkspace({
       const seq = ++spatialSeqRef.current;
       setSpatialShape({ kind: "point", lat, lon, radiusM });
       setSpatialSearching(true);
-      setSidebarOpen(true);
+      if (isMobile) {
+        setMobileSheetSnap("half");
+      } else {
+        setDesktopSidebarOpen(true);
+      }
 
       try {
         const dLat = (radiusM / 6371000) * (180 / Math.PI);
@@ -326,7 +332,7 @@ export default function MapWorkspace({
         }
       }
     },
-    []
+    [isMobile]
   );
 
   const handleSpatialPointQuery = useCallback(
@@ -341,7 +347,11 @@ export default function MapWorkspace({
       const seq = ++spatialSeqRef.current;
       setSpatialShape({ kind: "bbox", minLat, minLon, maxLat, maxLon });
       setSpatialSearching(true);
-      setSidebarOpen(true);
+      if (isMobile) {
+        setMobileSheetSnap("half");
+      } else {
+        setDesktopSidebarOpen(true);
+      }
 
       try {
         const tileKeys = getZ15TilesForBbox(
@@ -376,7 +386,7 @@ export default function MapWorkspace({
         }
       }
     },
-    []
+    [isMobile]
   );
 
   const primaryTrack = useMemo(() => {
@@ -385,9 +395,18 @@ export default function MapWorkspace({
     return tracks.find((t) => t.id === primaryId) ?? null;
   }, [selectedTrackIds, tracks]);
 
+  useEffect(() => {
+    setElevationMinimized(false);
+  }, [primaryTrack?.id]);
+
   const primaryTrackPoints = primaryTrack
     ? loadedTrackPoints[primaryTrack.id] ?? null
     : null;
+
+  const hasElevationCard = Boolean(primaryTrack && primaryTrackPoints);
+  const sidebarOpen = isMobile
+    ? mobileSheetSnap !== "closed"
+    : desktopSidebarOpen;
 
   const spatialMatchIds = useMemo(
     () => spatialMatches.map((m) => m.trackId),
@@ -440,8 +459,62 @@ export default function MapWorkspace({
     }
   }, [onFogRebuilt, rebuildStatus]);
 
+  const fitPadding = useMemo<FitPadding>(() => {
+    if (isMobile) {
+      const vh = typeof window !== "undefined" ? window.innerHeight : 700;
+      return {
+        top: mode === "spatial" ? 136 : 72,
+        bottom:
+          mobileSheetSnap === "half"
+            ? Math.round(vh * 0.52)
+            : hasElevationCard
+              ? elevationMinimized
+                ? 136
+                : 236
+              : 96,
+        left: 24,
+        right: 24
+      };
+    }
+    return {
+      top: 76,
+      bottom: hasElevationCard ? 210 : 64,
+      left: desktopSidebarOpen ? 372 : 48,
+      right: 64
+    };
+  }, [
+    isMobile,
+    mode,
+    mobileSheetSnap,
+    hasElevationCard,
+    elevationMinimized,
+    desktopSidebarOpen
+  ]);
+
+  const bottomClearance = isMobile
+    ? hasElevationCard
+      ? elevationMinimized
+        ? "128px"
+        : "232px"
+      : "78px"
+    : "12px";
+
+  const clearSpatial = useCallback(() => {
+    spatialSeqRef.current++;
+    setSpatialShape(null);
+    setSpatialMatches([]);
+    setSpatialSearching(false);
+  }, []);
+
   return (
-    <div className="relative h-screen w-screen overflow-hidden bg-background text-foreground">
+    <div
+      style={
+        {
+          "--map-bottom-clearance": bottomClearance
+        } as React.CSSProperties
+      }
+      className="relative h-viewport w-screen overflow-hidden bg-background text-foreground"
+    >
       {/* Full-viewport MapLibre + 60fps Fog Canvas */}
       <FogMapView
         mode={mode}
@@ -460,15 +533,19 @@ export default function MapWorkspace({
         spatialDrawTool={spatialDrawTool}
         hoverPoint={hoverPoint}
         fitBoundsTrigger={fitBoundsTrigger}
+        fitPadding={fitPadding}
         onSelectTrack={handleSelectTrack}
         onSpatialPointQuery={handleSpatialPointQuery}
         onSpatialBboxQuery={handleSpatialBboxQuery}
       />
 
-      {/* Left Sidebar Overlay */}
+      {/* Track Archive (Desktop Left Sidebar / Mobile Bottom Sheet) */}
       <TrackSidebar
         isOpen={sidebarOpen}
-        onToggleOpen={() => setSidebarOpen((v) => !v)}
+        isMobile={isMobile}
+        mobileSnap={mobileSheetSnap}
+        onChangeMobileSnap={setMobileSheetSnap}
+        onToggleOpen={() => setDesktopSidebarOpen((v) => !v)}
         stats={stats}
         tracks={tracks}
         selectedTrackIds={selectedTrackIds}
@@ -486,12 +563,7 @@ export default function MapWorkspace({
           }
         }}
         onChangeSpatialDrawTool={setSpatialDrawTool}
-        onClearSpatial={() => {
-          spatialSeqRef.current++;
-          setSpatialShape(null);
-          setSpatialMatches([]);
-          setSpatialSearching(false);
-        }}
+        onClearSpatial={clearSpatial}
         onSelectTrack={handleSelectTrack}
         onClearSelection={() => {
           setSelectedTrackIds([]);
@@ -501,204 +573,409 @@ export default function MapWorkspace({
         onDeleteTrack={handleDeleteTrack}
       />
 
-      {/* Top Floating Mode & Basemap Bar */}
-      <div className="pointer-events-none absolute right-3 top-3 z-20 flex max-w-[calc(100vw-24px)] flex-wrap items-center justify-end gap-2">
-        {isBootstrapping && (
-          <div className="pointer-events-auto flex items-center gap-1.5 rounded-md border border-border bg-background/90 px-3 py-1.5 text-xs text-muted-foreground shadow-md backdrop-blur-md">
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-foreground" />
-            <span>加载足迹与迷雾...</span>
-          </div>
-        )}
-
-        {bootError && (
-          <div className="pointer-events-auto rounded-md border border-destructive/50 bg-destructive/15 px-3 py-1.5 text-xs text-red-300 shadow-md backdrop-blur-md">
-            数据加载失败: {bootError}
-          </div>
-        )}
-
-        {/* Visualization Mode Switcher (shadcn Tabs style) */}
-        <div className="pointer-events-auto inline-flex items-center rounded-lg border border-border bg-background/90 p-1 shadow-md backdrop-blur-md">
-          {(
-            [
-              ["fog", "世界迷雾", EyeOff],
-              ["heatmap", "足迹热力", Flame],
-              ["tracks", "全部轨迹", Route],
-              ["spatial", "空间反查", MapPin]
-            ] as const
-          ).map(([id, label, Icon]) => (
-            <button
-              key={id}
-              type="button"
-              onClick={() => setMode(id)}
-              className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                mode === id
-                  ? "bg-primary text-primary-foreground shadow-sm"
-                  : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-              }`}
-            >
-              <Icon className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">{label}</span>
-            </button>
-          ))}
-        </div>
-
-        {/* Fog Controls & Layer Switcher */}
-        <div className="pointer-events-auto relative">
-          <button
-            type="button"
-            onClick={() => setShowLayerMenu((v) => !v)}
-            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background/90 px-3 text-xs font-medium text-foreground shadow-md backdrop-blur-md transition-colors hover:bg-accent hover:text-accent-foreground"
+      {isMobile ? (
+        <>
+          {/* Mobile Top Floating Bar */}
+          <div
+            style={{ top: "max(0.75rem, var(--safe-top))" }}
+            className="pointer-events-none absolute inset-x-3 z-20 flex items-center justify-between gap-2"
           >
-            <Layers className="h-3.5 w-3.5 text-muted-foreground" />
-            <span className="hidden md:inline">底图与迷雾</span>
-            <SlidersHorizontal className="h-3 w-3 text-muted-foreground" />
-          </button>
+            <div className="pointer-events-auto flex min-w-0 items-center gap-1.5">
+              <button
+                type="button"
+                onClick={onNavigateDevice}
+                className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl bg-primary px-3 text-xs font-medium text-primary-foreground shadow-lg transition-colors hover:bg-primary/90"
+              >
+                <Bluetooth className="h-3.5 w-3.5" />
+                <span>设备</span>
+              </button>
 
-          {showLayerMenu && (
-            <div className="absolute right-0 mt-2 w-72 rounded-lg border border-border bg-popover/95 p-3.5 text-popover-foreground shadow-xl backdrop-blur-md">
-              <div className="mb-3 space-y-2 border-b border-border pb-3">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-medium text-foreground">
-                    迷雾遮罩浓度
-                  </span>
-                  <span className="font-mono tabular-nums text-muted-foreground">
-                    {Math.round(fogOpacity * 100)}%
-                  </span>
-                </div>
-                <input
-                  type="range"
-                  min={0.35}
-                  max={0.95}
-                  step={0.05}
-                  value={fogOpacity}
-                  onChange={(e) => setFogOpacity(Number(e.target.value))}
-                  className="h-1.5 w-full cursor-pointer accent-primary"
-                />
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-medium text-foreground">
-                    擦除柔边光晕
-                  </span>
-                  <span className="font-mono tabular-nums text-muted-foreground">
-                    {fogGlow.toFixed(1)}x
-                  </span>
-                </div>
-                <input
-                  type="range"
-                  min={0}
-                  max={3.5}
-                  step={0.5}
-                  value={fogGlow}
-                  onChange={(e) => setFogGlow(Number(e.target.value))}
-                  className="h-1.5 w-full cursor-pointer accent-primary"
-                />
-                <button
-                  type="button"
-                  onClick={handleRebuildFog}
-                  disabled={Boolean(rebuildStatus)}
-                  className="mt-1 flex w-full items-center justify-center gap-1.5 rounded-md border border-border bg-muted/50 px-2.5 py-1.5 text-[11px] font-medium text-foreground transition-colors hover:bg-accent disabled:opacity-50"
-                >
-                  <RefreshCw
-                    className={`h-3 w-3 ${rebuildStatus ? "animate-spin" : ""}`}
-                  />
-                  <span>{rebuildStatus || "从云端轨迹全量重刷迷雾"}</span>
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={() => setMobileSheetSnap("half")}
+                className="inline-flex h-10 min-w-0 items-center gap-1.5 truncate rounded-xl border border-border bg-background/90 px-3 text-xs font-medium text-foreground shadow-lg backdrop-blur-md transition-colors hover:bg-accent"
+              >
+                <Footprints className="h-3.5 w-3.5 shrink-0 text-cyan-400" />
+                <span className="truncate font-mono tabular-nums">
+                  {tracks.length > 0
+                    ? `${Math.round(stats.totalDistanceM / 1000)}km · ${tracks.length}条`
+                    : "Traceveil"}
+                </span>
+              </button>
+            </div>
 
-              <div className="mb-3 flex items-center justify-between border-b border-border pb-3">
-                <div>
-                  <div className="text-xs font-medium text-foreground">
-                    GCJ-02 火星坐标纠偏
-                  </div>
-                  <div className="text-[11px] text-muted-foreground">
-                    高德底图开启，OpenFreeMap 关闭
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setUseGcj02((v) => !v)}
-                  className={`inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors ${
-                    useGcj02 ? "bg-primary" : "bg-input"
-                  }`}
-                >
-                  <span
-                    className={`pointer-events-none block h-4 w-4 rounded-full bg-background shadow-lg transition-transform ${
-                      useGcj02 ? "translate-x-4" : "translate-x-0"
-                    }`}
-                  />
-                </button>
-              </div>
+            <div className="pointer-events-auto flex shrink-0 items-center gap-1.5">
+              <button
+                type="button"
+                onClick={handleFitAllTracks}
+                title="全局视野"
+                aria-label="全局视野"
+                className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-background/90 text-foreground shadow-lg backdrop-blur-md transition-colors hover:bg-accent"
+              >
+                <Compass className="h-4 w-4 text-muted-foreground" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowLayerMenu((v) => !v)}
+                title="底图与迷雾"
+                aria-label="底图与迷雾"
+                className="relative inline-flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-background/90 text-foreground shadow-lg backdrop-blur-md transition-colors hover:bg-accent"
+              >
+                <Layers className="h-4 w-4 text-muted-foreground" />
+                {(showLayerMenu || useGcj02) && (
+                  <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-cyan-400" />
+                )}
+              </button>
+            </div>
+          </div>
 
-              <div className="space-y-1">
-                <div className="mb-1.5 text-[11px] font-medium text-muted-foreground">
-                  底图源 (OpenFreeMap / 高德)
+          {/* Mobile Status / Error & Spatial HUD Stack */}
+          {(isBootstrapping || bootError || mode === "spatial") && (
+            <div
+              style={{
+                top: "calc(max(0.75rem, var(--safe-top)) + 48px)"
+              }}
+              className="pointer-events-none absolute inset-x-3 z-20 flex flex-col gap-2"
+            >
+              {isBootstrapping && (
+                <div className="pointer-events-auto inline-flex items-center gap-1.5 self-center rounded-lg border border-border bg-background/90 px-3 py-1.5 text-xs text-muted-foreground shadow-md backdrop-blur-md">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-foreground" />
+                  <span>加载足迹与迷雾...</span>
                 </div>
-                {BASE_MAP_OPTIONS.map((opt) => (
+              )}
+
+              {bootError && (
+                <div className="pointer-events-auto flex items-center justify-between gap-2 rounded-lg border border-destructive/50 bg-destructive/15 px-3 py-1.5 text-xs text-red-300 shadow-md backdrop-blur-md">
+                  <span className="truncate">数据加载失败: {bootError}</span>
                   <button
-                    key={opt.id}
                     type="button"
-                    onClick={() => handleChangeBaseMap(opt.id)}
-                    className={`w-full rounded-md px-2.5 py-1.5 text-left transition-colors ${
-                      baseMapId === opt.id
-                        ? "bg-accent text-accent-foreground ring-1 ring-border"
-                        : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
-                    }`}
+                    onClick={loadBootstrapAndFog}
+                    className="shrink-0 rounded bg-destructive/30 px-2 py-0.5 text-[11px] font-medium text-red-100 hover:bg-destructive/50"
                   >
-                    <div className="text-xs font-medium text-foreground">
-                      {opt.label}
-                    </div>
-                    <div className="text-[11px] text-muted-foreground">
-                      {opt.description}
-                    </div>
+                    重试
                   </button>
-                ))}
-              </div>
+                </div>
+              )}
+
+              {mode === "spatial" && (
+                <div className="pointer-events-auto rounded-xl border border-border bg-background/92 px-3 py-2 shadow-lg backdrop-blur-md">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="inline-flex rounded-md bg-muted p-0.5 text-[11px]">
+                      <button
+                        type="button"
+                        onClick={() => setSpatialDrawTool("point")}
+                        className={`flex items-center gap-1 rounded-sm px-2.5 py-1 font-medium transition-colors ${
+                          spatialDrawTool === "point"
+                            ? "bg-background text-foreground shadow-sm"
+                            : "text-muted-foreground"
+                        }`}
+                      >
+                        <Crosshair className="h-3 w-3" />
+                        点选
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSpatialDrawTool("bbox")}
+                        className={`flex items-center gap-1 rounded-sm px-2.5 py-1 font-medium transition-colors ${
+                          spatialDrawTool === "bbox"
+                            ? "bg-background text-foreground shadow-sm"
+                            : "text-muted-foreground"
+                        }`}
+                      >
+                        <Square className="h-3 w-3" />
+                        框选
+                      </button>
+                    </div>
+
+                    {spatialDrawTool === "point" && (
+                      <div className="flex min-w-[120px] flex-1 items-center gap-1.5 text-[11px] text-muted-foreground">
+                        <input
+                          type="range"
+                          min={50}
+                          max={1000}
+                          step={50}
+                          value={spatialRadiusM}
+                          onChange={(e) => {
+                            const r = Number(e.target.value);
+                            setSpatialRadiusM(r);
+                            if (spatialShape?.kind === "point") {
+                              runPointSpatialQuery(
+                                spatialShape.lat,
+                                spatialShape.lon,
+                                r
+                              );
+                            }
+                          }}
+                          className="h-2 flex-1 cursor-pointer accent-primary"
+                        />
+                        <span className="w-10 text-right font-mono tabular-nums text-foreground">
+                          {spatialRadiusM}m
+                        </span>
+                      </div>
+                    )}
+
+                    {spatialShape && (
+                      <div className="ml-auto flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => setMobileSheetSnap("half")}
+                          className="rounded-md border border-border bg-secondary px-2 py-1 text-[11px] font-medium text-secondary-foreground"
+                        >
+                          {spatialSearching
+                            ? "检索中..."
+                            : `结果 (${spatialMatches.length})`}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={clearSpatial}
+                          aria-label="清除空间筛选"
+                          className="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {!spatialShape && (
+                    <div className="mt-1 text-[11px] text-muted-foreground">
+                      {spatialDrawTool === "point"
+                        ? "轻点地图任意位置，反查经过该处的历史轨迹"
+                        : "单指拖拽地图画框反查，双指仍可缩放地图"}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
-        </div>
 
-        {/* Fit All Tracks */}
-        <button
-          type="button"
-          onClick={handleFitAllTracks}
-          title="全览所有足迹"
-          className="pointer-events-auto inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background/90 px-3 text-xs font-medium text-foreground shadow-md backdrop-blur-md transition-colors hover:bg-accent hover:text-accent-foreground"
-        >
-          <Compass className="h-3.5 w-3.5 text-muted-foreground" />
-          <span className="hidden md:inline">全局视野</span>
-        </button>
+          {/* Mobile Track Point Decoding Pill */}
+          {primaryTrack &&
+            !primaryTrackPoints &&
+            loadingTrackId === primaryTrack.id && (
+              <div
+                style={{
+                  bottom: "calc(72px + max(0.5rem, var(--safe-bottom)))"
+                }}
+                className="pointer-events-none absolute inset-x-3 z-20 flex justify-center"
+              >
+                <div className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background/90 px-3 py-1.5 text-xs text-muted-foreground shadow-lg backdrop-blur-md">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-cyan-400" />
+                  <span>正在解码轨迹...</span>
+                </div>
+              </div>
+            )}
 
-        {/* Back to First-Class Device / Ingest Console (/) */}
-        <button
-          type="button"
-          onClick={onNavigateDevice}
-          className="pointer-events-auto inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground shadow-md transition-colors hover:bg-primary/90"
-        >
-          <Bluetooth className="h-3.5 w-3.5" />
-          <span>设备 / 入库</span>
-        </button>
-      </div>
+          {/* Mobile Elevation & Speed Profile Card */}
+          {primaryTrack && primaryTrackPoints && (
+            <div
+              style={{
+                bottom: "calc(72px + max(0.5rem, var(--safe-bottom)))"
+              }}
+              className="pointer-events-none absolute inset-x-2.5 z-30"
+            >
+              <ElevationProfileChart
+                track={primaryTrack}
+                points={primaryTrackPoints}
+                colorMode={trackColorMode}
+                isMobile={true}
+                minimized={elevationMinimized}
+                onToggleMinimize={() => setElevationMinimized((v) => !v)}
+                onChangeColorMode={setTrackColorMode}
+                onHoverPoint={setHoverPoint}
+                onFitBounds={() => handleFitTrackBounds(primaryTrack)}
+                onDownloadGpx={handleDownloadSelectedGpx}
+                onClose={() => {
+                  setSelectedTrackIds([]);
+                  setHoverPoint(null);
+                }}
+              />
+            </div>
+          )}
 
-      {/* Bottom Elevation & Speed Profile Drawer */}
-      {primaryTrack && primaryTrackPoints && (
-        <div
-          className={`pointer-events-none absolute bottom-3 right-3 z-20 transition-all ${
-            sidebarOpen ? "left-[368px] max-md:left-3" : "left-3"
-          } mr-10`}
-        >
-          <ElevationProfileChart
-            track={primaryTrack}
-            points={primaryTrackPoints}
-            colorMode={trackColorMode}
-            onChangeColorMode={setTrackColorMode}
-            onHoverPoint={setHoverPoint}
-            onFitBounds={() => handleFitTrackBounds(primaryTrack)}
-            onDownloadGpx={handleDownloadSelectedGpx}
-            onClose={() => {
-              setSelectedTrackIds([]);
-              setHoverPoint(null);
-            }}
+          {/* Mobile Bottom 5-Tab Mode Dock */}
+          <nav
+            aria-label="地图模式导航"
+            style={{ bottom: "max(0.5rem, var(--safe-bottom))" }}
+            className="pointer-events-none absolute inset-x-3 z-20"
+          >
+            <div className="pointer-events-auto grid grid-cols-5 gap-1 rounded-2xl border border-border/85 bg-background/92 p-1 shadow-2xl backdrop-blur-xl">
+              {MODE_TABS.map(({ id, mobileLabel, Icon }) => {
+                const active = mode === id;
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setMode(id)}
+                    className={`flex flex-col items-center justify-center gap-0.5 rounded-xl py-2 text-[11px] font-medium transition-colors ${
+                      active
+                        ? "bg-primary text-primary-foreground shadow-sm"
+                        : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+                    }`}
+                  >
+                    <Icon className="h-4 w-4" />
+                    <span>{mobileLabel}</span>
+                  </button>
+                );
+              })}
+
+              <button
+                type="button"
+                onClick={() =>
+                  setMobileSheetSnap((s) => (s === "closed" ? "half" : "closed"))
+                }
+                className={`relative flex flex-col items-center justify-center gap-0.5 rounded-xl py-2 text-[11px] font-medium transition-colors ${
+                  mobileSheetSnap !== "closed"
+                    ? "bg-accent text-accent-foreground ring-1 ring-border"
+                    : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+                }`}
+              >
+                <Footprints className="h-4 w-4" />
+                <span>档案</span>
+                {tracks.length > 0 && (
+                  <span className="absolute right-2 top-1 rounded-full bg-cyan-500/20 px-1 font-mono text-[9px] tabular-nums text-cyan-300">
+                    {tracks.length}
+                  </span>
+                )}
+              </button>
+            </div>
+          </nav>
+
+          {/* Mobile Layer & Fog Settings Sheet */}
+          <LayerSettingsPanel
+            isOpen={showLayerMenu}
+            isMobile={true}
+            onClose={() => setShowLayerMenu(false)}
+            fogOpacity={fogOpacity}
+            onChangeFogOpacity={setFogOpacity}
+            fogGlow={fogGlow}
+            onChangeFogGlow={setFogGlow}
+            rebuildStatus={rebuildStatus}
+            onRebuildFog={handleRebuildFog}
+            useGcj02={useGcj02}
+            onToggleGcj02={() => setUseGcj02((v) => !v)}
+            baseMapId={baseMapId}
+            onChangeBaseMap={handleChangeBaseMap}
           />
-        </div>
+        </>
+      ) : (
+        <>
+          {/* Desktop Top Floating Mode & Basemap Bar */}
+          <div className="pointer-events-none absolute right-3 top-3 z-20 flex max-w-[calc(100vw-24px)] flex-wrap items-center justify-end gap-2">
+            {isBootstrapping && (
+              <div className="pointer-events-auto flex items-center gap-1.5 rounded-md border border-border bg-background/90 px-3 py-1.5 text-xs text-muted-foreground shadow-md backdrop-blur-md">
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-foreground" />
+                <span>加载足迹与迷雾...</span>
+              </div>
+            )}
+
+            {bootError && (
+              <div className="pointer-events-auto flex items-center gap-2 rounded-md border border-destructive/50 bg-destructive/15 px-3 py-1.5 text-xs text-red-300 shadow-md backdrop-blur-md">
+                <span>数据加载失败: {bootError}</span>
+                <button
+                  type="button"
+                  onClick={loadBootstrapAndFog}
+                  className="rounded bg-destructive/30 px-1.5 py-0.5 text-[11px] font-medium text-red-100 hover:bg-destructive/50"
+                >
+                  重试
+                </button>
+              </div>
+            )}
+
+            {/* Visualization Mode Switcher */}
+            <div className="pointer-events-auto inline-flex items-center rounded-lg border border-border bg-background/90 p-1 shadow-md backdrop-blur-md">
+              {MODE_TABS.map(({ id, desktopLabel, Icon }) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setMode(id)}
+                  className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                    mode === id
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                  }`}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  <span>{desktopLabel}</span>
+                </button>
+              ))}
+            </div>
+
+            {/* Fog Controls & Layer Switcher */}
+            <div className="pointer-events-auto relative">
+              <button
+                type="button"
+                onClick={() => setShowLayerMenu((v) => !v)}
+                className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background/90 px-3 text-xs font-medium text-foreground shadow-md backdrop-blur-md transition-colors hover:bg-accent hover:text-accent-foreground"
+              >
+                <Layers className="h-3.5 w-3.5 text-muted-foreground" />
+                <span>底图与迷雾</span>
+                <SlidersHorizontal className="h-3 w-3 text-muted-foreground" />
+              </button>
+
+              <LayerSettingsPanel
+                isOpen={showLayerMenu}
+                isMobile={false}
+                onClose={() => setShowLayerMenu(false)}
+                fogOpacity={fogOpacity}
+                onChangeFogOpacity={setFogOpacity}
+                fogGlow={fogGlow}
+                onChangeFogGlow={setFogGlow}
+                rebuildStatus={rebuildStatus}
+                onRebuildFog={handleRebuildFog}
+                useGcj02={useGcj02}
+                onToggleGcj02={() => setUseGcj02((v) => !v)}
+                baseMapId={baseMapId}
+                onChangeBaseMap={handleChangeBaseMap}
+              />
+            </div>
+
+            {/* Fit All Tracks */}
+            <button
+              type="button"
+              onClick={handleFitAllTracks}
+              title="全览所有足迹"
+              className="pointer-events-auto inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background/90 px-3 text-xs font-medium text-foreground shadow-md backdrop-blur-md transition-colors hover:bg-accent hover:text-accent-foreground"
+            >
+              <Compass className="h-3.5 w-3.5 text-muted-foreground" />
+              <span>全局视野</span>
+            </button>
+
+            {/* Back to Device / Ingest Console (/) */}
+            <button
+              type="button"
+              onClick={onNavigateDevice}
+              className="pointer-events-auto inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground shadow-md transition-colors hover:bg-primary/90"
+            >
+              <Bluetooth className="h-3.5 w-3.5" />
+              <span>设备 / 入库</span>
+            </button>
+          </div>
+
+          {/* Desktop Bottom Elevation & Speed Profile Drawer */}
+          {primaryTrack && primaryTrackPoints && (
+            <div
+              className={`pointer-events-none absolute bottom-3 right-14 z-30 transition-all ${
+                desktopSidebarOpen ? "left-[368px]" : "left-3"
+              }`}
+            >
+              <ElevationProfileChart
+                track={primaryTrack}
+                points={primaryTrackPoints}
+                colorMode={trackColorMode}
+                isMobile={false}
+                onChangeColorMode={setTrackColorMode}
+                onHoverPoint={setHoverPoint}
+                onFitBounds={() => handleFitTrackBounds(primaryTrack)}
+                onDownloadGpx={handleDownloadSelectedGpx}
+                onClose={() => {
+                  setSelectedTrackIds([]);
+                  setHoverPoint(null);
+                }}
+              />
+            </div>
+          )}
+        </>
       )}
     </div>
   );
