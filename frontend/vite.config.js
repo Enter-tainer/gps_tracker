@@ -36,6 +36,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
+      useCredentials: true,
       includeAssets: ['icons/favicon.ico', 'icons/apple-touch-icon-180x180.png', 'icons/icon-192.png', 'icons/icon-512.png'],
       manifest: {
         name: 'Traceveil — Personal GPS Archive',
@@ -66,9 +67,9 @@ export default defineConfig({
         dir: 'ltr'
       },
       workbox: {
-        globPatterns: ['**/*.{js,css,html,ico,png,svg,mjs}'],
-        navigateFallback: '/index.html',
-        navigateFallbackDenylist: [/^\/api\//],
+        globPatterns: ['**/*.{js,css,ico,png,svg,mjs}'],
+        navigateFallback: null,
+        cleanupOutdatedCaches: true,
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/tiles\.openfreemap\.org\//,

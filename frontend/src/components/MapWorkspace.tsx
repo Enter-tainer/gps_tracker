@@ -157,9 +157,28 @@ export default function MapWorkspace({
     setBootError(null);
     try {
       const [bootResp, fog] = await Promise.all([
-        fetch("/api/bootstrap"),
+        fetch("/api/bootstrap", { redirect: "manual" }),
         fogPack ? Promise.resolve(fogPack) : fetchAndDecodeFog().catch(() => null)
       ]);
+      if (bootResp.type === "opaqueredirect") {
+        let shouldReload = true;
+        try {
+          const now = Date.now();
+          const last = Number(sessionStorage.getItem("traceveil_reauth_ts") || "0");
+          if (now - last <= 15_000) {
+            shouldReload = false;
+          } else {
+            sessionStorage.setItem("traceveil_reauth_ts", String(now));
+          }
+        } catch {
+          // Ignore sessionStorage errors in restricted contexts
+        }
+        if (shouldReload) {
+          window.location.reload();
+          return;
+        }
+        throw new Error("登录状态已过期，请刷新页面重新登录 Cloudflare Access");
+      }
       if (!bootResp.ok) {
         throw new Error(`HTTP ${bootResp.status}`);
       }
