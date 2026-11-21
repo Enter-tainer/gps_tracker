@@ -1,16 +1,19 @@
 import type {
+  CompactTrackRegionTuple,
   CompactTrackTileTuple,
   FogPackData,
   FogTileEntry,
   GpsPoint,
   TrackMetadata,
-  UploadTrackMetaPayload
+  UploadTrackMetaPayload,
+  VisitedRegion
 } from "../types/track.ts";
 import {
   createEmptyFogPack,
   encodeFogPack,
   mergeTrackTilesIntoFogPack,
-  rasterizeTrackToFogTiles
+  rasterizeTrackToFogTiles,
+  type RasterizedTrackTile
 } from "./fogEngine.ts";
 import {
   computeTrackStatsAndOverview,
@@ -18,6 +21,10 @@ import {
   parseGpxXmlToPoints
 } from "./gpsCodec.ts";
 import { decodeGpsl0ToPoints, encodeGpsl0Points } from "./gpsl0/index.ts";
+import {
+  classifyUploadedTrackRegions,
+  rebuildVisitedRegionsInBrowser
+} from "./regionClassifier.ts";
 import { setTrackPointsInCache } from "./trackCache.ts";
 
 export type BrowserEtlInputFile =
@@ -30,6 +37,7 @@ export type BrowserEtlInputFile =
 export type BrowserTrackEtlOptions = {
   file: BrowserEtlInputFile;
   baseFogPack: FogPackData | null;
+  existingVisitedRegions?: VisitedRegion[];
   customId?: string;
   customTitle?: string;
   customDate?: string;
@@ -42,8 +50,11 @@ export type BrowserTrackEtlResult = {
   points: GpsPoint[];
   gpsl0Bytes: Uint8Array;
   tiles: CompactTrackTileTuple[];
+  trackTiles: Map<number, RasterizedTrackTile>;
   fogPack: FogPackData;
   fogBytes?: Uint8Array;
+  trackRegions?: CompactTrackRegionTuple[];
+  visitedRegions?: VisitedRegion[];
 };
 
 export function sanitizeTrackId(raw: string): string {
@@ -118,6 +129,7 @@ export async function runBrowserTrackEtl(
   const {
     file,
     baseFogPack,
+    existingVisitedRegions,
     customId,
     customTitle,
     customDate,
@@ -190,13 +202,35 @@ export async function runBrowserTrackEtl(
     created_at: Math.floor(Date.now() / 1000)
   };
 
+  let trackRegions: CompactTrackRegionTuple[] | undefined;
+  let visitedRegions: VisitedRegion[] | undefined;
+  if (existingVisitedRegions) {
+    try {
+      onStage?.("匹配全球省/市/区县行政区划...");
+      const regRes = await classifyUploadedTrackRegions({
+        track,
+        trackTiles,
+        existingVisitedRegions
+      });
+      if (regRes) {
+        trackRegions = regRes.trackRegions;
+        visitedRegions = regRes.visitedRegions;
+      }
+    } catch (err) {
+      console.warn("Incremental region classification skipped:", err);
+    }
+  }
+
   return {
     track,
     points,
     gpsl0Bytes,
     tiles,
+    trackTiles,
     fogPack,
-    fogBytes
+    fogBytes,
+    trackRegions,
+    visitedRegions
   };
 }
 
@@ -205,9 +239,17 @@ export async function uploadPreparedTrackToServer(params: {
   gpsl0Bytes: Uint8Array;
   tiles: CompactTrackTileTuple[];
   fogBytes?: Uint8Array;
+  trackRegions?: CompactTrackRegionTuple[];
+  visitedRegions?: VisitedRegion[];
 }): Promise<TrackMetadata> {
-  const { track, gpsl0Bytes, tiles, fogBytes } = params;
-  const meta: UploadTrackMetaPayload = { track, tiles };
+  const { track, gpsl0Bytes, tiles, fogBytes, trackRegions, visitedRegions } =
+    params;
+  const meta: UploadTrackMetaPayload = {
+    track,
+    tiles,
+    ...(trackRegions ? { trackRegions } : {}),
+    ...(visitedRegions ? { visitedRegions } : {})
+  };
 
   const form = new FormData();
   form.append(
@@ -246,7 +288,9 @@ export async function uploadPreparedTrackToServer(params: {
  * and PUTs the rebuilt `global-fog.bin` back to R2.
  */
 export async function rebuildGlobalFogInBrowser(
-  onProgress?: (stage: string) => void
+  onProgress?: (stage: string) => void,
+  onRegionsRebuilt?: (regions: VisitedRegion[]) => void,
+  trackDatesById?: Map<string, string>
 ): Promise<FogPackData> {
   onProgress?.("拉取全量 GPSL0 轨迹真源...");
   const resp = await fetch("/api/tracks/all-gpsl0");
@@ -265,6 +309,12 @@ export async function rebuildGlobalFogInBrowser(
   let offset = 4;
 
   const pack = createEmptyFogPack();
+  const trackTilesList: Array<{
+    trackId: string;
+    date: string;
+    tiles: Map<number, RasterizedTrackTile>;
+  }> = [];
+
   for (let i = 0; i < count; i++) {
     const idLen = view.getUint16(offset, true);
     offset += 2;
@@ -279,6 +329,15 @@ export async function rebuildGlobalFogInBrowser(
     setTrackPointsInCache(trackId, points);
     const trackTiles = rasterizeTrackToFogTiles(points);
     mergeTrackTilesIntoFogPack(pack, trackTiles, true);
+
+    const inferredDate =
+      trackDatesById?.get(trackId) ||
+      (points.length > 0 && points[0].timestamp > 0
+        ? new Date((points[0].timestamp + 8 * 3600) * 1000)
+            .toISOString()
+            .slice(0, 10)
+        : "");
+    trackTilesList.push({ trackId, date: inferredDate, tiles: trackTiles });
 
     if ((i + 1) % 15 === 0 || i + 1 === count) {
       onProgress?.(`正在重算迷雾 (${i + 1}/${count})...`);
@@ -296,5 +355,19 @@ export async function rebuildGlobalFogInBrowser(
   if (!putResp.ok) {
     throw new Error(`PUT /api/fog failed: HTTP ${putResp.status}`);
   }
+
+  try {
+    const rebuiltRegions = await rebuildVisitedRegionsInBrowser(
+      pack,
+      trackTilesList,
+      onProgress
+    );
+    if (rebuiltRegions) {
+      onRegionsRebuilt?.(rebuiltRegions.visitedRegions);
+    }
+  } catch (err) {
+    console.warn("Visited regions rebuild skipped:", err);
+  }
+
   return pack;
 }

@@ -43,9 +43,70 @@ export type BootstrapStats = {
   exploredAreaKm2: number;
 };
 
+export type FogRenderStyle = "hybrid" | "fine" | "regions";
+export type RegionLevel = 0 | 1 | 2 | 3;
+export type LodTier = "l0" | "l1" | "l2" | "l3" | "fine";
+
+export type RegionMetaRecord = {
+  rid: number;
+  level: RegionLevel;
+  parentRid: number | null;
+  country: string;
+  nameZh: string;
+  nameEn: string;
+  directChildCount: number;
+  leafChildCount: number;
+  areaKm2: number;
+  isLeaf: boolean;
+  bbox: [number, number, number, number];
+};
+
+export type VisitedRegion = {
+  rid: number;
+  level: RegionLevel;
+  parentRid: number | null;
+  country: string;
+  nameZh: string;
+  nameEn: string;
+  directChildCount: number;
+  leafChildCount: number;
+  litDirectChildren: number;
+  litLeafChildren: number;
+  areaKm2: number;
+  exploredCells: number;
+  exploredAreaKm2: number;
+  visitDays: number;
+  trackCount: number;
+  heat: number;
+  firstTs: number;
+  lastTs: number;
+  bbox: [number, number, number, number];
+};
+
+export type SelectedRegionInfo = {
+  rid: number;
+  level: RegionLevel;
+  nameZh: string;
+  nameEn: string;
+  country: string;
+  directChildCount: number;
+  leafChildCount: number;
+  areaKm2: number;
+  bbox: [number, number, number, number];
+  visited: VisitedRegion | null;
+};
+
+export type CompactTrackRegionTuple = [
+  rid: number,
+  cellCount: number,
+  firstTs: number,
+  lastTs: number
+];
+
 export type BootstrapResponse = {
   stats: BootstrapStats;
   tracks: TrackMetadata[];
+  regions?: VisitedRegion[];
 };
 
 export type SpatialQueryMatch = {
@@ -98,4 +159,6 @@ export type CompactTrackTileTuple = [
 export type UploadTrackMetaPayload = {
   track: TrackMetadata;
   tiles: CompactTrackTileTuple[];
+  trackRegions?: CompactTrackRegionTuple[];
+  visitedRegions?: VisitedRegion[];
 };

@@ -7,6 +7,7 @@ import {
   ChevronUp,
   Crosshair,
   Footprints,
+  Globe2,
   Layers2,
   MapPin,
   Search,
@@ -15,11 +16,14 @@ import {
   X
 } from "lucide-react";
 
+import { getRegionHeatColor } from "../services/regionEngine.ts";
 import type {
   BootstrapStats,
   MapVisualizationMode,
+  RegionLevel,
   SpatialQueryMatch,
-  TrackMetadata
+  TrackMetadata,
+  VisitedRegion
 } from "../types/track.ts";
 import type { SpatialOverlayShape } from "./FogMapView.tsx";
 
@@ -33,6 +37,8 @@ type TrackSidebarProps = {
   onToggleOpen: () => void;
   stats: BootstrapStats;
   tracks: TrackMetadata[];
+  visitedRegions: VisitedRegion[];
+  selectedRegionRid: number | null;
   selectedTrackIds: string[];
   loadingTrackId: string | null;
   mode: MapVisualizationMode;
@@ -45,6 +51,7 @@ type TrackSidebarProps = {
   onChangeSpatialDrawTool: (tool: "point" | "bbox") => void;
   onClearSpatial: () => void;
   onSelectTrack: (trackId: string, multi: boolean) => void;
+  onSelectRegionFromList: (region: VisitedRegion) => void;
   onClearSelection: () => void;
   onFitTrackBounds: (track: TrackMetadata) => void;
   onDeleteTrack: (trackId: string) => void;
@@ -78,6 +85,8 @@ export const TrackSidebar: React.FC<TrackSidebarProps> = ({
   onToggleOpen,
   stats,
   tracks,
+  visitedRegions,
+  selectedRegionRid,
   selectedTrackIds,
   loadingTrackId,
   mode,
@@ -90,10 +99,13 @@ export const TrackSidebar: React.FC<TrackSidebarProps> = ({
   onChangeSpatialDrawTool,
   onClearSpatial,
   onSelectTrack,
+  onSelectRegionFromList,
   onClearSelection,
   onFitTrackBounds,
   onDeleteTrack
 }) => {
+  const [activeTab, setActiveTab] = useState<"tracks" | "regions">("tracks");
+  const [regionLevelFilter, setRegionLevelFilter] = useState<"all" | RegionLevel>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [activeMonth, setActiveMonth] = useState<string | null>(null);
   const [multiSelectMode, setMultiSelectMode] = useState(false);
@@ -163,6 +175,36 @@ export const TrackSidebar: React.FC<TrackSidebarProps> = ({
       );
     });
   }, [tracks, searchQuery, activeMonth]);
+
+  const regionCounts = useMemo(() => {
+    const counts = [0, 0, 0, 0];
+    for (const r of visitedRegions) {
+      counts[r.level] = (counts[r.level] || 0) + 1;
+    }
+    return counts;
+  }, [visitedRegions]);
+
+  const filteredRegions = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return visitedRegions
+      .filter((r) => {
+        if (regionLevelFilter !== "all" && r.level !== regionLevelFilter) {
+          return false;
+        }
+        if (!q) return true;
+        return (
+          r.nameZh.toLowerCase().includes(q) ||
+          r.nameEn.toLowerCase().includes(q) ||
+          r.country.toLowerCase().includes(q)
+        );
+      })
+      .sort(
+        (a, b) =>
+          b.heat - a.heat ||
+          b.exploredAreaKm2 - a.exploredAreaKm2 ||
+          a.level - b.level
+      );
+  }, [visitedRegions, regionLevelFilter, searchQuery]);
 
   const handleGrabPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     dragPointerIdRef.current = e.pointerId;
@@ -337,6 +379,176 @@ export const TrackSidebar: React.FC<TrackSidebarProps> = ({
     <>
       {/* KPI Grid */}
       {kpiBlock}
+
+      {/* Archive / Regions Tab Switcher */}
+      <div className="flex items-center justify-between gap-2 border-b border-border bg-muted/20 px-3 py-1.5">
+        <div className="inline-flex rounded-md bg-muted p-0.5 text-[11px]">
+          <button
+            type="button"
+            onClick={() => setActiveTab("tracks")}
+            className={`inline-flex items-center gap-1 rounded-sm px-2.5 py-1 font-medium transition-colors ${
+              activeTab === "tracks"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <Footprints className="h-3 w-3" />
+            <span>轨迹 ({tracks.length})</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("regions")}
+            className={`inline-flex items-center gap-1 rounded-sm px-2.5 py-1 font-medium transition-colors ${
+              activeTab === "regions"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <Globe2 className="h-3 w-3" />
+            <span>点亮版图</span>
+          </button>
+        </div>
+
+        <span className="truncate font-mono text-[10px] tabular-nums text-muted-foreground">
+          {regionCounts[0]}国·{regionCounts[1]}省·{regionCounts[2]}市·{regionCounts[3]}区县
+        </span>
+      </div>
+
+      {activeTab === "regions" ? (
+        <>
+          <div className="space-y-2 border-b border-border p-3">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="搜索国家 / 省 / 市 / 区县..."
+                className="flex h-9 w-full rounded-md border border-input bg-background/60 pl-8 pr-8 text-base text-foreground shadow-sm transition-colors placeholder:text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring md:h-8 md:text-xs"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery("")}
+                  aria-label="清空搜索"
+                  className="absolute right-1.5 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded text-muted-foreground hover:text-foreground"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1 text-[11px]">
+              {(
+                [
+                  ["all", `全部 (${visitedRegions.length})`],
+                  [0, `国家 (${regionCounts[0]})`],
+                  [1, `省州 (${regionCounts[1]})`],
+                  [2, `地市 (${regionCounts[2]})`],
+                  [3, `区县 (${regionCounts[3]})`]
+                ] as const
+              ).map(([lvl, label]) => {
+                const active = regionLevelFilter === lvl;
+                return (
+                  <button
+                    key={String(lvl)}
+                    type="button"
+                    onClick={() => setRegionLevelFilter(lvl)}
+                    className={`shrink-0 rounded-md px-2 py-1 font-medium transition-colors ${
+                      active
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="flex-1 space-y-1 overflow-y-auto overscroll-contain p-2.5 scrollbar-thin">
+            {filteredRegions.length === 0 ? (
+              <div className="py-8 text-center text-xs text-muted-foreground">
+                {visitedRegions.length === 0
+                  ? "暂无行政区划统计（可先运行区划索引或重刷迷雾）"
+                  : "没有匹配的行政区划"}
+              </div>
+            ) : (
+              filteredRegions.map((region) => {
+                const isSelected = selectedRegionRid === region.rid;
+                const heatColor = getRegionHeatColor(region.heat);
+                const isParent = region.directChildCount > 0;
+                const levelTag =
+                  region.level === 0
+                    ? "国"
+                    : region.level === 1
+                      ? "省"
+                      : region.level === 2
+                        ? "市"
+                        : "县";
+                return (
+                  <button
+                    key={region.rid}
+                    type="button"
+                    onClick={() => {
+                      onSelectRegionFromList(region);
+                      if (isMobile) {
+                        onChangeMobileSnap?.("closed");
+                      }
+                    }}
+                    className={`w-full rounded-md border px-3 ${
+                      isMobile ? "py-2.5" : "py-2"
+                    } text-left transition-colors ${
+                      isSelected
+                        ? "border-foreground/40 bg-accent text-accent-foreground"
+                        : "border-transparent hover:border-border hover:bg-accent/50"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex min-w-0 items-center gap-1.5">
+                        <span
+                          className="h-2 w-2 shrink-0 rounded-full"
+                          style={{ backgroundColor: heatColor }}
+                        />
+                        <span className="truncate text-xs font-medium text-foreground">
+                          {region.nameZh || region.nameEn}
+                        </span>
+                        <span className="shrink-0 rounded bg-muted px-1 py-0.5 text-[9px] text-muted-foreground">
+                          {levelTag}
+                        </span>
+                      </div>
+                      <span
+                        className="shrink-0 font-mono text-[11px] font-semibold tabular-nums"
+                        style={{ color: heatColor }}
+                      >
+                        {isParent
+                          ? `${region.litDirectChildren}/${region.directChildCount}`
+                          : `${region.exploredAreaKm2.toFixed(1)}km²`}
+                      </span>
+                    </div>
+                    <div className="mt-1.5 flex items-center gap-2">
+                      <div className="h-1 flex-1 overflow-hidden rounded-full bg-muted">
+                        <div
+                          className="h-full rounded-full"
+                          style={{
+                            width: `${Math.max(6, Math.round(region.heat * 100))}%`,
+                            backgroundColor: heatColor
+                          }}
+                        />
+                      </div>
+                      <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">
+                        {region.visitDays}天 · {region.trackCount}条
+                      </span>
+                    </div>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </>
+      ) : (
+        <>
 
       {/* Spatial Inspector Box (active in spatial mode or when results exist) */}
       {(mode === "spatial" || spatialShape !== null) && (
@@ -683,6 +895,8 @@ export const TrackSidebar: React.FC<TrackSidebarProps> = ({
           })
         )}
       </div>
+        </>
+      )}
     </>
   );
 

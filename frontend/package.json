@@ -8,6 +8,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "ingest": "node scripts/ingest_downloads.mjs",
+    "regions:build": "node scripts/build_regions.mjs",
+    "regions:ingest": "node scripts/ingest_regions.mjs",
     "sync:cf": "node scripts/sync_cloudflare.mjs",
     "deploy:cf": "npm run build && npx wrangler deploy",
     "gpsl0:selftest": "node scripts/selftest_gpsl0.mjs",
@@ -17,6 +19,7 @@
     "gpsl0:pack": "node scripts/pack_gpsl0.mjs --verify"
   },
   "dependencies": {
+    "@mapbox/vector-tile": "^3.0.0",
     "@noble/curves": "^1.8.1",
     "@radix-ui/react-alert-dialog": "^1.0.5",
     "@radix-ui/react-slot": "^1.0.2",
@@ -25,6 +28,8 @@
     "gpx_viewer": "^1.1.1",
     "lucide-react": "^0.468.0",
     "maplibre-gl": "^6.18.0",
+    "pbf": "^5.2.0",
+    "pmtiles": "^4.5.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "tailwind-merge": "^2.5.5",

@@ -3,13 +3,29 @@ import path from "node:path";
 import zlib from "node:zlib";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin } from "vite";
+import {
+  Compression,
+  EtagMismatch,
+  PMTiles,
+  ResolvedValueCache,
+  TileType,
+  type RangeResponse,
+  type Source
+} from "pmtiles";
 
+import {
+  archiveVersion,
+  parseRegionTilePath,
+  tileCacheControl
+} from "./src/worker/regionTiles.ts";
 import type {
   BootstrapStats,
+  CompactTrackRegionTuple,
   CompactTrackTileTuple,
   SpatialQueryMatch,
   TrackMetadata,
-  UploadTrackMetaPayload
+  UploadTrackMetaPayload,
+  VisitedRegion
 } from "./src/types/track.ts";
 
 type LocalTileHit = {
@@ -23,6 +39,11 @@ type LocalIndex = {
   stats: BootstrapStats;
   tracks: TrackMetadata[];
   tileIndex: Record<string, LocalTileHit[]>;
+};
+
+type LocalRegionsData = {
+  visitedRegions: VisitedRegion[];
+  trackRegions: Array<[number, string, number, number, number]>;
 };
 
 const EMPTY_FOG_HEADER = Buffer.from([
@@ -86,6 +107,31 @@ function saveLocalIndex(dataDir: string, idx: LocalIndex): void {
   fs.writeFileSync(path.join(dataDir, "index.json"), JSON.stringify(idx));
 }
 
+function loadLocalRegions(dataDir: string): LocalRegionsData {
+  const regionsPath = path.join(dataDir, "regions-visited.json");
+  if (!fs.existsSync(regionsPath)) {
+    return { visitedRegions: [], trackRegions: [] };
+  }
+  try {
+    const parsed = JSON.parse(
+      fs.readFileSync(regionsPath, "utf8")
+    ) as Partial<LocalRegionsData>;
+    return {
+      visitedRegions: Array.isArray(parsed.visitedRegions)
+        ? parsed.visitedRegions
+        : [],
+      trackRegions: Array.isArray(parsed.trackRegions) ? parsed.trackRegions : []
+    };
+  } catch {
+    return { visitedRegions: [], trackRegions: [] };
+  }
+}
+
+function saveLocalRegions(dataDir: string, data: LocalRegionsData): void {
+  fs.mkdirSync(dataDir, { recursive: true });
+  fs.writeFileSync(path.join(dataDir, "regions-visited.json"), JSON.stringify(data));
+}
+
 function recomputeLocalStats(
   tracks: TrackMetadata[],
   tileCount: number,
@@ -107,6 +153,80 @@ function recomputeLocalStats(
   };
 }
 
+async function nodeDecompress(
+  buf: ArrayBuffer,
+  compression: Compression
+): Promise<ArrayBuffer> {
+  if (
+    compression === Compression.None ||
+    compression === Compression.Unknown
+  ) {
+    return buf;
+  }
+  if (compression === Compression.Gzip) {
+    const out = zlib.gunzipSync(Buffer.from(buf));
+    return out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength);
+  }
+  throw new Error(`Unsupported compression: ${compression}`);
+}
+
+async function keepNodeGzipTiles(
+  buf: ArrayBuffer,
+  compression: Compression
+): Promise<ArrayBuffer> {
+  return compression === Compression.Gzip
+    ? buf
+    : nodeDecompress(buf, compression);
+}
+
+class LocalPmtilesSource implements Source {
+  private readonly filePath: string;
+
+  constructor(filePath: string) {
+    this.filePath = filePath;
+  }
+
+  getKey(): string {
+    return this.filePath;
+  }
+
+  async getBytes(
+    offset: number,
+    length: number,
+    _signal?: AbortSignal,
+    etag?: string
+  ): Promise<RangeResponse> {
+    if (!fs.existsSync(this.filePath)) {
+      throw new Error(`Archive not found: ${this.filePath}`);
+    }
+    const stat = fs.statSync(this.filePath);
+    const currentEtag = `${stat.size}-${Math.floor(stat.mtimeMs)}`;
+    if (etag && etag !== currentEtag) {
+      throw new EtagMismatch(`Archive changed: ${this.filePath}`);
+    }
+    const clampedLen = Math.max(0, Math.min(length, stat.size - offset));
+    const buf = Buffer.allocUnsafe(clampedLen);
+    if (clampedLen > 0) {
+      const fd = fs.openSync(this.filePath, "r");
+      try {
+        fs.readSync(fd, buf, 0, clampedLen, offset);
+      } finally {
+        fs.closeSync(fd);
+      }
+    }
+    return {
+      data: buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength),
+      etag: currentEtag
+    };
+  }
+}
+
+const LOCAL_REGION_DIR_CACHE = new ResolvedValueCache(
+  25,
+  undefined,
+  nodeDecompress
+);
+
 export function localTrackApiPlugin(frontendRoot: string): Plugin {
   const dataDir = path.join(frontendRoot, "local-data");
 
@@ -120,12 +240,197 @@ export function localTrackApiPlugin(frontendRoot: string): Plugin {
         return;
       }
 
-      const urlPath = rawUrl.split("?")[0];
+      const parsedUrl = new URL(rawUrl, "http://localhost");
+      const urlPath = parsedUrl.pathname;
 
       try {
         if (urlPath === "/api/bootstrap" && req.method === "GET") {
           const idx = loadLocalIndex(dataDir);
-          sendJson(res, 200, { stats: idx.stats, tracks: idx.tracks });
+          const reg = loadLocalRegions(dataDir);
+          sendJson(res, 200, {
+            stats: idx.stats,
+            tracks: idx.tracks,
+            regions: reg.visitedRegions
+          });
+          return;
+        }
+
+        if (
+          urlPath.startsWith("/api/regions/tiles") &&
+          (req.method === "GET" || req.method === "HEAD")
+        ) {
+          const parsedTileReq = parseRegionTilePath(urlPath);
+          if (!parsedTileReq.ok) {
+            sendJson(res, 404, { error: "Invalid region tile route" });
+            return;
+          }
+
+          const pmtilesPath = path.join(
+            dataDir,
+            "r2",
+            "regions",
+            "global-regions.pmtiles"
+          );
+          if (!fs.existsSync(pmtilesPath)) {
+            sendJson(res, 404, { error: "global-regions.pmtiles not built yet" });
+            return;
+          }
+
+          if (parsedTileReq.kind === "version") {
+            const stat = fs.statSync(pmtilesPath);
+            const rawEtag = `${stat.size}-${Math.floor(stat.mtimeMs)}`;
+            res.statusCode = 200;
+            res.setHeader("Content-Type", "application/json; charset=utf-8");
+            res.setHeader("Cache-Control", "public, max-age=60");
+            res.setHeader("Access-Control-Allow-Origin", "*");
+            res.end(
+              JSON.stringify({
+                version: archiveVersion(rawEtag),
+                uploaded: stat.mtime.toISOString()
+              })
+            );
+            return;
+          }
+
+          const source = new LocalPmtilesSource(pmtilesPath);
+          const isTile = parsedTileReq.kind === "tile";
+          const pm = new PMTiles(
+            source,
+            LOCAL_REGION_DIR_CACHE,
+            isTile ? keepNodeGzipTiles : nodeDecompress
+          );
+          const header = await pm.getHeader();
+
+          if (!isTile) {
+            const origin = `http://${req.headers.host || "localhost:3000"}`;
+            const tilejson = await pm.getTileJson(
+              `${origin}/api/regions/tiles`
+            );
+            res.statusCode = 200;
+            res.setHeader("Content-Type", "application/json; charset=utf-8");
+            res.setHeader("Cache-Control", "public, max-age=86400");
+            res.setHeader("Access-Control-Allow-Origin", "*");
+            res.end(JSON.stringify(tilejson));
+            return;
+          }
+
+          const [z, x, y] = parsedTileReq.tile;
+          const fullUrl = new URL(
+            rawUrl,
+            `http://${req.headers.host || "localhost:3000"}`
+          );
+          const sendNoTile = async (status: number) => {
+            const latest = await pm.getHeader();
+            const cc = tileCacheControl(
+              fullUrl,
+              latest.etag ? archiveVersion(latest.etag) : undefined
+            );
+            res.statusCode = status;
+            res.setHeader("Cache-Control", cc);
+            res.setHeader("Access-Control-Allow-Origin", "*");
+            res.end();
+          };
+
+          if (z < header.minZoom || z > header.maxZoom) {
+            await sendNoTile(404);
+            return;
+          }
+
+          const tiledata = await pm.getZxy(z, x, y);
+          if (!tiledata) {
+            await sendNoTile(204);
+            return;
+          }
+
+          const latest = await pm.getHeader();
+          const cc = tileCacheControl(
+            fullUrl,
+            latest.etag ? archiveVersion(latest.etag) : undefined
+          );
+          res.statusCode = 200;
+          res.setHeader(
+            "Content-Type",
+            latest.tileType === TileType.Mvt
+              ? "application/x-protobuf"
+              : "application/octet-stream"
+          );
+          res.setHeader("Cache-Control", cc);
+          res.setHeader("Access-Control-Allow-Origin", "*");
+          if (latest.tileCompression === Compression.Gzip) {
+            res.setHeader("Content-Encoding", "gzip");
+          }
+          if (req.method === "HEAD") {
+            res.end();
+          } else {
+            res.end(Buffer.from(tiledata.data));
+          }
+          return;
+        }
+
+        if (urlPath === "/api/regions/meta" && req.method === "GET") {
+          const metaGzPath = path.join(
+            dataDir,
+            "r2",
+            "regions",
+            "regions-meta.json.gz"
+          );
+          if (!fs.existsSync(metaGzPath)) {
+            sendJson(res, 404, { error: "regions-meta.json.gz not found" });
+            return;
+          }
+          const acceptEncoding = String(req.headers["accept-encoding"] || "");
+          const gzBuf = fs.readFileSync(metaGzPath);
+          res.statusCode = 200;
+          res.setHeader("Content-Type", "application/json; charset=utf-8");
+          res.setHeader("Cache-Control", "public, max-age=86400");
+          if (acceptEncoding.includes("gzip")) {
+            res.setHeader("Content-Encoding", "gzip");
+            res.end(gzBuf);
+          } else {
+            res.end(zlib.gunzipSync(gzBuf));
+          }
+          return;
+        }
+
+        if (urlPath === "/api/regions/visited" && req.method === "PUT") {
+          const bodyBuf = await readRequestBody(req);
+          const parsed = JSON.parse(
+            bodyBuf.toString("utf8")
+          ) as Partial<LocalRegionsData>;
+          const prev = loadLocalRegions(dataDir);
+          const next: LocalRegionsData = {
+            visitedRegions: Array.isArray(parsed.visitedRegions)
+              ? parsed.visitedRegions
+              : prev.visitedRegions,
+            trackRegions: Array.isArray(parsed.trackRegions)
+              ? parsed.trackRegions
+              : prev.trackRegions
+          };
+          saveLocalRegions(dataDir, next);
+          sendJson(res, 200, { ok: true, count: next.visitedRegions.length });
+          return;
+        }
+
+        if (urlPath === "/api/regions/tracks" && req.method === "GET") {
+          const rawRids = parsedUrl.searchParams.get("rids") || "";
+          const ridSet = new Set(
+            rawRids
+              .split(",")
+              .map((s) => Number(s.trim()))
+              .filter((n) => Number.isInteger(n) && n > 0)
+          );
+          const reg = loadLocalRegions(dataDir);
+          const hits = new Map<string, number>();
+          for (const [rid, trackId, , , lastTs] of reg.trackRegions) {
+            if (ridSet.has(rid)) {
+              const prevTs = hits.get(trackId) ?? 0;
+              if (lastTs >= prevTs) hits.set(trackId, lastTs);
+            }
+          }
+          const trackIds = Array.from(hits.entries())
+            .sort((a, b) => b[1] - a[1])
+            .map(([id]) => id);
+          sendJson(res, 200, { trackIds });
           return;
         }
 
@@ -276,7 +581,7 @@ export function localTrackApiPlugin(frontendRoot: string): Plugin {
         }
 
         // Pure I/O ingest matching production Cloudflare Worker:
-        // Accepts browser-computed `gpsl0` binary, `meta` JSON ({ track, tiles }),
+        // Accepts browser-computed `gpsl0` binary, `meta` JSON ({ track, tiles, trackRegions?, visitedRegions? }),
         // and optional updated `fog` binary.
         if (urlPath === "/api/tracks/upload" && req.method === "POST") {
           const bodyBuf = await readRequestBody(req);
@@ -318,6 +623,20 @@ export function localTrackApiPlugin(frontendRoot: string): Plugin {
           const validTiles: CompactTrackTileTuple[] = Array.isArray(parsedMeta.tiles)
             ? parsedMeta.tiles.filter(
                 (t): t is CompactTrackTileTuple =>
+                  Array.isArray(t) &&
+                  t.length === 4 &&
+                  Number.isInteger(t[0]) &&
+                  Number.isInteger(t[1]) &&
+                  Number.isInteger(t[2]) &&
+                  Number.isInteger(t[3])
+              )
+            : [];
+
+          const validTrackRegions: CompactTrackRegionTuple[] = Array.isArray(
+            parsedMeta.trackRegions
+          )
+            ? parsedMeta.trackRegions.filter(
+                (t): t is CompactTrackRegionTuple =>
                   Array.isArray(t) &&
                   t.length === 4 &&
                   Number.isInteger(t[0]) &&
@@ -387,6 +706,20 @@ export function localTrackApiPlugin(frontendRoot: string): Plugin {
           );
           saveLocalIndex(dataDir, idx);
 
+          if (Array.isArray(parsedMeta.visitedRegions) || validTrackRegions.length > 0) {
+            const reg = loadLocalRegions(dataDir);
+            const filteredTR = reg.trackRegions.filter((r) => r[1] !== trackId);
+            for (const [rid, cellCount, firstTs, lastTs] of validTrackRegions) {
+              filteredTR.push([rid, trackId, cellCount, firstTs, lastTs]);
+            }
+            saveLocalRegions(dataDir, {
+              visitedRegions: Array.isArray(parsedMeta.visitedRegions)
+                ? parsedMeta.visitedRegions
+                : reg.visitedRegions,
+              trackRegions: filteredTR
+            });
+          }
+
           sendJson(res, 200, { ok: true, track });
           return;
         }
@@ -422,6 +755,15 @@ export function localTrackApiPlugin(frontendRoot: string): Plugin {
             idx.stats.exploredAreaKm2
           );
           saveLocalIndex(dataDir, idx);
+
+          const reg = loadLocalRegions(dataDir);
+          if (reg.trackRegions.length > 0) {
+            saveLocalRegions(dataDir, {
+              visitedRegions: reg.visitedRegions,
+              trackRegions: reg.trackRegions.filter((r) => r[1] !== safeId)
+            });
+          }
+
           sendJson(res, 200, { ok: true, deletedId: safeId });
           return;
         }

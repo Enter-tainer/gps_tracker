@@ -50,6 +50,41 @@ function main() {
     modeFlag
   ]);
 
+  const seedRegionsSql = path.join(DATA_DIR, "d1", "seed_regions.sql");
+  if (fs.existsSync(seedRegionsSql)) {
+    console.log(`Syncing region seed data to D1 (${modeFlag})...`);
+    runWrangler(["d1", "execute", D1_NAME, modeFlag, `--file=${seedRegionsSql}`]);
+  }
+
+  const regionsPmtiles = path.join(DATA_DIR, "r2", "regions", "global-regions.pmtiles");
+  if (fs.existsSync(regionsPmtiles)) {
+    console.log(`Uploading global-regions.pmtiles to R2 bucket ${BUCKET_NAME}...`);
+    runWrangler([
+      "r2",
+      "object",
+      "put",
+      `${BUCKET_NAME}/regions/global-regions.pmtiles`,
+      `--file=${regionsPmtiles}`,
+      "--content-type=application/octet-stream",
+      modeFlag
+    ]);
+  }
+
+  const regionsMetaGz = path.join(DATA_DIR, "r2", "regions", "regions-meta.json.gz");
+  if (fs.existsSync(regionsMetaGz)) {
+    console.log(`Uploading regions-meta.json.gz to R2 bucket ${BUCKET_NAME}...`);
+    runWrangler([
+      "r2",
+      "object",
+      "put",
+      `${BUCKET_NAME}/regions/regions-meta.json.gz`,
+      `--file=${regionsMetaGz}`,
+      "--content-type=application/json",
+      "--content-encoding=gzip",
+      modeFlag
+    ]);
+  }
+
   console.log("Cloudflare D1 + R2 sync completed!");
 }
 
