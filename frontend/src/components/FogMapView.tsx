@@ -184,6 +184,14 @@ function computeLodTier(zoom: number, fogStyle: FogRenderStyle): LodTier {
   return "l3";
 }
 
+function isAllTracksHiddenInFog(
+  mode: MapVisualizationMode,
+  fogStyle: FogRenderStyle,
+  zoom: number
+): boolean {
+  return mode === "fog" && fogStyle !== "regions" && zoom >= 10.8;
+}
+
 function buildTierFillOpacityExpr(
   tier: "l0" | "l1" | "l2" | "l3",
   fogOpacity: number,
@@ -901,11 +909,21 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
     }
 
     if (map.getLayer("all-tracks-casing")) {
-      const casingOpacity =
+      const casingOpacity: DataDrivenPropertyValueSpecification<number> =
         data.mode === "tracks"
           ? 0.65
           : data.mode === "fog"
-            ? 0.4
+            ? data.fogStyle === "regions"
+              ? 0.4
+              : ([
+                  "interpolate",
+                  ["linear"],
+                  ["zoom"],
+                  9.8,
+                  0.4,
+                  10.8,
+                  0
+                ] as unknown as DataDrivenPropertyValueSpecification<number>)
             : data.mode === "spatial"
               ? 0.45
               : 0;
@@ -923,7 +941,18 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
       if (data.mode === "tracks") {
         opacity = 0.88;
       } else if (data.mode === "fog") {
-        opacity = 0.42;
+        opacity =
+          data.fogStyle === "regions"
+            ? 0.42
+            : ([
+                "interpolate",
+                ["linear"],
+                ["zoom"],
+                9.8,
+                0.42,
+                10.8,
+                0
+              ] as unknown as DataDrivenPropertyValueSpecification<number>);
       } else if (data.mode === "heatmap") {
         opacity = 0.14;
       } else if (data.mode === "spatial") {
@@ -1802,7 +1831,10 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
           return;
         }
 
-        if (map.getLayer("all-tracks-layer")) {
+        if (
+          map.getLayer("all-tracks-layer") &&
+          !isAllTracksHiddenInFog(p.mode, p.fogStyle, map.getZoom())
+        ) {
           const isCoarse =
             typeof window !== "undefined" &&
             (window.matchMedia?.("(pointer: coarse)").matches ?? false);
@@ -1877,7 +1909,15 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
       });
 
       map.on("mousemove", "all-tracks-layer", () => {
-        if (map && propsRef.current.mode !== "spatial") {
+        if (
+          map &&
+          propsRef.current.mode !== "spatial" &&
+          !isAllTracksHiddenInFog(
+            propsRef.current.mode,
+            propsRef.current.fogStyle,
+            map.getZoom()
+          )
+        ) {
           map.getCanvas().style.cursor = "pointer";
         }
       });
