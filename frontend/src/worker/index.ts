@@ -17,9 +17,11 @@ import type {
   UploadTrackMetaPayload,
   VisitedRegion
 } from "../types/track.ts";
+import { handleAgentRequest } from "./agentApi.ts";
+import type { OidcEnv } from "./oidcAuth.ts";
 import { handleRegionTileRequest } from "./regionTiles.ts";
 
-export interface Env {
+export interface Env extends OidcEnv {
   ASSETS: Fetcher;
   TRACKS_BUCKET: R2Bucket;
   TRACKS_DB: D1Database;
@@ -795,6 +797,11 @@ export default {
   ): Promise<Response> {
     const url = new URL(request.url);
     const pathname = url.pathname;
+
+    if (pathname.startsWith("/api/agent")) {
+      const agentResp = await handleAgentRequest(request, env, url);
+      if (agentResp) return agentResp;
+    }
 
     if (pathname === "/api/bootstrap" && request.method === "GET") {
       return handleBootstrap(env);

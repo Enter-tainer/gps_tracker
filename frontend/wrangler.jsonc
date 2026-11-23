@@ -28,4 +28,11 @@
       "migrations_dir": "migrations"
     }
   ]
+  // Optional Cloudflare Access for SaaS (OIDC) configuration for /api/agent/*:
+  // Set via `wrangler secret put` or Dashboard -> Workers -> Variables & Secrets:
+  //   OIDC_ISSUER         = "https://<team>.cloudflareaccess.com/cdn-cgi/access/sso/oidc/<client-id>"
+  //   OIDC_CLIENT_ID      = "<client-id>"
+  //   OIDC_AUD            = "<client-id>" (optional, defaults to OIDC_CLIENT_ID)
+  //   OIDC_SCOPES         = "openid email profile" (optional)
+  //   OIDC_ALLOWED_EMAILS = "you@example.com" (optional comma-separated allowlist)
 }

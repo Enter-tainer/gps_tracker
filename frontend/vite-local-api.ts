@@ -18,6 +18,7 @@ import {
   parseRegionTilePath,
   tileCacheControl
 } from "./src/worker/regionTiles.ts";
+import { getZ15TilesForBbox } from "./src/utils/coordTransform.ts";
 import type {
   BootstrapStats,
   CompactTrackRegionTuple,
@@ -227,6 +228,636 @@ const LOCAL_REGION_DIR_CACHE = new ResolvedValueCache(
   nodeDecompress
 );
 
+function toIsoOrNullLocal(ts: number): string | null {
+  if (!Number.isFinite(ts) || ts <= 0) return null;
+  return new Date(ts * 1000).toISOString();
+}
+
+function roundLocal(val: number, digits = 3): number {
+  const f = 10 ** digits;
+  return Math.round(val * f) / f;
+}
+
+function serializeLocalAgentTrack(
+  t: TrackMetadata,
+  includeOverview: boolean
+): Omit<TrackMetadata, "overview_coords"> & {
+  overview_coords?: TrackMetadata["overview_coords"];
+  distance_km: number;
+  start_iso: string | null;
+  end_iso: string | null;
+} {
+  const { overview_coords, ...rest } = t;
+  return {
+    ...rest,
+    distance_km: roundLocal(t.distance_m / 1000, 3),
+    start_iso: toIsoOrNullLocal(t.start_time),
+    end_iso: toIsoOrNullLocal(t.end_time),
+    ...(includeOverview ? { overview_coords } : {})
+  };
+}
+
+function serializeLocalRegion(r: VisitedRegion) {
+  return {
+    ...r,
+    coverage_ratio:
+      r.areaKm2 > 0 ? Math.min(1, roundLocal(r.exploredAreaKm2 / r.areaKm2, 6)) : 0,
+    first_iso: toIsoOrNullLocal(r.firstTs),
+    last_iso: toIsoOrNullLocal(r.lastTs)
+  };
+}
+
+function parseTimestampLocal(raw: string | null): number | null {
+  if (!raw || !raw.trim()) return null;
+  const trimmed = raw.trim();
+  if (/^\d+(\.\d+)?$/.test(trimmed)) {
+    const n = Number(trimmed);
+    if (!Number.isFinite(n)) return null;
+    return n > 1e12 ? Math.floor(n / 1000) : Math.floor(n);
+  }
+  const ms = Date.parse(trimmed);
+  return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
+}
+
+function getRegionsForTrackLocal(reg: LocalRegionsData, trackId: string) {
+  const regionMap = new Map(reg.visitedRegions.map((r) => [r.rid, r]));
+  const items: Array<{
+    rid: number;
+    level: number;
+    parentRid: number | null;
+    country: string;
+    nameZh: string;
+    nameEn: string;
+    cellCount: number;
+    firstTs: number;
+    lastTs: number;
+    first_iso: string | null;
+    last_iso: string | null;
+  }> = [];
+
+  for (const [rid, tid, cellCount, firstTs, lastTs] of reg.trackRegions) {
+    if (tid !== trackId) continue;
+    const vr = regionMap.get(rid);
+    if (!vr) continue;
+    items.push({
+      rid: vr.rid,
+      level: vr.level,
+      parentRid: vr.parentRid,
+      country: vr.country,
+      nameZh: vr.nameZh,
+      nameEn: vr.nameEn,
+      cellCount,
+      firstTs,
+      lastTs,
+      first_iso: toIsoOrNullLocal(firstTs),
+      last_iso: toIsoOrNullLocal(lastTs)
+    });
+  }
+
+  return items.sort((a, b) => a.level - b.level || b.cellCount - a.cellCount);
+}
+
+async function handleLocalAgentApi(
+  req: IncomingMessage,
+  res: ServerResponse,
+  parsedUrl: URL,
+  dataDir: string
+): Promise<boolean> {
+  const urlPath = parsedUrl.pathname;
+  if (!urlPath.startsWith("/api/agent")) return false;
+
+  if (urlPath === "/api/agent/auth/config" && req.method === "GET") {
+    sendJson(res, 200, {
+      configured: false,
+      local_dev: true,
+      message: "Local Vite API mode does not require OIDC authentication"
+    });
+    return true;
+  }
+
+  if (urlPath === "/api/agent/me" && req.method === "GET") {
+    sendJson(res, 200, {
+      sub: "local-dev",
+      email: "local@dev",
+      name: "Local Dev",
+      exp: Math.floor(Date.now() / 1000) + 86400,
+      exp_iso: toIsoOrNullLocal(Math.floor(Date.now() / 1000) + 86400),
+      iat: Math.floor(Date.now() / 1000),
+      iss: "http://localhost",
+      aud: "local-dev",
+      scopes: ["tracks:read"],
+      local_dev: true
+    });
+    return true;
+  }
+
+  const idx = loadLocalIndex(dataDir);
+  const reg = loadLocalRegions(dataDir);
+
+  if (urlPath === "/api/agent/stats" && req.method === "GET") {
+    const year = parsedUrl.searchParams.get("year")?.trim() ?? "";
+    const month = parsedUrl.searchParams.get("month")?.trim() ?? "";
+    const from = parsedUrl.searchParams.get("from")?.trim() ?? "";
+    const to = parsedUrl.searchParams.get("to")?.trim() ?? "";
+
+    let tracks = idx.tracks;
+    if (month) {
+      tracks = tracks.filter((t) => t.date >= `${month}-01` && t.date <= `${month}-31`);
+    } else if (year) {
+      tracks = tracks.filter((t) => t.date >= `${year}-01-01` && t.date <= `${year}-12-31`);
+    }
+    if (from) tracks = tracks.filter((t) => t.date >= from);
+    if (to) tracks = tracks.filter((t) => t.date <= to);
+
+    const unfiltered = !year && !month && !from && !to;
+    const dates = tracks.map((t) => t.date).sort();
+    const totalDistanceM = Math.round(tracks.reduce((s, t) => s + t.distance_m, 0));
+    const totalElevGainM = Math.round(tracks.reduce((s, t) => s + t.elev_gain_m, 0));
+
+    const byYearMap = new Map<
+      string,
+      { year: string; trackCount: number; distanceM: number; durationS: number; elevGainM: number; pointCount: number }
+    >();
+    for (const t of tracks) {
+      const y = t.date.slice(0, 4);
+      const cur = byYearMap.get(y) ?? {
+        year: y,
+        trackCount: 0,
+        distanceM: 0,
+        durationS: 0,
+        elevGainM: 0,
+        pointCount: 0
+      };
+      cur.trackCount += 1;
+      cur.distanceM += t.distance_m;
+      cur.durationS += t.duration_s;
+      cur.elevGainM += t.elev_gain_m;
+      cur.pointCount += t.point_count;
+      byYearMap.set(y, cur);
+    }
+
+    const counts = { l0: 0, l1: 0, l2: 0, l3: 0, total: 0 };
+    for (const vr of reg.visitedRegions) {
+      if (vr.level === 0) counts.l0++;
+      else if (vr.level === 1) counts.l1++;
+      else if (vr.level === 2) counts.l2++;
+      else if (vr.level === 3) counts.l3++;
+      counts.total++;
+    }
+
+    sendJson(res, 200, {
+      filter: { year: year || null, month: month || null, from: from || null, to: to || null },
+      stats: {
+        trackCount: tracks.length,
+        totalPoints: tracks.reduce((s, t) => s + t.point_count, 0),
+        totalDistanceM,
+        totalDistanceKm: roundLocal(totalDistanceM / 1000, 3),
+        totalDurationS: tracks.reduce((s, t) => s + t.duration_s, 0),
+        totalElevGainM,
+        firstDate: dates[0] ?? null,
+        lastDate: dates[dates.length - 1] ?? null,
+        ...(unfiltered
+          ? {
+              visitedTilesZ15: idx.stats.visitedTilesZ15,
+              exploredCellsZ21: idx.stats.exploredCellsZ21,
+              exploredAreaKm2: idx.stats.exploredAreaKm2
+            }
+          : {})
+      },
+      ...(unfiltered ? { visitedRegionCounts: counts } : {}),
+      byYear: Array.from(byYearMap.values())
+        .sort((a, b) => b.year.localeCompare(a.year))
+        .map((y) => ({
+          ...y,
+          distanceM: Math.round(y.distanceM),
+          distanceKm: roundLocal(y.distanceM / 1000, 3),
+          elevGainM: Math.round(y.elevGainM)
+        }))
+    });
+    return true;
+  }
+
+  if (urlPath === "/api/agent/tracks" && req.method === "GET") {
+    const from = parsedUrl.searchParams.get("from")?.trim() ?? "";
+    const to = parsedUrl.searchParams.get("to")?.trim() ?? "";
+    const regionIdRaw = parsedUrl.searchParams.get("region_id")?.trim() ?? "";
+    const regionName = parsedUrl.searchParams.get("region")?.trim().toLowerCase() ?? "";
+    const country = parsedUrl.searchParams.get("country")?.trim().toUpperCase() ?? "";
+    const q = parsedUrl.searchParams.get("q")?.trim().toLowerCase() ?? "";
+    const minDist = Number(parsedUrl.searchParams.get("min_distance_m") ?? "");
+    const maxDist = Number(parsedUrl.searchParams.get("max_distance_m") ?? "");
+    const sort = parsedUrl.searchParams.get("sort")?.trim() || "date_desc";
+    const limit = Math.max(1, Math.min(100, Number.parseInt(parsedUrl.searchParams.get("limit") || "20", 10) || 20));
+    const offset = Math.max(0, Number.parseInt(parsedUrl.searchParams.get("offset") || "0", 10) || 0);
+    const includeOverview = parsedUrl.searchParams.get("include_overview") === "1";
+
+    const regionMap = new Map(reg.visitedRegions.map((r) => [r.rid, r]));
+    const trackToRids = new Map<string, number[]>();
+    for (const [rid, tid] of reg.trackRegions) {
+      const arr = trackToRids.get(tid) ?? [];
+      arr.push(rid);
+      trackToRids.set(tid, arr);
+    }
+
+    let list = idx.tracks.slice();
+    if (from) list = list.filter((t) => t.date >= from);
+    if (to) list = list.filter((t) => t.date <= to);
+    if (Number.isFinite(minDist)) list = list.filter((t) => t.distance_m >= minDist);
+    if (Number.isFinite(maxDist)) list = list.filter((t) => t.distance_m <= maxDist);
+    if (q) {
+      list = list.filter(
+        (t) =>
+          t.title.toLowerCase().includes(q) ||
+          t.id.toLowerCase().includes(q) ||
+          t.source_file.toLowerCase().includes(q)
+      );
+    }
+    if (regionIdRaw) {
+      const rid = Number.parseInt(regionIdRaw, 10);
+      list = list.filter((t) => (trackToRids.get(t.id) ?? []).includes(rid));
+    }
+    if (regionName) {
+      list = list.filter((t) =>
+        (trackToRids.get(t.id) ?? []).some((rid) => {
+          const vr = regionMap.get(rid);
+          return (
+            vr &&
+            (vr.nameZh.toLowerCase().includes(regionName) ||
+              vr.nameEn.toLowerCase().includes(regionName))
+          );
+        })
+      );
+    }
+    if (country) {
+      list = list.filter((t) =>
+        (trackToRids.get(t.id) ?? []).some((rid) => {
+          const vr = regionMap.get(rid);
+          return vr && vr.country.toUpperCase() === country;
+        })
+      );
+    }
+
+    list.sort((a, b) => {
+      switch (sort) {
+        case "date_asc":
+          return a.date.localeCompare(b.date) || a.start_time - b.start_time;
+        case "distance_desc":
+          return b.distance_m - a.distance_m || b.date.localeCompare(a.date);
+        case "distance_asc":
+          return a.distance_m - b.distance_m || b.date.localeCompare(a.date);
+        case "duration_desc":
+          return b.duration_s - a.duration_s || b.date.localeCompare(a.date);
+        case "duration_asc":
+          return a.duration_s - b.duration_s || b.date.localeCompare(a.date);
+        case "elev_desc":
+          return b.elev_gain_m - a.elev_gain_m || b.date.localeCompare(a.date);
+        case "elev_asc":
+          return a.elev_gain_m - b.elev_gain_m || b.date.localeCompare(a.date);
+        case "date_desc":
+        default:
+          return b.date.localeCompare(a.date) || b.start_time - a.start_time;
+      }
+    });
+
+    const page = list
+      .slice(offset, offset + limit)
+      .map((t) => serializeLocalAgentTrack(t, includeOverview));
+
+    sendJson(res, 200, {
+      total: list.length,
+      limit,
+      offset,
+      truncated: offset + page.length < list.length,
+      tracks: page
+    });
+    return true;
+  }
+
+  if (urlPath === "/api/agent/regions" && req.method === "GET") {
+    const levelRaw = parsedUrl.searchParams.get("level")?.trim() ?? "";
+    const country = parsedUrl.searchParams.get("country")?.trim().toUpperCase() ?? "";
+    const parentRaw = parsedUrl.searchParams.get("parent_id")?.trim() ?? "";
+    const q = parsedUrl.searchParams.get("q")?.trim().toLowerCase() ?? "";
+    const sort = parsedUrl.searchParams.get("sort")?.trim() || "heat";
+    const limit = Math.max(1, Math.min(200, Number.parseInt(parsedUrl.searchParams.get("limit") || "50", 10) || 50));
+    const offset = Math.max(0, Number.parseInt(parsedUrl.searchParams.get("offset") || "0", 10) || 0);
+
+    let list = reg.visitedRegions.slice();
+    if (levelRaw !== "") {
+      const level = Number.parseInt(levelRaw, 10);
+      list = list.filter((r) => r.level === level);
+    }
+    if (country) {
+      list = list.filter((r) => r.country.toUpperCase() === country);
+    }
+    if (parentRaw !== "") {
+      const pid = Number.parseInt(parentRaw, 10);
+      list = list.filter((r) => r.parentRid === pid);
+    }
+    if (q) {
+      list = list.filter(
+        (r) =>
+          r.nameZh.toLowerCase().includes(q) ||
+          r.nameEn.toLowerCase().includes(q)
+      );
+    }
+
+    list.sort((a, b) => {
+      switch (sort) {
+        case "visit_days":
+          return b.visitDays - a.visitDays || b.heat - a.heat;
+        case "explored_area":
+          return b.exploredAreaKm2 - a.exploredAreaKm2 || b.heat - a.heat;
+        case "last_ts":
+          return b.lastTs - a.lastTs || b.heat - a.heat;
+        case "track_count":
+          return b.trackCount - a.trackCount || b.heat - a.heat;
+        case "heat":
+        default:
+          return b.heat - a.heat || b.exploredAreaKm2 - a.exploredAreaKm2;
+      }
+    });
+
+    const page = list.slice(offset, offset + limit).map(serializeLocalRegion);
+    sendJson(res, 200, {
+      total: list.length,
+      limit,
+      offset,
+      truncated: offset + page.length < list.length,
+      regions: page
+    });
+    return true;
+  }
+
+  const regionMatch = urlPath.match(/^\/api\/agent\/regions\/(\d+)$/);
+  if (regionMatch && req.method === "GET") {
+    const rid = Number.parseInt(regionMatch[1], 10);
+    const limit = Math.max(1, Math.min(100, Number.parseInt(parsedUrl.searchParams.get("limit") || "20", 10) || 20));
+    const offset = Math.max(0, Number.parseInt(parsedUrl.searchParams.get("offset") || "0", 10) || 0);
+    const regionMap = new Map(reg.visitedRegions.map((r) => [r.rid, r]));
+    const target = regionMap.get(rid);
+    if (!target) {
+      sendJson(res, 404, { error: "Visited region not found", rid });
+      return true;
+    }
+
+    const ancestors: Array<ReturnType<typeof serializeLocalRegion>> = [];
+    let curParent = target.parentRid;
+    let guard = 0;
+    while (curParent !== null && guard < 4) {
+      guard++;
+      const p = regionMap.get(curParent);
+      if (!p) break;
+      ancestors.unshift(serializeLocalRegion(p));
+      curParent = p.parentRid;
+    }
+
+    const children = reg.visitedRegions
+      .filter((r) => r.parentRid === rid)
+      .sort((a, b) => b.heat - a.heat || b.exploredAreaKm2 - a.exploredAreaKm2)
+      .map(serializeLocalRegion);
+
+    const trackMap = new Map(idx.tracks.map((t) => [t.id, t]));
+    const linked = reg.trackRegions
+      .filter((tr) => tr[0] === rid && trackMap.has(tr[1]))
+      .map((tr) => {
+        const t = trackMap.get(tr[1])!;
+        return {
+          ...serializeLocalAgentTrack(t, false),
+          regionCellCount: tr[2],
+          regionFirstTs: tr[3],
+          regionLastTs: tr[4],
+          regionFirstIso: toIsoOrNullLocal(tr[3]),
+          regionLastIso: toIsoOrNullLocal(tr[4])
+        };
+      })
+      .sort((a, b) => b.date.localeCompare(a.date) || b.start_time - a.start_time);
+
+    const page = linked.slice(offset, offset + limit);
+    sendJson(res, 200, {
+      region: serializeLocalRegion(target),
+      ancestors,
+      children,
+      tracksTotal: linked.length,
+      tracksTruncated: offset + page.length < linked.length,
+      tracks: page
+    });
+    return true;
+  }
+
+  if (urlPath === "/api/agent/spatial/nearby" && req.method === "POST") {
+    const bodyBuf = await readRequestBody(req);
+    const body = JSON.parse(bodyBuf.toString("utf8") || "{}") as {
+      lat?: number;
+      lon?: number;
+      radius_m?: number;
+      min_lat?: number;
+      min_lon?: number;
+      max_lat?: number;
+      max_lon?: number;
+      from?: string;
+      to?: string;
+      limit?: number;
+    };
+
+    const limit = Math.max(1, Math.min(100, Number(body.limit) || 20));
+    const from = typeof body.from === "string" ? body.from.trim() : "";
+    const to = typeof body.to === "string" ? body.to.trim() : "";
+
+    let minLat: number;
+    let minLon: number;
+    let maxLat: number;
+    let maxLon: number;
+    let querySpec: Record<string, unknown>;
+
+    if (typeof body.lat === "number" && typeof body.lon === "number") {
+      const radiusM = Math.max(10, Math.min(50_000, body.radius_m ?? 500));
+      const dLat = radiusM / 111_320;
+      const cosLat = Math.max(0.05, Math.cos((body.lat * Math.PI) / 180));
+      const dLon = radiusM / (111_320 * cosLat);
+      minLat = Math.max(-85.0511, body.lat - dLat);
+      maxLat = Math.min(85.0511, body.lat + dLat);
+      minLon = Math.max(-180, body.lon - dLon);
+      maxLon = Math.min(180, body.lon + dLon);
+      querySpec = { type: "radius", lat: body.lat, lon: body.lon, radius_m: radiusM, bbox: [minLon, minLat, maxLon, maxLat] };
+    } else if (
+      typeof body.min_lat === "number" &&
+      typeof body.min_lon === "number" &&
+      typeof body.max_lat === "number" &&
+      typeof body.max_lon === "number"
+    ) {
+      minLat = Math.min(body.min_lat, body.max_lat);
+      maxLat = Math.max(body.min_lat, body.max_lat);
+      minLon = Math.min(body.min_lon, body.max_lon);
+      maxLon = Math.max(body.min_lon, body.max_lon);
+      querySpec = { type: "bbox", bbox: [minLon, minLat, maxLon, maxLat] };
+    } else {
+      sendJson(res, 400, { error: "Provide lat/lon or bbox" });
+      return true;
+    }
+
+    const tileKeys = getZ15TilesForBbox(minLat, minLon, maxLat, maxLon, 15);
+    const trackMap = new Map(idx.tracks.map((t) => [t.id, t]));
+
+    if (tileKeys.length > 0 && tileKeys.length <= 1600) {
+      const agg = new Map<string, SpatialQueryMatch>();
+      for (const k of tileKeys) {
+        const hits = idx.tileIndex[String(k)] || [];
+        for (const h of hits) {
+          const prev = agg.get(h.trackId);
+          if (!prev) {
+            agg.set(h.trackId, { ...h });
+          } else {
+            prev.matchedPoints += h.pointCount;
+            prev.firstTs = Math.min(prev.firstTs, h.firstTs);
+            prev.lastTs = Math.max(prev.lastTs, h.lastTs);
+          }
+        }
+      }
+      const matches = Array.from(agg.values())
+        .filter((m) => {
+          const t = trackMap.get(m.trackId);
+          if (!t) return false;
+          if (from && t.date < from) return false;
+          if (to && t.date > to) return false;
+          return true;
+        })
+        .sort((a, b) => b.firstTs - a.firstTs)
+        .map((m) => ({
+          trackId: m.trackId,
+          matchedPoints: m.matchedPoints,
+          firstTs: m.firstTs,
+          lastTs: m.lastTs,
+          first_iso: toIsoOrNullLocal(m.firstTs),
+          last_iso: toIsoOrNullLocal(m.lastTs),
+          track: serializeLocalAgentTrack(trackMap.get(m.trackId)!, false)
+        }));
+
+      sendJson(res, 200, {
+        query: querySpec,
+        mode: "z15_tiles",
+        tileCount: tileKeys.length,
+        total: matches.length,
+        truncated: matches.length > limit,
+        matches: matches.slice(0, limit)
+      });
+      return true;
+    }
+
+    const bboxMatches = idx.tracks
+      .filter((t) => {
+        if (t.max_lat < minLat || t.min_lat > maxLat) return false;
+        if (t.max_lon < minLon || t.min_lon > maxLon) return false;
+        if (from && t.date < from) return false;
+        if (to && t.date > to) return false;
+        return true;
+      })
+      .map((t) => ({
+        trackId: t.id,
+        matchedPoints: t.point_count,
+        firstTs: t.start_time,
+        lastTs: t.end_time,
+        first_iso: toIsoOrNullLocal(t.start_time),
+        last_iso: toIsoOrNullLocal(t.end_time),
+        track: serializeLocalAgentTrack(t, false)
+      }));
+
+    sendJson(res, 200, {
+      query: querySpec,
+      mode: "bbox",
+      tileCount: tileKeys.length,
+      total: bboxMatches.length,
+      truncated: bboxMatches.length > limit,
+      matches: bboxMatches.slice(0, limit)
+    });
+    return true;
+  }
+
+  if (urlPath === "/api/agent/where" && req.method === "GET") {
+    const atTs = parseTimestampLocal(parsedUrl.searchParams.get("at"));
+    if (atTs === null) {
+      sendJson(res, 400, { error: "Query param 'at' is required" });
+      return true;
+    }
+    const windowS = Math.max(
+      60,
+      Math.min(604800, Number.parseInt(parsedUrl.searchParams.get("window_s") || "86400", 10) || 86400)
+    );
+
+    const exact = idx.tracks
+      .filter((t) => t.start_time <= atTs && t.end_time >= atTs)
+      .slice(0, 10)
+      .map((t) => ({
+        track: serializeLocalAgentTrack(t, false),
+        delta_s: 0,
+        regions: getRegionsForTrackLocal(reg, t.id)
+      }));
+
+    const nearest = idx.tracks
+      .filter((t) => !(t.start_time <= atTs && t.end_time >= atTs))
+      .map((t) => {
+        const delta =
+          atTs < t.start_time
+            ? t.start_time - atTs
+            : atTs > t.end_time
+              ? atTs - t.end_time
+              : 0;
+        return { t, delta };
+      })
+      .filter((x) => x.delta <= windowS)
+      .sort((a, b) => a.delta - b.delta)
+      .slice(0, 5)
+      .map(({ t, delta }) => ({
+        track: serializeLocalAgentTrack(t, false),
+        delta_s: delta,
+        regions: getRegionsForTrackLocal(reg, t.id)
+      }));
+
+    sendJson(res, 200, {
+      at: atTs,
+      at_iso: toIsoOrNullLocal(atTs),
+      window_s: windowS,
+      exact_tracks: exact,
+      nearest_tracks: nearest
+    });
+    return true;
+  }
+
+  const trackGpsl0Match = urlPath.match(/^\/api\/agent\/tracks\/([^/]+)\/gpsl0$/);
+  if (trackGpsl0Match && req.method === "GET") {
+    const safeId = decodeURIComponent(trackGpsl0Match[1]).replace(/[^a-zA-Z0-9_.-]/g, "");
+    const gpsl0Path = path.join(dataDir, "r2", "tracks-gpsl0", `${safeId}.gpsl0`);
+    if (!fs.existsSync(gpsl0Path)) {
+      sendJson(res, 404, { error: "Track archive not found", id: safeId });
+      return true;
+    }
+    res.statusCode = 200;
+    res.setHeader("Content-Type", "application/octet-stream");
+    res.setHeader("Cache-Control", "private, max-age=86400");
+    res.end(fs.readFileSync(gpsl0Path));
+    return true;
+  }
+
+  const trackDetailMatch = urlPath.match(/^\/api\/agent\/tracks\/([^/]+)$/);
+  if (trackDetailMatch && req.method === "GET") {
+    const safeId = decodeURIComponent(trackDetailMatch[1]).replace(/[^a-zA-Z0-9_.-]/g, "");
+    const includeOverview = parsedUrl.searchParams.get("include_overview") === "1";
+    const found = idx.tracks.find((t) => t.id === safeId);
+    if (!found) {
+      sendJson(res, 404, { error: "Track not found", id: safeId });
+      return true;
+    }
+    sendJson(res, 200, {
+      track: serializeLocalAgentTrack(found, includeOverview),
+      regions: getRegionsForTrackLocal(reg, safeId)
+    });
+    return true;
+  }
+
+  sendJson(res, 404, { error: "Agent API route not found" });
+  return true;
+}
+
 export function localTrackApiPlugin(frontendRoot: string): Plugin {
   const dataDir = path.join(frontendRoot, "local-data");
 
@@ -244,6 +875,10 @@ export function localTrackApiPlugin(frontendRoot: string): Plugin {
       const urlPath = parsedUrl.pathname;
 
       try {
+        if (await handleLocalAgentApi(req, res, parsedUrl, dataDir)) {
+          return;
+        }
+
         if (urlPath === "/api/bootstrap" && req.method === "GET") {
           const idx = loadLocalIndex(dataDir);
           const reg = loadLocalRegions(dataDir);
