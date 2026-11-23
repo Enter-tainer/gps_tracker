@@ -34,7 +34,6 @@ import {
   verifyPointSpatialMatches
 } from "../services/trackCache.ts";
 import type {
-  BaseMapId,
   BootstrapResponse,
   BootstrapStats,
   FogPackData,
@@ -49,7 +48,6 @@ import type {
   VisitedRegion
 } from "../types/track.ts";
 import { getZ15TilesForBbox } from "../utils/coordTransform.ts";
-import { BASE_MAP_OPTIONS } from "../utils/styleBase.ts";
 
 export type MapWorkspaceProps = {
   tracks: TrackMetadata[];
@@ -113,7 +111,6 @@ export default function MapWorkspace({
 
   const [mode, setMode] = useState<MapVisualizationMode>("fog");
   const [fogStyle, setFogStyle] = useState<FogRenderStyle>("hybrid");
-  const [baseMapId, setBaseMapId] = useState<BaseMapId>("openfreemap-liberty");
   const [useGcj02, setUseGcj02] = useState(false);
   const [showRailway, setShowRailway] = useState(true);
   const [showTerrain, setShowTerrain] = useState(true);
@@ -402,14 +399,6 @@ export default function MapWorkspace({
     [setSelectedTrackIds, setTracks]
   );
 
-  const handleChangeBaseMap = useCallback((nextId: BaseMapId) => {
-    setBaseMapId(nextId);
-    const opt = BASE_MAP_OPTIONS.find((o) => o.id === nextId);
-    if (opt) {
-      setUseGcj02(opt.isGcj02Default);
-    }
-  }, []);
-
   const runPointSpatialQuery = useCallback(
     async (lat: number, lon: number, radiusM: number) => {
       const seq = ++spatialSeqRef.current;
@@ -655,7 +644,6 @@ export default function MapWorkspace({
       {/* Full-viewport MapLibre + 60fps Fog + Global Regions LOD */}
       <FogMapView
         mode={mode}
-        baseMapId={baseMapId}
         useGcj02={useGcj02}
         showRailway={showRailway}
         showTerrain={showTerrain}
@@ -1050,8 +1038,6 @@ export default function MapWorkspace({
             onToggleRailway={() => setShowRailway((v) => !v)}
             showTerrain={showTerrain}
             onToggleTerrain={() => setShowTerrain((v) => !v)}
-            baseMapId={baseMapId}
-            onChangeBaseMap={handleChangeBaseMap}
           />
         </>
       ) : (
@@ -1153,8 +1139,6 @@ export default function MapWorkspace({
                   onToggleRailway={() => setShowRailway((v) => !v)}
                   showTerrain={showTerrain}
                   onToggleTerrain={() => setShowTerrain((v) => !v)}
-                  baseMapId={baseMapId}
-                  onChangeBaseMap={handleChangeBaseMap}
                 />
               </div>
 

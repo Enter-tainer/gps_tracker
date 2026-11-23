@@ -19,7 +19,7 @@
     "gpsl0:pack": "node scripts/pack_gpsl0.mjs --verify"
   },
   "dependencies": {
-    "@atlas-realm/map": "git+https://github.com/Enter-tainer/atlas-realm.git#8a154e7d59f5105c34c2808c515e31332eb4f47e",
+    "@atlas-realm/map": "git+https://github.com/Enter-tainer/atlas-realm.git#e79076cf88bdc6e932062f5030e91214b91c2c85",
     "@mapbox/vector-tile": "^3.0.0",
     "@noble/curves": "^1.8.1",
     "@radix-ui/react-alert-dialog": "^1.0.5",

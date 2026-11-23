@@ -141,13 +141,6 @@ export type FogPackData = {
 
 export type MapVisualizationMode = "fog" | "heatmap" | "tracks" | "spatial";
 export type TrackColorMode = "speed" | "elevation" | "track";
-export type BaseMapId =
-  | "openfreemap-liberty"
-  | "openfreemap-bright"
-  | "openfreemap-positron"
-  | "openfreemap-fiord"
-  | "openfreemap-dark"
-  | "amap-standard";
 
 export type CompactTrackTileTuple = [
   tileKey: number,

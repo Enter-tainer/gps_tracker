@@ -1,8 +1,7 @@
 import React, { useEffect } from "react";
-import { Check, RefreshCw, X } from "lucide-react";
+import { RefreshCw, X } from "lucide-react";
 
-import type { BaseMapId, FogRenderStyle } from "../types/track.ts";
-import { BASE_MAP_OPTIONS } from "../utils/styleBase.ts";
+import type { FogRenderStyle } from "../types/track.ts";
 
 export type LayerSettingsPanelProps = {
   isOpen: boolean;
@@ -22,8 +21,6 @@ export type LayerSettingsPanelProps = {
   onToggleRailway: () => void;
   showTerrain: boolean;
   onToggleTerrain: () => void;
-  baseMapId: BaseMapId;
-  onChangeBaseMap: (id: BaseMapId) => void;
 };
 
 const FOG_STYLE_OPTIONS: Array<{
@@ -53,9 +50,7 @@ export const LayerSettingsPanel: React.FC<LayerSettingsPanelProps> = ({
   showRailway,
   onToggleRailway,
   showTerrain,
-  onToggleTerrain,
-  baseMapId,
-  onChangeBaseMap
+  onToggleTerrain
 }) => {
   useEffect(() => {
     if (!isOpen) return;
@@ -178,14 +173,14 @@ export const LayerSettingsPanel: React.FC<LayerSettingsPanelProps> = ({
         </button>
       </div>
 
-      <div className="mb-3 space-y-2.5 border-b border-border pb-3">
+      <div className="space-y-2.5">
         <div className="flex items-center justify-between gap-3">
           <div>
             <div className="text-xs font-medium text-foreground">
               铁路图层 (OpenRailwayMap)
             </div>
             <div className="text-[11px] text-muted-foreground">
-              叠加铁路线网与车站标识（仅 WGS-84 矢量底图）
+              叠加铁路线网与车站标识
             </div>
           </div>
           <button
@@ -212,7 +207,7 @@ export const LayerSettingsPanel: React.FC<LayerSettingsPanelProps> = ({
               高程地形与等高线 (Mapterhorn)
             </div>
             <div className="text-[11px] text-muted-foreground">
-              山体阴影与等高线（仅 WGS-84 矢量底图）
+              山体阴影与等高线
             </div>
           </div>
           <button
@@ -232,39 +227,6 @@ export const LayerSettingsPanel: React.FC<LayerSettingsPanelProps> = ({
             />
           </button>
         </div>
-      </div>
-
-      <div className="space-y-1">
-        <div className="mb-1.5 text-[11px] font-medium text-muted-foreground">
-          底图源 (OpenFreeMap / 高德)
-        </div>
-        {BASE_MAP_OPTIONS.map((opt) => {
-          const active = baseMapId === opt.id;
-          return (
-            <button
-              key={opt.id}
-              type="button"
-              onClick={() => onChangeBaseMap(opt.id)}
-              className={`flex w-full items-center justify-between gap-2 rounded-md px-2.5 ${
-                isMobile ? "py-2.5" : "py-1.5"
-              } text-left transition-colors ${
-                active
-                  ? "bg-accent text-accent-foreground ring-1 ring-border"
-                  : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
-              }`}
-            >
-              <div className="min-w-0">
-                <div className="text-xs font-medium text-foreground">
-                  {opt.label}
-                </div>
-                <div className="text-[11px] text-muted-foreground">
-                  {opt.description}
-                </div>
-              </div>
-              {active && <Check className="h-4 w-4 shrink-0 text-cyan-400" />}
-            </button>
-          );
-        })}
       </div>
     </>
   );

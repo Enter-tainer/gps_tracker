@@ -21,7 +21,6 @@ import "@atlas-realm/map/styles.css";
 setWorkerUrl(maplibreWorkerUrl);
 
 import type {
-  BaseMapId,
   FogPackData,
   FogRenderStyle,
   GpsPoint,
@@ -76,7 +75,6 @@ export type FitPadding = {
 
 type FogMapViewProps = {
   mode: MapVisualizationMode;
-  baseMapId: BaseMapId;
   useGcj02: boolean;
   showRailway?: boolean;
   showTerrain?: boolean;
@@ -474,7 +472,6 @@ function emptyFeatureCollection(): GeoJSON.FeatureCollection {
 
 export const FogMapView: React.FC<FogMapViewProps> = ({
   mode,
-  baseMapId,
   useGcj02,
   showRailway = true,
   showTerrain = true,
@@ -507,9 +504,7 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
   const mapRef = useRef<MapLibreMap | null>(null);
   const styleReadyRef = useRef(false);
   const regionsTileVersionRef = useRef<string | null>(null);
-  const appliedStyleKeyRef = useRef<string>(
-    `${baseMapId}:${showRailway}:${showTerrain}`
-  );
+  const appliedStyleKeyRef = useRef<string>(`${showRailway}:${showTerrain}`);
   const pendingFitBoundsRef = useRef<[number, number, number, number] | null>(
     null
   );
@@ -540,7 +535,6 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
 
   const propsRef = useRef({
     mode,
-    baseMapId,
     useGcj02,
     showRailway,
     showTerrain,
@@ -563,7 +557,6 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
   });
   propsRef.current = {
     mode,
-    baseMapId,
     useGcj02,
     showRailway,
     showTerrain,
@@ -1770,14 +1763,13 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
       });
     };
 
-    const initialBaseMapId = propsRef.current.baseMapId;
     const initialShowRailway = propsRef.current.showRailway;
     const initialShowTerrain = propsRef.current.showTerrain;
-    appliedStyleKeyRef.current = `${initialBaseMapId}:${initialShowRailway}:${initialShowTerrain}`;
+    appliedStyleKeyRef.current = `${initialShowRailway}:${initialShowTerrain}`;
     const demSource = setupMapterhornDem(maplibregl);
 
     Promise.all([
-      loadMapStyle(initialBaseMapId, {
+      loadMapStyle({
         showRailway: initialShowRailway,
         showTerrain: initialShowTerrain,
         demSource
@@ -1906,6 +1898,13 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
           p.fogStyle !== "fine" &&
           (p.fogStyle === "regions" || map.getZoom() < 10.4)
         ) {
+          const hasOrmFeature = map
+            .queryRenderedFeatures(e.point)
+            .some((f) => f.source === "openrailwaymap");
+          if (hasOrmFeature) {
+            return;
+          }
+
           const zoom = map.getZoom();
           const candidateLayers =
             zoom < 3.8
@@ -1948,7 +1947,6 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
             });
             return;
           }
-          ((e.originalEvent as unknown) as Record<string, unknown>).gpsTrackerHandled = true;
           p.onSelectRegion(null);
         }
       });
@@ -2021,10 +2019,10 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
     };
   }, []);
 
-  // Switch basemap / Atlas Realm overlay cleanly with diff: false so new style loads deterministically
+  // Switch Atlas Realm overlay cleanly with diff: false so new style loads deterministically
   useEffect(() => {
     const map = mapRef.current;
-    const styleKey = `${baseMapId}:${showRailway}:${showTerrain}`;
+    const styleKey = `${showRailway}:${showTerrain}`;
     if (!map || styleKey === appliedStyleKeyRef.current) {
       return;
     }
@@ -2033,18 +2031,16 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
     appliedStyleKeyRef.current = styleKey;
     const demSource = setupMapterhornDem(maplibregl);
 
-    loadMapStyle(baseMapId, { showRailway, showTerrain, demSource }).then(
-      (nextStyle) => {
-        if (!cancelled && mapRef.current === map) {
-          map.setStyle(nextStyle, { diff: false });
-        }
+    loadMapStyle({ showRailway, showTerrain, demSource }).then((nextStyle) => {
+      if (!cancelled && mapRef.current === map) {
+        map.setStyle(nextStyle, { diff: false });
       }
-    );
+    });
 
     return () => {
       cancelled = true;
     };
-  }, [baseMapId, showRailway, showTerrain]);
+  }, [showRailway, showTerrain]);
 
   // Toggle cursor and dragPan when spatial bbox drawing tool is active
   useEffect(() => {
