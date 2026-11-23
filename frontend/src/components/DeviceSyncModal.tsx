@@ -744,13 +744,13 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
                 <span
                   className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${
                     isOnline
-                      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
-                      : "border-amber-500/30 bg-amber-500/10 text-amber-400"
+                      ? "border-emerald-600/30 bg-emerald-500/10 text-emerald-700"
+                      : "border-amber-600/30 bg-amber-500/10 text-amber-700"
                   }`}
                 >
                   <span
                     className={`h-1.5 w-1.5 rounded-full ${
-                      isOnline ? "bg-emerald-400" : "bg-amber-400"
+                      isOnline ? "bg-emerald-600" : "bg-amber-500"
                     }`}
                   />
                   {isOnline ? "在线" : "离线模式 (SW)"}
@@ -880,9 +880,9 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
                       <span
                         className={
                           item.ok === true
-                            ? "text-emerald-400"
+                            ? "font-medium text-emerald-600"
                             : item.ok === false
-                              ? "text-red-400"
+                              ? "font-medium text-red-600"
                               : "text-muted-foreground"
                         }
                       >
@@ -941,8 +941,8 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
           {activeTab === "ble" && (
             <div className="space-y-5">
               {!isBluetoothSupported && (
-                <div className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/15 p-3 text-xs text-red-300">
-                  <AlertTriangle className="h-4 w-4 shrink-0 text-red-400" />
+                <div className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
+                  <AlertTriangle className="h-4 w-4 shrink-0 text-destructive" />
                   <span>
                     当前浏览器不支持 Web Bluetooth，请使用桌面/Android 版 Chrome 或 Edge。
                   </span>
@@ -999,16 +999,16 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
                         Math.max(1, Math.min(720, Number(e.target.value) || 1))
                       )
                     }
-                    className="w-16 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-center text-xs text-slate-100"
+                    className="h-8 w-16 rounded-md border border-input bg-background px-2 py-1 text-center text-xs text-foreground shadow-sm"
                   />
                   <button
                     type="button"
                     onClick={handleKeepAlive}
                     disabled={!isConnected}
-                    className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs disabled:opacity-40 ${
+                    className={`inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-xs font-medium transition-colors disabled:opacity-40 ${
                       isKeepAliveActive
-                        ? "border-rose-500/60 bg-rose-500/20 text-rose-200"
-                        : "border-slate-700 bg-slate-800 text-slate-200"
+                        ? "border-rose-500/40 bg-rose-500/10 text-rose-700 hover:bg-rose-500/20"
+                        : "border-border bg-background text-foreground hover:bg-accent"
                     }`}
                   >
                     <Timer className="h-3.5 w-3.5" />
@@ -1020,12 +1020,12 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
               </div>
 
               {agnssStatus && (
-                <div className="rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-200">
+                <div className="rounded-lg border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-xs text-sky-800">
                   AGNSS: {agnssStatus}
                 </div>
               )}
               {sysInfoError && (
-                <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
+                <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-700">
                   {sysInfoError}
                 </div>
               )}
@@ -1044,10 +1044,10 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
                 ].map(([label, value]) => (
                   <div
                     key={label}
-                    className="rounded-lg border border-slate-800 bg-slate-950/60 p-2.5"
+                    className="rounded-lg border border-border bg-muted/35 p-2.5"
                   >
-                    <div className="text-[10px] text-slate-400">{label}</div>
-                    <div className="mt-0.5 font-mono text-xs text-slate-100">
+                    <div className="text-[10px] text-muted-foreground">{label}</div>
+                    <div className="mt-0.5 font-mono text-xs font-medium text-foreground">
                       {value}
                     </div>
                   </div>
@@ -1055,17 +1055,17 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
               </div>
 
               {/* SD Card File Browser */}
-              <div className="space-y-3 rounded-xl border border-slate-800 bg-slate-950/50 p-3.5">
+              <div className="space-y-3 rounded-xl border border-border bg-muted/25 p-3.5">
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 text-xs font-semibold text-slate-200">
-                    <FolderOpen className="h-4 w-4 text-cyan-400" />
+                  <div className="flex items-center gap-2 text-xs font-semibold text-foreground">
+                    <FolderOpen className="h-4 w-4 text-sky-600" />
                     <span>SD 卡文件系统 ({currentPath})</span>
                   </div>
                   <button
                     type="button"
                     onClick={() => listDirectory(currentPath)}
                     disabled={!isConnected || isListing}
-                    className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs text-slate-200 disabled:opacity-40"
+                    className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2.5 py-1 text-xs font-medium text-foreground shadow-sm transition-colors hover:bg-accent disabled:opacity-40"
                   >
                     <RefreshCw className="h-3 w-3" />
                     {isListing ? "刷新中..." : "刷新目录"}
@@ -1074,7 +1074,7 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
 
                 <div className="max-h-60 space-y-1.5 overflow-y-auto scrollbar-thin">
                   {displayEntries.length === 0 ? (
-                    <div className="py-6 text-center text-xs text-slate-500">
+                    <div className="py-6 text-center text-xs text-muted-foreground">
                       {isConnected ? "当前目录为空" : "连接蓝牙设备后可浏览 SD 卡轨迹"}
                     </div>
                   ) : (
@@ -1084,13 +1084,13 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
                       return (
                         <div
                           key={entry.path}
-                          className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-800 bg-slate-900/75 px-3 py-2"
+                          className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-background px-3 py-2 shadow-sm"
                         >
                           <div className="flex items-center gap-2">
                             {isDir ? (
-                              <Folder className="h-4 w-4 text-amber-400" />
+                              <Folder className="h-4 w-4 text-amber-500" />
                             ) : (
-                              <FileDown className="h-4 w-4 text-slate-400" />
+                              <FileDown className="h-4 w-4 text-muted-foreground" />
                             )}
                             <button
                               type="button"
@@ -1098,14 +1098,14 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
                               onClick={() => isDir && listDirectory(entry.path)}
                               className={`text-xs font-medium ${
                                 isDir
-                                  ? "text-amber-300 hover:underline"
-                                  : "text-slate-100"
+                                  ? "text-amber-700 hover:underline"
+                                  : "text-foreground"
                               }`}
                             >
                               {entry.name}
                             </button>
                             {!isDir && (
-                              <span className="font-mono text-[10px] text-slate-400">
+                              <span className="font-mono text-[10px] text-muted-foreground">
                                 {formatFileSize(entry.size)}
                               </span>
                             )}
@@ -1117,7 +1117,7 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
                                 type="button"
                                 disabled={isBusy}
                                 onClick={() => handleBleSyncToCloud(entry)}
-                                className="inline-flex items-center gap-1 rounded-md bg-cyan-500/20 px-2 py-1 text-[11px] font-medium text-cyan-300 hover:bg-cyan-500/30 disabled:opacity-40"
+                                className="inline-flex items-center gap-1 rounded-md border border-sky-500/30 bg-sky-500/10 px-2 py-1 text-[11px] font-medium text-sky-700 hover:bg-sky-500/20 disabled:opacity-40"
                               >
                                 <CloudUpload className="h-3 w-3" />
                                 入库
@@ -1126,7 +1126,7 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
                                 type="button"
                                 disabled={isBusy}
                                 onClick={() => handleBlePreview(entry)}
-                                className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-[11px] text-slate-200 hover:bg-slate-700 disabled:opacity-40"
+                                className="inline-flex items-center gap-1 rounded-md border border-border bg-secondary px-2 py-1 text-[11px] font-medium text-secondary-foreground hover:bg-accent disabled:opacity-40"
                               >
                                 <Eye className="h-3 w-3" />
                                 预览
@@ -1135,7 +1135,7 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
                                 type="button"
                                 disabled={isBusy}
                                 onClick={() => handleBleDownloadGpx(entry)}
-                                className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-[11px] text-slate-200 hover:bg-slate-700 disabled:opacity-40"
+                                className="inline-flex items-center gap-1 rounded-md border border-border bg-secondary px-2 py-1 text-[11px] font-medium text-secondary-foreground hover:bg-accent disabled:opacity-40"
                               >
                                 <MapIcon className="h-3 w-3" />
                                 GPX
@@ -1154,7 +1154,7 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
                                   type="button"
                                   disabled={isBusy}
                                   onClick={() => setConfirmDeletePath(entry.path)}
-                                  className="inline-flex items-center gap-1 rounded-md border border-rose-500/30 px-2 py-1 text-[11px] text-rose-300 hover:bg-rose-500/20 disabled:opacity-40"
+                                  className="inline-flex items-center gap-1 rounded-md border border-rose-500/30 px-2 py-1 text-[11px] text-rose-600 hover:bg-rose-500/10 disabled:opacity-40"
                                 >
                                   <Trash2 className="h-3 w-3" />
                                 </button>
@@ -1177,7 +1177,7 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
                   type="button"
                   onClick={handleFindMyGenerate}
                   disabled={findMyBusy}
-                  className="rounded-xl border border-slate-700 bg-slate-800 px-3.5 py-2 text-xs font-medium text-slate-100 hover:bg-slate-700"
+                  className="rounded-md border border-border bg-background px-3.5 py-2 text-xs font-medium text-foreground shadow-sm transition-colors hover:bg-accent disabled:opacity-40"
                 >
                   生成密钥
                 </button>
@@ -1185,7 +1185,7 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
                   type="button"
                   onClick={handleFindMyProvision}
                   disabled={!isConnected || !findMyKeys || findMyBusy}
-                  className="rounded-xl bg-cyan-500 px-3.5 py-2 text-xs font-semibold text-slate-950 hover:bg-cyan-400 disabled:opacity-40"
+                  className="rounded-md bg-primary px-3.5 py-2 text-xs font-semibold text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 disabled:opacity-40"
                 >
                   写入设备
                 </button>
@@ -1193,7 +1193,7 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
                   type="button"
                   onClick={handleFindMyDump}
                   disabled={!isConnected || findMyBusy}
-                  className="rounded-xl border border-slate-700 bg-slate-800 px-3.5 py-2 text-xs text-slate-100 disabled:opacity-40"
+                  className="rounded-md border border-border bg-background px-3.5 py-2 text-xs font-medium text-foreground shadow-sm transition-colors hover:bg-accent disabled:opacity-40"
                 >
                   读取设备密钥
                 </button>
@@ -1201,17 +1201,17 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
                   type="button"
                   onClick={handleFindMyStatus}
                   disabled={!isConnected || findMyBusy}
-                  className="rounded-xl border border-slate-700 bg-slate-800 px-3.5 py-2 text-xs text-slate-100 disabled:opacity-40"
+                  className="rounded-md border border-border bg-background px-3.5 py-2 text-xs font-medium text-foreground shadow-sm transition-colors hover:bg-accent disabled:opacity-40"
                 >
                   查询广播状态
                 </button>
               </div>
               {findMyEnabled !== null && (
-                <div className="text-xs text-slate-300">
+                <div className="text-xs text-muted-foreground">
                   状态:{" "}
                   <span
                     className={
-                      findMyEnabled ? "text-emerald-400" : "text-slate-400"
+                      findMyEnabled ? "font-medium text-emerald-600" : "text-muted-foreground"
                     }
                   >
                     {findMyEnabled ? "FindMy Active" : "FindMy Inactive"}
@@ -1219,7 +1219,7 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
                 </div>
               )}
               {findMyKeys && (
-                <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-950/70 p-3 font-mono text-xs text-slate-300">
+                <div className="space-y-2 rounded-xl border border-border bg-muted/35 p-3 font-mono text-xs text-foreground">
                   <div>
                     Epoch: {new Date(findMyKeys.epoch * 1000).toISOString()}
                   </div>
@@ -1232,7 +1232,7 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
                   <button
                     type="button"
                     onClick={handleFindMyExport}
-                    className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs text-slate-100 hover:bg-slate-700"
+                    className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground shadow-sm transition-colors hover:bg-accent"
                   >
                     <Download className="h-3.5 w-3.5" />
                     导出 JSON 备份
@@ -1248,25 +1248,25 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({
                 <button
                   type="button"
                   onClick={clearLogs}
-                  className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs text-slate-300 hover:bg-slate-700"
+                  className="rounded-md border border-border bg-background px-2.5 py-1 text-xs font-medium text-foreground shadow-sm transition-colors hover:bg-accent"
                 >
                   清空日志
                 </button>
               </div>
-              <div className="max-h-80 space-y-1.5 overflow-y-auto rounded-xl border border-slate-800 bg-slate-950/80 p-3 font-mono text-xs scrollbar-thin">
+              <div className="max-h-80 space-y-1.5 overflow-y-auto rounded-xl border border-border bg-muted/35 p-3 font-mono text-xs scrollbar-thin">
                 {logEntries.length === 0 ? (
-                  <div className="text-slate-500">暂无日志</div>
+                  <div className="text-muted-foreground">暂无日志</div>
                 ) : (
                   logEntries.map((entry) => (
                     <div key={entry.id} className="flex gap-2">
-                      <span className="text-slate-500">[{entry.time}]</span>
+                      <span className="text-muted-foreground">[{entry.time}]</span>
                       <span
                         className={
                           entry.level === "error"
-                            ? "text-rose-400"
+                            ? "text-rose-600"
                             : entry.level === "success"
-                              ? "text-emerald-400"
-                              : "text-slate-200"
+                              ? "text-emerald-600"
+                              : "text-foreground"
                         }
                       >
                         {entry.message}

@@ -143,9 +143,9 @@ export const ElevationProfileChart: React.FC<ElevationProfileChartProps> = ({
     const eleSpan = Math.max(1, maxEle - minEle);
 
     // Subtle horizontal grid lines
-    ctx.strokeStyle = "rgba(148, 163, 184, 0.14)";
+    ctx.strokeStyle = "rgba(15, 23, 42, 0.08)";
     ctx.lineWidth = 1;
-    ctx.fillStyle = "rgba(148, 163, 184, 0.7)";
+    ctx.fillStyle = "rgba(71, 85, 105, 0.85)";
     ctx.font = `${cssW < 420 ? 9 : 10}px 'JetBrains Mono', monospace`;
 
     for (let g = 0; g <= 2; g++) {
@@ -170,8 +170,8 @@ export const ElevationProfileChart: React.FC<ElevationProfileChartProps> = ({
 
     // Elevation area
     const grad = ctx.createLinearGradient(0, padT, 0, padT + plotH);
-    grad.addColorStop(0, "rgba(34, 211, 238, 0.42)");
-    grad.addColorStop(1, "rgba(34, 211, 238, 0.03)");
+    grad.addColorStop(0, "rgba(2, 132, 199, 0.32)");
+    grad.addColorStop(1, "rgba(2, 132, 199, 0.02)");
 
     ctx.beginPath();
     ctx.moveTo(padL, padT + plotH);
@@ -200,7 +200,7 @@ export const ElevationProfileChart: React.FC<ElevationProfileChartProps> = ({
       else ctx.lineTo(x, y);
     }
     ctx.lineTo(lastX, lastY);
-    ctx.strokeStyle = "#22d3ee";
+    ctx.strokeStyle = "#0284c7";
     ctx.lineWidth = 1.6;
     ctx.stroke();
 
@@ -212,12 +212,12 @@ export const ElevationProfileChart: React.FC<ElevationProfileChartProps> = ({
       if (i === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     }
-    ctx.strokeStyle = "rgba(251, 191, 36, 0.85)";
+    ctx.strokeStyle = "rgba(217, 119, 6, 0.88)";
     ctx.lineWidth = 1.3;
     ctx.stroke();
 
     // X-axis distance ticks
-    ctx.fillStyle = "rgba(148, 163, 184, 0.7)";
+    ctx.fillStyle = "rgba(71, 85, 105, 0.85)";
     ctx.textAlign = "center";
     for (let t = 0; t <= ticks; t++) {
       const ratio = t / ticks;
@@ -229,7 +229,7 @@ export const ElevationProfileChart: React.FC<ElevationProfileChartProps> = ({
     // Hover / scrub crosshair
     if (hoverSample) {
       const hx = Math.max(padL, Math.min(padL + plotW, hoverSample.x));
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.6)";
+      ctx.strokeStyle = "rgba(15, 23, 42, 0.55)";
       ctx.setLineDash([3, 3]);
       ctx.beginPath();
       ctx.moveTo(hx, padT);
@@ -345,7 +345,7 @@ export const ElevationProfileChart: React.FC<ElevationProfileChartProps> = ({
           <span className="shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground">
             {(track.distance_m / 1000).toFixed(2)} km
           </span>
-          <span className="shrink-0 font-mono text-[11px] tabular-nums text-emerald-400">
+          <span className="shrink-0 font-mono text-[11px] tabular-nums text-emerald-600">
             +{Math.round(track.elev_gain_m)}m
           </span>
         </button>
@@ -396,7 +396,7 @@ export const ElevationProfileChart: React.FC<ElevationProfileChartProps> = ({
             <span className="shrink-0 rounded border border-border bg-secondary px-1.5 py-0.5 font-mono text-[10px] font-medium tabular-nums text-secondary-foreground">
               {(track.distance_m / 1000).toFixed(1)}km
             </span>
-            <span className="shrink-0 rounded border border-border bg-secondary px-1.5 py-0.5 font-mono text-[10px] font-medium tabular-nums text-emerald-400">
+            <span className="shrink-0 rounded border border-border bg-secondary px-1.5 py-0.5 font-mono text-[10px] font-medium tabular-nums text-emerald-600">
               +{Math.round(track.elev_gain_m)}m
             </span>
           </div>
@@ -488,11 +488,11 @@ export const ElevationProfileChart: React.FC<ElevationProfileChartProps> = ({
           />
           <div className="pointer-events-none absolute left-10 top-0.5 flex gap-2.5 text-[10px] text-muted-foreground">
             <span className="flex items-center gap-1">
-              <span className="inline-block h-1.5 w-1.5 rounded-full bg-cyan-400" />
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-sky-500" />
               海拔
             </span>
             <span className="flex items-center gap-1">
-              <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-400" />
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500" />
               速度
             </span>
           </div>
@@ -511,7 +511,7 @@ export const ElevationProfileChart: React.FC<ElevationProfileChartProps> = ({
           <span className="inline-flex items-center rounded-md border border-border bg-secondary px-2 py-0.5 font-mono text-xs font-medium tabular-nums text-secondary-foreground">
             {(track.distance_m / 1000).toFixed(2)} km
           </span>
-          <span className="inline-flex items-center rounded-md border border-border bg-secondary px-2 py-0.5 font-mono text-xs font-medium tabular-nums text-emerald-400">
+          <span className="inline-flex items-center rounded-md border border-border bg-secondary px-2 py-0.5 font-mono text-xs font-medium tabular-nums text-emerald-600">
             +{Math.round(track.elev_gain_m)} m
           </span>
           <span className="hidden font-mono text-xs tabular-nums text-muted-foreground sm:inline">
@@ -585,11 +585,11 @@ export const ElevationProfileChart: React.FC<ElevationProfileChartProps> = ({
         />
         <div className="pointer-events-none absolute left-12 top-0.5 flex gap-3 text-[10px] text-muted-foreground">
           <span className="flex items-center gap-1">
-            <span className="inline-block h-2 w-2 rounded-full bg-cyan-400" />
+            <span className="inline-block h-2 w-2 rounded-full bg-sky-500" />
             海拔 (m)
           </span>
           <span className="flex items-center gap-1">
-            <span className="inline-block h-2 w-2 rounded-full bg-amber-400" />
+            <span className="inline-block h-2 w-2 rounded-full bg-amber-500" />
             速度 (km/h)
           </span>
         </div>

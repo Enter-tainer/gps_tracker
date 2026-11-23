@@ -2224,7 +2224,7 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
 
   return (
     <div
-      className="relative h-full w-full touch-none select-none overflow-hidden bg-slate-950"
+      className="relative h-full w-full touch-none select-none overflow-hidden bg-slate-100"
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}

@@ -235,7 +235,7 @@ export const LayerSettingsPanel: React.FC<LayerSettingsPanelProps> = ({
     return (
       <>
         <div
-          className="fixed inset-0 z-50 bg-black/55 backdrop-blur-[2px]"
+          className="fixed inset-0 z-50 bg-black/30 backdrop-blur-[2px]"
           onClick={onClose}
           aria-hidden="true"
         />
@@ -243,7 +243,7 @@ export const LayerSettingsPanel: React.FC<LayerSettingsPanelProps> = ({
           role="dialog"
           aria-modal="true"
           aria-label="底图与迷雾设置"
-          className="fixed inset-x-0 bottom-0 z-50 flex max-h-[82dvh] flex-col rounded-t-2xl border-t border-border bg-popover/98 text-popover-foreground shadow-2xl backdrop-blur-xl"
+          className="fixed inset-x-0 bottom-0 z-50 flex max-h-[82dvh] flex-col rounded-t-2xl border-t border-border bg-popover/95 text-popover-foreground shadow-2xl backdrop-blur-xl"
         >
           <div className="flex justify-center pb-1 pt-2.5">
             <div className="h-1 w-10 rounded-full bg-muted-foreground/35" />

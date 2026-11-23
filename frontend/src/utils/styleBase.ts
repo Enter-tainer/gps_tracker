@@ -36,7 +36,7 @@ function buildMinimalVectorFallbackStyle(): StyleSpecification {
         id: "background",
         type: "background",
         paint: {
-          "background-color": "#0b1324"
+          "background-color": "#f8fafc"
         }
       },
       {
@@ -45,7 +45,7 @@ function buildMinimalVectorFallbackStyle(): StyleSpecification {
         source: "openmaptiles",
         "source-layer": "water",
         paint: {
-          "fill-color": "#172a45"
+          "fill-color": "#bae6fd"
         }
       },
       {
@@ -54,7 +54,7 @@ function buildMinimalVectorFallbackStyle(): StyleSpecification {
         source: "openmaptiles",
         "source-layer": "boundary",
         paint: {
-          "line-color": "#475569",
+          "line-color": "#94a3b8",
           "line-width": 1
         }
       },
@@ -65,7 +65,7 @@ function buildMinimalVectorFallbackStyle(): StyleSpecification {
         "source-layer": "transportation",
         filter: ["in", "class", "motorway", "trunk", "primary", "secondary"],
         paint: {
-          "line-color": "#334155",
+          "line-color": "#cbd5e1",
           "line-width": 1.2
         }
       }

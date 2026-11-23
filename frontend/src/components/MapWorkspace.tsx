@@ -730,7 +730,7 @@ export default function MapWorkspace({
                 onClick={() => setMobileSheetSnap("half")}
                 className="inline-flex h-10 min-w-0 items-center gap-1.5 truncate rounded-xl border border-border bg-background/90 px-3 text-xs font-medium text-foreground shadow-lg backdrop-blur-md transition-colors hover:bg-accent"
               >
-                <Footprints className="h-3.5 w-3.5 shrink-0 text-cyan-400" />
+                <Footprints className="h-3.5 w-3.5 shrink-0 text-sky-600" />
                 <span className="truncate font-mono tabular-nums">
                   {tracks.length > 0
                     ? `${Math.round(stats.totalDistanceM / 1000)}km · ${tracks.length}条`
@@ -758,7 +758,7 @@ export default function MapWorkspace({
               >
                 <Layers className="h-4 w-4 text-muted-foreground" />
                 {(showLayerMenu || useGcj02) && (
-                  <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-cyan-400" />
+                  <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-sky-500" />
                 )}
               </button>
             </div>
@@ -776,8 +776,8 @@ export default function MapWorkspace({
               className="pointer-events-none absolute inset-x-3 z-20 flex flex-col gap-2"
             >
               {mode === "fog" && fogStyle !== "fine" && (
-                <div className="pointer-events-auto inline-flex items-center gap-2 self-start rounded-full border border-border/85 bg-background/85 px-2.5 py-1 text-[11px] text-foreground shadow-md backdrop-blur-md">
-                  <span className="font-medium text-cyan-300">
+                <div className="pointer-events-auto inline-flex items-center gap-2 self-start rounded-full border border-border/90 bg-background/90 px-2.5 py-1 text-[11px] text-foreground shadow-md backdrop-blur-md">
+                  <span className="font-medium text-sky-700">
                     {LOD_TIER_LABELS[activeLodTier]}
                   </span>
                   {activeLodTier !== "fine" && (
@@ -804,12 +804,12 @@ export default function MapWorkspace({
               )}
 
               {bootError && (
-                <div className="pointer-events-auto flex items-center justify-between gap-2 rounded-lg border border-destructive/50 bg-destructive/15 px-3 py-1.5 text-xs text-red-300 shadow-md backdrop-blur-md">
+                <div className="pointer-events-auto flex items-center justify-between gap-2 rounded-lg border border-destructive/40 bg-background/95 px-3 py-1.5 text-xs text-destructive shadow-md backdrop-blur-md">
                   <span className="truncate">数据加载失败: {bootError}</span>
                   <button
                     type="button"
                     onClick={loadBootstrapAndFog}
-                    className="shrink-0 rounded bg-destructive/30 px-2 py-0.5 text-[11px] font-medium text-red-100 hover:bg-destructive/50"
+                    className="shrink-0 rounded bg-destructive px-2 py-0.5 text-[11px] font-medium text-destructive-foreground hover:bg-destructive/90"
                   >
                     重试
                   </button>
@@ -817,7 +817,7 @@ export default function MapWorkspace({
               )}
 
               {mode === "spatial" && (
-                <div className="pointer-events-auto rounded-xl border border-border bg-background/92 px-3 py-2 shadow-lg backdrop-blur-md">
+                <div className="pointer-events-auto rounded-xl border border-border bg-background/95 px-3 py-2 shadow-lg backdrop-blur-md">
                   <div className="flex flex-wrap items-center gap-2">
                     <div className="inline-flex rounded-md bg-muted p-0.5 text-[11px]">
                       <button
@@ -919,7 +919,7 @@ export default function MapWorkspace({
                 className="pointer-events-none absolute inset-x-3 z-20 flex justify-center"
               >
                 <div className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background/90 px-3 py-1.5 text-xs text-muted-foreground shadow-lg backdrop-blur-md">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin text-cyan-400" />
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-sky-600" />
                   <span>正在解码轨迹...</span>
                 </div>
               </div>
@@ -977,7 +977,7 @@ export default function MapWorkspace({
             style={{ bottom: "max(0.5rem, var(--safe-bottom))" }}
             className="pointer-events-none absolute inset-x-3 z-20"
           >
-            <div className="pointer-events-auto grid grid-cols-5 gap-1 rounded-2xl border border-border/85 bg-background/92 p-1 shadow-2xl backdrop-blur-xl">
+            <div className="pointer-events-auto grid grid-cols-5 gap-1 rounded-2xl border border-border/90 bg-background/95 p-1 shadow-2xl backdrop-blur-xl">
               {MODE_TABS.map(({ id, mobileLabel, Icon }) => {
                 const active = mode === id;
                 return (
@@ -1011,7 +1011,7 @@ export default function MapWorkspace({
                 <Footprints className="h-4 w-4" />
                 <span>档案</span>
                 {tracks.length > 0 && (
-                  <span className="absolute right-2 top-1 rounded-full bg-cyan-500/20 px-1 font-mono text-[9px] tabular-nums text-cyan-300">
+                  <span className="absolute right-2 top-1 rounded-full bg-sky-500/15 px-1 font-mono text-[9px] tabular-nums text-sky-700">
                     {tracks.length}
                   </span>
                 )}
@@ -1050,7 +1050,7 @@ export default function MapWorkspace({
           >
             {mode === "fog" && fogStyle !== "fine" && (
               <div className="pointer-events-auto inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border bg-background/90 px-2.5 py-1.5 text-[11px] shadow-md backdrop-blur-md">
-                <span className="font-medium text-cyan-300">
+                <span className="font-medium text-sky-700">
                   {LOD_TIER_LABELS[activeLodTier]}
                 </span>
                 {activeLodTier !== "fine" && (
@@ -1078,12 +1078,12 @@ export default function MapWorkspace({
               )}
 
               {bootError && (
-                <div className="pointer-events-auto flex items-center gap-2 rounded-md border border-destructive/50 bg-destructive/15 px-3 py-1.5 text-xs text-red-300 shadow-md backdrop-blur-md">
+                <div className="pointer-events-auto flex items-center gap-2 rounded-md border border-destructive/40 bg-background/95 px-3 py-1.5 text-xs text-destructive shadow-md backdrop-blur-md">
                   <span>数据加载失败: {bootError}</span>
                   <button
                     type="button"
                     onClick={loadBootstrapAndFog}
-                    className="rounded bg-destructive/30 px-1.5 py-0.5 text-[11px] font-medium text-red-100 hover:bg-destructive/50"
+                    className="rounded bg-destructive px-1.5 py-0.5 text-[11px] font-medium text-destructive-foreground hover:bg-destructive/90"
                   >
                     重试
                   </button>
