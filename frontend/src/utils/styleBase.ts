@@ -1,5 +1,21 @@
 import type { StyleSpecification } from "maplibre-gl";
+import {
+  composeAtlasStyle,
+  type DemSourceLike,
+  type StyleLike
+} from "@atlas-realm/map";
 import type { BaseMapId } from "../types/track.ts";
+
+export const DEFAULT_ATLAS_ORM_ORIGIN =
+  (import.meta.env?.VITE_ATLAS_ORM_ORIGIN as string | undefined) ||
+  "https://map.mgt.moe";
+
+export type LoadMapStyleOptions = {
+  showRailway?: boolean;
+  showTerrain?: boolean;
+  ormOrigin?: string;
+  demSource?: DemSourceLike;
+};
 
 type BaseStyleLayer = Record<string, unknown> & {
   id?: string;
@@ -233,41 +249,73 @@ function buildMinimalVectorFallbackStyle(): StyleSpecification {
 }
 
 export async function loadMapStyle(
-  baseMapId: BaseMapId
+  baseMapId: BaseMapId,
+  options: LoadMapStyleOptions = {}
 ): Promise<StyleSpecification> {
   const option =
     BASE_MAP_OPTIONS.find((item) => item.id === baseMapId) ?? BASE_MAP_OPTIONS[0];
 
+  const allowAtlasOverlay = !option.isGcj02Default;
+  const showRailway = Boolean(options.showRailway && allowAtlasOverlay);
+  const showTerrain = Boolean(
+    options.showTerrain && allowAtlasOverlay && options.demSource
+  );
+  const ormOrigin = options.ormOrigin ?? DEFAULT_ATLAS_ORM_ORIGIN;
+
+  let baseStyle: StyleSpecification;
   if (option.rasterTiles) {
-    return buildRasterStyle(option);
+    baseStyle = buildRasterStyle(option);
+  } else {
+    const cachedBase = styleCache.get(option.id);
+    if (cachedBase) {
+      baseStyle = cachedBase;
+    } else if (!option.styleUrl) {
+      baseStyle = buildMinimalVectorFallbackStyle();
+    } else {
+      try {
+        const resp = await fetch(option.styleUrl);
+        if (!resp.ok) {
+          throw new Error(`HTTP ${resp.status}`);
+        }
+        const rawStyle = (await resp.json()) as StyleSpecification;
+        let processed = dropBaseRelief(rawStyle);
+        if (option.id === "openfreemap-dark") {
+          processed = enhanceDarkVectorStyle(processed);
+        }
+        styleCache.set(option.id, processed);
+        baseStyle = processed;
+      } catch (err) {
+        console.warn(
+          `Failed to fetch OpenFreeMap style ${option.styleUrl}, using minimal vector fallback:`,
+          err
+        );
+        baseStyle = buildMinimalVectorFallbackStyle();
+      }
+    }
   }
 
-  const cached = styleCache.get(option.id);
-  if (cached) {
-    return cached;
-  }
-
-  if (!option.styleUrl) {
-    return buildMinimalVectorFallbackStyle();
+  if (!showRailway && !showTerrain) {
+    return baseStyle;
   }
 
   try {
-    const resp = await fetch(option.styleUrl);
-    if (!resp.ok) {
-      throw new Error(`HTTP ${resp.status}`);
-    }
-    const rawStyle = (await resp.json()) as StyleSpecification;
-    let processed = dropBaseRelief(rawStyle);
-    if (option.id === "openfreemap-dark") {
-      processed = enhanceDarkVectorStyle(processed);
-    }
-    styleCache.set(option.id, processed);
-    return processed;
+    return (await composeAtlasStyle(baseStyle as unknown as StyleLike, {
+      dropRelief: false,
+      orm: showRailway ? { ormOrigin, withBaseMapVisibility: false } : false,
+      terrain:
+        showTerrain && options.demSource
+          ? { demSource: options.demSource, darkTheme: option.isDark }
+          : false
+    })) as unknown as StyleSpecification;
   } catch (err) {
-    console.warn(
-      `Failed to fetch OpenFreeMap style ${option.styleUrl}, using minimal vector fallback:`,
-      err
-    );
-    return buildMinimalVectorFallbackStyle();
+    console.warn("Failed to compose Atlas Realm overlay, using base style:", err);
+    if (showTerrain && options.demSource) {
+      return (await composeAtlasStyle(baseStyle as unknown as StyleLike, {
+        dropRelief: false,
+        orm: false,
+        terrain: { demSource: options.demSource, darkTheme: option.isDark }
+      })) as unknown as StyleSpecification;
+    }
+    return baseStyle;
   }
 }

@@ -19,6 +19,7 @@
     "gpsl0:pack": "node scripts/pack_gpsl0.mjs --verify"
   },
   "dependencies": {
+    "@atlas-realm/map": "git+https://github.com/Enter-tainer/atlas-realm.git#47264a48099f208d529798ca6cfc737ecf2c39ba",
     "@mapbox/vector-tile": "^3.0.0",
     "@noble/curves": "^1.8.1",
     "@radix-ui/react-alert-dialog": "^1.0.5",
@@ -27,6 +28,7 @@
     "clsx": "^2.1.1",
     "gpx_viewer": "^1.1.1",
     "lucide-react": "^0.468.0",
+    "maplibre-contour": "^0.1.0",
     "maplibre-gl": "^6.18.0",
     "pbf": "^5.2.0",
     "pmtiles": "^4.5.0",

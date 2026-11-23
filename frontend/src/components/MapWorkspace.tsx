@@ -115,6 +115,8 @@ export default function MapWorkspace({
   const [fogStyle, setFogStyle] = useState<FogRenderStyle>("hybrid");
   const [baseMapId, setBaseMapId] = useState<BaseMapId>("openfreemap-liberty");
   const [useGcj02, setUseGcj02] = useState(false);
+  const [showRailway, setShowRailway] = useState(true);
+  const [showTerrain, setShowTerrain] = useState(true);
   const [fogOpacity, setFogOpacity] = useState(0.8);
   const [fogGlow, setFogGlow] = useState(1.5);
   const [showLayerMenu, setShowLayerMenu] = useState(false);
@@ -655,6 +657,8 @@ export default function MapWorkspace({
         mode={mode}
         baseMapId={baseMapId}
         useGcj02={useGcj02}
+        showRailway={showRailway}
+        showTerrain={showTerrain}
         fogPack={fogPack}
         fogStyle={fogStyle}
         fogOpacity={fogOpacity}
@@ -1042,6 +1046,10 @@ export default function MapWorkspace({
             onRebuildFog={handleRebuildFog}
             useGcj02={useGcj02}
             onToggleGcj02={() => setUseGcj02((v) => !v)}
+            showRailway={showRailway}
+            onToggleRailway={() => setShowRailway((v) => !v)}
+            showTerrain={showTerrain}
+            onToggleTerrain={() => setShowTerrain((v) => !v)}
             baseMapId={baseMapId}
             onChangeBaseMap={handleChangeBaseMap}
           />
@@ -1141,6 +1149,10 @@ export default function MapWorkspace({
                   onRebuildFog={handleRebuildFog}
                   useGcj02={useGcj02}
                   onToggleGcj02={() => setUseGcj02((v) => !v)}
+                  showRailway={showRailway}
+                  onToggleRailway={() => setShowRailway((v) => !v)}
+                  showTerrain={showTerrain}
+                  onToggleTerrain={() => setShowTerrain((v) => !v)}
                   baseMapId={baseMapId}
                   onChangeBaseMap={handleChangeBaseMap}
                 />

@@ -18,6 +18,10 @@ export type LayerSettingsPanelProps = {
   onRebuildFog: () => void;
   useGcj02: boolean;
   onToggleGcj02: () => void;
+  showRailway: boolean;
+  onToggleRailway: () => void;
+  showTerrain: boolean;
+  onToggleTerrain: () => void;
   baseMapId: BaseMapId;
   onChangeBaseMap: (id: BaseMapId) => void;
 };
@@ -46,6 +50,10 @@ export const LayerSettingsPanel: React.FC<LayerSettingsPanelProps> = ({
   onRebuildFog,
   useGcj02,
   onToggleGcj02,
+  showRailway,
+  onToggleRailway,
+  showTerrain,
+  onToggleTerrain,
   baseMapId,
   onChangeBaseMap
 }) => {
@@ -168,6 +176,62 @@ export const LayerSettingsPanel: React.FC<LayerSettingsPanelProps> = ({
             }`}
           />
         </button>
+      </div>
+
+      <div className="mb-3 space-y-2.5 border-b border-border pb-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-xs font-medium text-foreground">
+              铁路图层 (OpenRailwayMap)
+            </div>
+            <div className="text-[11px] text-muted-foreground">
+              叠加铁路线网与车站标识（仅 WGS-84 矢量底图）
+            </div>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={showRailway}
+            aria-label="切换铁路图层"
+            onClick={onToggleRailway}
+            className={`inline-flex h-6 w-10 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors ${
+              showRailway ? "bg-primary" : "bg-input"
+            }`}
+          >
+            <span
+              className={`pointer-events-none block h-5 w-5 rounded-full bg-background shadow-lg transition-transform ${
+                showRailway ? "translate-x-4" : "translate-x-0"
+              }`}
+            />
+          </button>
+        </div>
+
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-xs font-medium text-foreground">
+              高程地形与等高线 (Mapterhorn)
+            </div>
+            <div className="text-[11px] text-muted-foreground">
+              山体阴影与等高线（仅 WGS-84 矢量底图）
+            </div>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={showTerrain}
+            aria-label="切换高程地形与等高线"
+            onClick={onToggleTerrain}
+            className={`inline-flex h-6 w-10 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors ${
+              showTerrain ? "bg-primary" : "bg-input"
+            }`}
+          >
+            <span
+              className={`pointer-events-none block h-5 w-5 rounded-full bg-background shadow-lg transition-transform ${
+                showTerrain ? "translate-x-4" : "translate-x-0"
+              }`}
+            />
+          </button>
+        </div>
       </div>
 
       <div className="space-y-1">
