@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import * as maplibregl from "maplibre-gl";
 import {
   Map as MapLibreMap,
   NavigationControl,
@@ -9,11 +10,17 @@ import {
   type MapMouseEvent
 } from "maplibre-gl";
 import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
+import {
+  buildFeatureCatalog,
+  installOrmPopups,
+  installSpriteFallback,
+  setupMapterhornDem
+} from "@atlas-realm/map";
+import "@atlas-realm/map/styles.css";
 
 setWorkerUrl(maplibreWorkerUrl);
 
 import type {
-  BaseMapId,
   FogPackData,
   FogRenderStyle,
   GpsPoint,
@@ -34,7 +41,10 @@ import {
   tileXYToLatLon,
   wgs84ToGcj02
 } from "../utils/coordTransform.ts";
-import { loadMapStyle } from "../utils/styleBase.ts";
+import {
+  DEFAULT_ATLAS_ORM_ORIGIN,
+  loadMapStyle
+} from "../utils/styleBase.ts";
 import {
   FOG_BITMASK_BYTES,
   FOG_SUBGRID_SIZE,
@@ -65,8 +75,9 @@ export type FitPadding = {
 
 type FogMapViewProps = {
   mode: MapVisualizationMode;
-  baseMapId: BaseMapId;
   useGcj02: boolean;
+  showRailway?: boolean;
+  showTerrain?: boolean;
   fogPack: FogPackData | null;
   fogStyle: FogRenderStyle;
   fogOpacity: number;
@@ -461,8 +472,9 @@ function emptyFeatureCollection(): GeoJSON.FeatureCollection {
 
 export const FogMapView: React.FC<FogMapViewProps> = ({
   mode,
-  baseMapId,
   useGcj02,
+  showRailway = true,
+  showTerrain = true,
   fogPack,
   fogStyle,
   fogOpacity,
@@ -492,7 +504,7 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
   const mapRef = useRef<MapLibreMap | null>(null);
   const styleReadyRef = useRef(false);
   const regionsTileVersionRef = useRef<string | null>(null);
-  const appliedBaseMapIdRef = useRef<BaseMapId>(baseMapId);
+  const appliedStyleKeyRef = useRef<string>(`${showRailway}:${showTerrain}`);
   const pendingFitBoundsRef = useRef<[number, number, number, number] | null>(
     null
   );
@@ -523,8 +535,9 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
 
   const propsRef = useRef({
     mode,
-    baseMapId,
     useGcj02,
+    showRailway,
+    showTerrain,
     fogPack,
     fogStyle,
     fogOpacity,
@@ -544,8 +557,9 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
   });
   propsRef.current = {
     mode,
-    baseMapId,
     useGcj02,
+    showRailway,
+    showTerrain,
     fogPack,
     fogStyle,
     fogOpacity,
@@ -995,9 +1009,17 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
     ensureGeoJsonSource("spatial-query", data.spatialGeoJson);
     ensureGeoJsonSource("hover-marker", data.hoverGeoJson);
 
-    const firstSymbolId = map
-      .getStyle()
-      ?.layers?.find((l) => l.type === "symbol")?.id;
+    const styleLayers = map.getStyle()?.layers ?? [];
+    let lastNonSymbolIdx = -1;
+    for (let i = 0; i < styleLayers.length; i++) {
+      if (styleLayers[i].type !== "symbol") {
+        lastNonSymbolIdx = i;
+      }
+    }
+    const firstSymbolId =
+      lastNonSymbolIdx >= 0 && lastNonSymbolIdx + 1 < styleLayers.length
+        ? styleLayers[lastNonSymbolIdx + 1].id
+        : styleLayers.find((l) => l.type === "symbol")?.id;
 
     if (!map.getLayer("world-shroud-layer")) {
       map.addLayer(
@@ -1741,10 +1763,19 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
       });
     };
 
-    const initialBaseMapId = propsRef.current.baseMapId;
-    appliedBaseMapIdRef.current = initialBaseMapId;
+    const initialShowRailway = propsRef.current.showRailway;
+    const initialShowTerrain = propsRef.current.showTerrain;
+    appliedStyleKeyRef.current = `${initialShowRailway}:${initialShowTerrain}`;
+    const demSource = setupMapterhornDem(maplibregl);
 
-    Promise.all([loadMapStyle(initialBaseMapId), fetchRegionsTileVersion()]).then(
+    Promise.all([
+      loadMapStyle({
+        showRailway: initialShowRailway,
+        showTerrain: initialShowTerrain,
+        demSource
+      }),
+      fetchRegionsTileVersion()
+    ]).then(
       ([initialStyle, tileVersion]) => {
         if (cancelled || !containerRef.current) return;
         regionsTileVersionRef.current = tileVersion;
@@ -1773,6 +1804,8 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
         new ScaleControl({ maxWidth: 96, unit: "metric" }),
         "bottom-left"
       );
+
+      installSpriteFallback(map, { ormOrigin: DEFAULT_ATLAS_ORM_ORIGIN });
 
       mapRef.current = map;
 
@@ -1827,6 +1860,7 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
           const [wgsLat, wgsLon] = p.useGcj02
             ? gcj02ToWgs84(e.lngLat.lat, e.lngLat.lng)
             : [e.lngLat.lat, e.lngLat.lng];
+          ((e.originalEvent as unknown) as Record<string, unknown>).gpsTrackerHandled = true;
           p.onSpatialPointQuery(wgsLat, wgsLon);
           return;
         }
@@ -1849,6 +1883,7 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
           if (hits.length > 0) {
             const trackId = hits[0].properties?.id;
             if (typeof trackId === "string" && trackId) {
+              ((e.originalEvent as unknown) as Record<string, unknown>).gpsTrackerHandled = true;
               p.onSelectTrack(
                 trackId,
                 e.originalEvent.ctrlKey || e.originalEvent.metaKey
@@ -1863,6 +1898,13 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
           p.fogStyle !== "fine" &&
           (p.fogStyle === "regions" || map.getZoom() < 10.4)
         ) {
+          const hasOrmFeature = map
+            .queryRenderedFeatures(e.point)
+            .some((f) => f.source === "openrailwaymap");
+          if (hasOrmFeature) {
+            return;
+          }
+
           const zoom = map.getZoom();
           const candidateLayers =
             zoom < 3.8
@@ -1888,6 +1930,7 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
             const visited = visitedRegionsMapRef.current.get(rid) ?? null;
             const lv = Number(props.lv ?? visited?.level ?? 0);
             const bbox = visited?.bbox ?? parseBboxProp(props.b);
+            ((e.originalEvent as unknown) as Record<string, unknown>).gpsTrackerHandled = true;
             p.onSelectRegion({
               rid,
               level: Math.max(0, Math.min(3, lv)) as RegionLevel,
@@ -1907,6 +1950,20 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
           p.onSelectRegion(null);
         }
       });
+
+      installOrmPopups(
+        map as never,
+        maplibregl as never,
+        buildFeatureCatalog(),
+        {
+          shouldHandleEvent: (ev) =>
+            propsRef.current.mode !== "spatial" &&
+            !Boolean(
+              (ev as { originalEvent?: Record<string, unknown> })?.originalEvent
+                ?.gpsTrackerHandled
+            )
+        }
+      );
 
       map.on("mousemove", "all-tracks-layer", () => {
         if (
@@ -1962,17 +2019,19 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
     };
   }, []);
 
-  // Switch basemap style cleanly with diff: false so new style loads deterministically
+  // Switch Atlas Realm overlay cleanly with diff: false so new style loads deterministically
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || baseMapId === appliedBaseMapIdRef.current) {
+    const styleKey = `${showRailway}:${showTerrain}`;
+    if (!map || styleKey === appliedStyleKeyRef.current) {
       return;
     }
     let cancelled = false;
     styleReadyRef.current = false;
-    appliedBaseMapIdRef.current = baseMapId;
+    appliedStyleKeyRef.current = styleKey;
+    const demSource = setupMapterhornDem(maplibregl);
 
-    loadMapStyle(baseMapId).then((nextStyle) => {
+    loadMapStyle({ showRailway, showTerrain, demSource }).then((nextStyle) => {
       if (!cancelled && mapRef.current === map) {
         map.setStyle(nextStyle, { diff: false });
       }
@@ -1981,7 +2040,7 @@ export const FogMapView: React.FC<FogMapViewProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [baseMapId]);
+  }, [showRailway, showTerrain]);
 
   // Toggle cursor and dragPan when spatial bbox drawing tool is active
   useEffect(() => {
