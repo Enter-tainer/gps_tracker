@@ -5,25 +5,25 @@
 @tailwind utilities;
 
 :root {
-  --background: 240 10% 3.9%;
-  --foreground: 0 0% 98%;
-  --card: 240 10% 3.9%;
-  --card-foreground: 0 0% 98%;
-  --popover: 240 10% 3.9%;
-  --popover-foreground: 0 0% 98%;
-  --primary: 0 0% 98%;
-  --primary-foreground: 240 5.9% 10%;
-  --secondary: 240 3.7% 15.9%;
-  --secondary-foreground: 0 0% 98%;
-  --muted: 240 3.7% 15.9%;
-  --muted-foreground: 240 5% 64.9%;
-  --accent: 240 3.7% 15.9%;
-  --accent-foreground: 0 0% 98%;
-  --destructive: 0 62.8% 30.6%;
-  --destructive-foreground: 0 0% 98%;
-  --border: 240 3.7% 15.9%;
-  --input: 240 3.7% 15.9%;
-  --ring: 240 4.9% 83.9%;
+  --background: 0 0% 100%;
+  --foreground: 222.2 84% 4.9%;
+  --card: 0 0% 100%;
+  --card-foreground: 222.2 84% 4.9%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222.2 84% 4.9%;
+  --primary: 222.2 47.4% 11.2%;
+  --primary-foreground: 210 40% 98%;
+  --secondary: 210 40% 96.1%;
+  --secondary-foreground: 222.2 47.4% 11.2%;
+  --muted: 210 40% 96.1%;
+  --muted-foreground: 215.4 16.3% 44%;
+  --accent: 210 40% 96.1%;
+  --accent-foreground: 222.2 47.4% 11.2%;
+  --destructive: 0 84.2% 60.2%;
+  --destructive-foreground: 210 40% 98%;
+  --border: 214.3 31.8% 88%;
+  --input: 214.3 31.8% 88%;
+  --ring: 222.2 84% 4.9%;
   --radius: 0.5rem;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -60,7 +60,7 @@
 }
 
 ::selection {
-  background: rgba(34, 211, 238, 0.28);
+  background: rgba(14, 165, 233, 0.22);
 }
 
 .maplibregl-ctrl-top-left,
@@ -71,35 +71,41 @@
 }
 
 .maplibregl-ctrl-attrib {
-  background: rgba(9, 13, 22, 0.7) !important;
-  color: rgba(203, 213, 225, 0.75) !important;
+  background: rgba(255, 255, 255, 0.88) !important;
+  color: rgba(51, 65, 85, 0.85) !important;
   backdrop-filter: blur(8px);
   border-radius: 6px 0 0 0 !important;
   font-size: 10px !important;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
 }
 
 .maplibregl-ctrl-attrib a {
-  color: rgba(103, 232, 249, 0.9) !important;
+  color: #0284c7 !important;
 }
 
 .maplibregl-ctrl-group {
-  background: rgba(15, 23, 42, 0.85) !important;
-  border: 1px solid rgba(51, 65, 85, 0.7) !important;
+  background: rgba(255, 255, 255, 0.92) !important;
+  border: 1px solid rgba(203, 213, 225, 0.9) !important;
   backdrop-filter: blur(12px);
-}
-
-.maplibregl-ctrl-group button {
-  filter: invert(0.9) hue-rotate(180deg);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08) !important;
 }
 
 .maplibregl-ctrl-scale {
-  background: rgba(9, 13, 22, 0.72) !important;
-  color: rgba(226, 232, 240, 0.85) !important;
-  border-color: rgba(148, 163, 184, 0.55) !important;
+  background: rgba(255, 255, 255, 0.88) !important;
+  color: #1e293b !important;
+  border-color: rgba(100, 116, 139, 0.65) !important;
   backdrop-filter: blur(8px);
   font-size: 10px !important;
   line-height: 1.2 !important;
   padding: 1px 5px !important;
+}
+
+.maplibregl-popup-content {
+  background: rgba(255, 255, 255, 0.96) !important;
+  color: #0f172a !important;
+  border: 1px solid rgba(226, 232, 240, 0.95);
+  border-radius: 10px !important;
+  box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.15), 0 8px 10px -6px rgba(15, 23, 42, 0.1) !important;
 }
 
 @media (max-width: 767px) {
@@ -136,7 +142,7 @@
 }
 
 .scrollbar-thin::-webkit-scrollbar-thumb {
-  background-color: rgba(148, 163, 184, 0.28);
+  background-color: rgba(100, 116, 139, 0.32);
   border-radius: 999px;
 }
 

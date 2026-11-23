@@ -303,7 +303,7 @@ export const TrackSidebar: React.FC<TrackSidebarProps> = ({
       </div>
       <div className="rounded-md border border-border bg-muted/35 px-2 py-1.5">
         <div className="text-[10px] text-muted-foreground">已点亮</div>
-        <div className="mt-0.5 truncate font-mono text-xs font-semibold tabular-nums text-emerald-400">
+        <div className="mt-0.5 truncate font-mono text-xs font-semibold tabular-nums text-emerald-600">
           {stats.exploredAreaKm2.toFixed(1)}
           <span className="ml-0.5 text-[10px] font-normal text-muted-foreground">
             km²
@@ -345,7 +345,7 @@ export const TrackSidebar: React.FC<TrackSidebarProps> = ({
         <div className="text-[11px] font-medium text-muted-foreground">
           已点亮面积
         </div>
-        <div className="mt-0.5 font-mono text-base font-semibold tabular-nums text-emerald-400">
+        <div className="mt-0.5 font-mono text-base font-semibold tabular-nums text-emerald-600">
           {stats.exploredAreaKm2.toFixed(1)}{" "}
           <span className="text-xs font-normal text-muted-foreground">km²</span>
         </div>
@@ -555,7 +555,7 @@ export const TrackSidebar: React.FC<TrackSidebarProps> = ({
         <div className="border-b border-border bg-muted/30 p-3">
           <div className="mb-2 flex items-center justify-between">
             <div className="flex items-center gap-1.5 text-xs font-medium text-foreground">
-              <MapPin className="h-3.5 w-3.5 text-amber-400" />
+              <MapPin className="h-3.5 w-3.5 text-amber-500" />
               <span>空间反查 (Z15 索引 + 精确匹配)</span>
             </div>
             {spatialShape && (
@@ -678,7 +678,7 @@ export const TrackSidebar: React.FC<TrackSidebarProps> = ({
                       </div>
                       <div className="shrink-0 text-right font-mono text-[10px] tabular-nums">
                         {m.minDistanceM !== undefined && (
-                          <div className="text-emerald-400">
+                          <div className="text-emerald-600">
                             最近 {m.minDistanceM}m
                           </div>
                         )}
@@ -873,7 +873,7 @@ export const TrackSidebar: React.FC<TrackSidebarProps> = ({
                           isMobile
                             ? "inline-flex p-1"
                             : "hidden p-0.5 group-hover:inline-flex"
-                        } rounded text-muted-foreground transition-colors hover:bg-destructive/20 hover:text-red-400`}
+                        } rounded text-muted-foreground transition-colors hover:bg-destructive/15 hover:text-destructive`}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
@@ -910,7 +910,7 @@ export const TrackSidebar: React.FC<TrackSidebarProps> = ({
     return (
       <>
         <div
-          className="fixed inset-0 z-40 bg-black/45 transition-opacity"
+          className="fixed inset-0 z-40 bg-black/30 transition-opacity"
           onClick={() => onChangeMobileSnap?.("closed")}
           aria-hidden="true"
         />
@@ -923,7 +923,7 @@ export const TrackSidebar: React.FC<TrackSidebarProps> = ({
             transform: `translateY(${Math.max(0, dragOffsetY)}px)`,
             paddingBottom: "var(--safe-bottom)"
           }}
-          className={`pointer-events-auto fixed inset-x-0 bottom-0 z-40 flex flex-col overflow-hidden rounded-t-2xl border-t border-border bg-card/96 text-card-foreground shadow-2xl backdrop-blur-xl ${
+          className={`pointer-events-auto fixed inset-x-0 bottom-0 z-40 flex flex-col overflow-hidden rounded-t-2xl border-t border-border bg-card/95 text-card-foreground shadow-2xl backdrop-blur-xl ${
             isDragging ? "" : "transition-[height,transform] duration-200 ease-out"
           }`}
         >
@@ -989,7 +989,7 @@ export const TrackSidebar: React.FC<TrackSidebarProps> = ({
   }
 
   return (
-    <aside className="pointer-events-auto absolute bottom-3 left-3 top-3 z-30 flex w-[340px] max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-lg border border-border bg-card/92 text-card-foreground shadow-xl backdrop-blur-md">
+    <aside className="pointer-events-auto absolute bottom-3 left-3 top-3 z-30 flex w-[340px] max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-lg border border-border bg-card/95 text-card-foreground shadow-xl backdrop-blur-md">
       {/* Desktop Header */}
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <div className="flex items-center gap-2.5">
