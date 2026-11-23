@@ -11,15 +11,14 @@ import type {
 } from "../types/track.ts";
 import { getZ15TilesForBbox } from "../utils/coordTransform.ts";
 import {
-  handleAgentAuthRequest,
+  AccessAuthError,
+  authenticateAgentRequest,
   jsonResponse,
-  OidcAuthError,
-  verifyOidcBearer,
-  type OidcEnv,
-  type OidcPrincipal
-} from "./oidcAuth.ts";
+  type AccessAuthEnv,
+  type AccessPrincipal
+} from "./accessAuth.ts";
 
-export interface AgentApiEnv extends OidcEnv {
+export interface AgentApiEnv extends AccessAuthEnv {
   TRACKS_BUCKET: R2Bucket;
   TRACKS_DB: D1Database;
 }
@@ -226,16 +225,17 @@ function toBlobBytes(raw: unknown): Uint8Array | null {
   return null;
 }
 
-function handleAgentMe(principal: OidcPrincipal): Response {
+function handleAgentMe(principal: AccessPrincipal): Response {
   return jsonResponse({
     sub: principal.sub,
     email: principal.email,
     name: principal.name,
     exp: principal.exp,
-    exp_iso: toIsoOrNull(principal.exp),
+    exp_iso: principal.exp ? toIsoOrNull(principal.exp) : null,
     iat: principal.iat,
     iss: principal.iss,
     aud: principal.aud,
+    verified: principal.verified,
     scopes: ["tracks:read"]
   });
 }
@@ -1220,18 +1220,11 @@ export async function handleAgentRequest(
     return null;
   }
 
-  // Public OIDC metadata and Device Flow endpoints (auth happens inside OIDC)
-  if (url.pathname.startsWith("/api/agent/auth/")) {
-    const authResp = await handleAgentAuthRequest(request, env, url);
-    if (authResp) return authResp;
-    return jsonResponse({ error: "Agent auth route not found" }, 404);
-  }
-
-  let principal: OidcPrincipal;
+  let principal: AccessPrincipal;
   try {
-    principal = await verifyOidcBearer(request, env);
+    principal = await authenticateAgentRequest(request, env);
   } catch (err) {
-    if (err instanceof OidcAuthError) {
+    if (err instanceof AccessAuthError) {
       const headers: Record<string, string> = {};
       if (err.status === 401) {
         headers["WWW-Authenticate"] = `Bearer error="${err.code}"`;

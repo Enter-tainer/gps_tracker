@@ -4,15 +4,16 @@ description: >
   Query personal GPS track history, travel statistics, visited administrative
   regions (countries, provinces, cities, districts), location at a specific
   timestamp, and spatial proximity ("have I been near X?") using the
-  `traceveil` CLI backed by Cloudflare Access OIDC. Trigger whenever the user
-  asks about past trips, mileage, elevation gain, places visited, where they
-  were at a given date/time, or wants to analyze or export a GPS track.
+  `traceveil` CLI backed by Cloudflare Access Managed OAuth. Trigger whenever
+  the user asks about past trips, mileage, elevation gain, places visited,
+  where they were at a given date/time, or wants to analyze or export a GPS
+  track.
 ---
 
 # Traceveil GPS Track Query Skill
 
-Use the `traceveil` CLI to query read-only personal GPS tracks, visited
-administrative regions, and decoded GPSL0 track details.
+Use the `traceveil` CLI to query personal GPS tracks, visited administrative
+regions, and locally decoded GPSL0 track details.
 
 ## 1. Authentication Preflight (Required First Step)
 
@@ -26,20 +27,26 @@ traceveil auth status --json
   Proceed with query commands.
 - **Exit code `2`** (`"error": "auth_required"`): Not logged in or session
   expired. **Do NOT try to bypass Cloudflare Access or scrape web pages.** Ask
-  the user to authenticate interactively in their terminal:
-  - Local / desktop browser:
+  the user to authenticate interactively in their terminal via Cloudflare
+  Access Managed OAuth:
+  - Local / desktop browser (opens browser automatically and receives callback on `localhost`):
     ```bash
     traceveil auth login --url https://<your-traceveil-host>
     ```
-  - Remote / SSH / headless server:
+  - Remote / SSH / cross-device (no local browser):
     ```bash
-    traceveil auth login --url https://<your-traceveil-host> --device
+    traceveil auth login --url https://<your-traceveil-host> --manual
     ```
-  Wait until the user confirms login succeeded, then re-run `traceveil auth status --json`.
+    The CLI prints an authorization URL. Have the user open it in any browser,
+    complete Cloudflare Access login, copy the redirected `http://localhost:8400/callback?code=...&state=...`
+    URL from the address bar (the browser page itself failing to load on a remote
+    device is expected), and paste it back into the CLI prompt.
+  Wait until login succeeds, then re-run `traceveil auth status --json`.
 
 *(Note: When stdout is piped by an agent, `traceveil` emits compact JSON
 automatically; passing `--json` explicitly guarantees machine-readable output
-and structured `{ "error": ..., "message": ... }` errors.)*
+and structured `{ "error": ..., "message": ... }` errors. Access tokens auto-refresh
+transparently using `refresh_token` while the grant session remains valid.)*
 
 ## 2. Intent -> Command Routing
 

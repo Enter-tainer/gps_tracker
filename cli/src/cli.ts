@@ -19,8 +19,9 @@ Usage:
   traceveil <command> [options]
 
 Auth Commands:
-  traceveil auth login --url <https://host> [--device] [--port 8789] [--manual]
+  traceveil auth login --url <https://host> [--manual] [--port 8400] [--no-browser]
   traceveil auth status [--url <url>]
+  traceveil auth token
   traceveil auth logout
 
 Query Commands:
@@ -104,13 +105,13 @@ async function main(): Promise<number> {
         token: { type: "string" },
         "no-cache": { type: "boolean" },
         // auth
-        device: { type: "boolean" },
         port: { type: "string" },
+        "redirect-host": { type: "string" },
         "redirect-uri": { type: "string" },
+        resource: { type: "string" },
         manual: { type: "boolean" },
         "no-browser": { type: "boolean" },
         scope: { type: "string" },
-        issuer: { type: "string" },
         "client-id": { type: "string" },
         // stats & filters
         year: { type: "string" },
@@ -172,17 +173,17 @@ async function main(): Promise<number> {
   try {
     if (cmd === "auth") {
       if (!subcmd) {
-        throw new Error("Usage: traceveil auth <login|status|logout>");
+        throw new Error("Usage: traceveil auth <login|status|token|logout>");
       }
       return await runAuthCommand(subcmd, {
         url: values.url,
-        device: values.device,
         port: parseOptInt(values.port, "port"),
+        redirectHost: values["redirect-host"],
         redirectUri: values["redirect-uri"],
+        resource: values.resource,
         manual: values.manual,
         noBrowser: values["no-browser"],
         scope: values.scope,
-        issuer: values.issuer,
         clientId: values["client-id"],
         jsonMode,
         pretty: values.pretty

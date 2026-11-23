@@ -326,15 +326,6 @@ async function handleLocalAgentApi(
   const urlPath = parsedUrl.pathname;
   if (!urlPath.startsWith("/api/agent")) return false;
 
-  if (urlPath === "/api/agent/auth/config" && req.method === "GET") {
-    sendJson(res, 200, {
-      configured: false,
-      local_dev: true,
-      message: "Local Vite API mode does not require OIDC authentication"
-    });
-    return true;
-  }
-
   if (urlPath === "/api/agent/me" && req.method === "GET") {
     sendJson(res, 200, {
       sub: "local-dev",
@@ -346,6 +337,7 @@ async function handleLocalAgentApi(
       iss: "http://localhost",
       aud: "local-dev",
       scopes: ["tracks:read"],
+      verified: false,
       local_dev: true
     });
     return true;

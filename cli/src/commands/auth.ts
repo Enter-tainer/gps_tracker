@@ -4,25 +4,24 @@ import {
   normalizeBaseUrl,
   removeCredentials
 } from "../config.ts";
+import { httpRequest } from "../http.ts";
 import {
   decodeJwtPayload,
-  fetchAuthConfig,
-  loginWithDeviceFlow,
-  loginWithPkce,
+  loginWithManagedOAuth,
   refreshCredentials,
-  selectBearerToken
+  revokeCredentials
 } from "../oidc.ts";
 import { writeJson } from "../output.ts";
 
 export interface AuthCmdFlags {
   url?: string;
-  device?: boolean;
   port?: number;
+  redirectHost?: string;
   redirectUri?: string;
+  resource?: string;
   manual?: boolean;
   noBrowser?: boolean;
   scope?: string;
-  issuer?: string;
   clientId?: string;
   jsonMode: boolean;
   pretty?: boolean;
@@ -44,37 +43,22 @@ export async function runAuthCommand(
       );
     }
 
-    const creds = flags.device
-      ? await loginWithDeviceFlow({
-          url: targetUrl,
-          scopes: flags.scope,
-          noBrowser: flags.noBrowser,
-          onPrompt: flags.jsonMode
-            ? undefined
-            : (info) => {
-                process.stderr.write(
-                  `\nTraceveil Device Login\n` +
-                    `  Verification URL : ${info.verification_uri_complete}\n` +
-                    `  Manual URL       : ${info.verification_uri}\n` +
-                    `  Code             : ${info.user_code}\n` +
-                    `  Expires in       : ${info.expires_in}s\n\nWaiting for browser approval...\n`
-                );
-              }
-        })
-      : await loginWithPkce({
-          url: targetUrl,
-          port: flags.port,
-          redirectUri: flags.redirectUri,
-          scopes: flags.scope,
-          manual: flags.manual,
-          noBrowser: flags.noBrowser,
-          issuer: flags.issuer,
-          clientId: flags.clientId
-        });
+    const creds = await loginWithManagedOAuth({
+      url: targetUrl,
+      port: flags.port,
+      redirectHost: flags.redirectHost,
+      redirectUri: flags.redirectUri,
+      resource: flags.resource,
+      scope: flags.scope,
+      manual: flags.manual,
+      noBrowser: flags.noBrowser,
+      clientId: flags.clientId
+    });
 
     const summary = {
       authenticated: true,
       url: creds.url,
+      resource: creds.resource,
       email: creds.email,
       sub: creds.sub,
       expires_at: creds.expires_at,
@@ -91,6 +75,49 @@ export async function runAuthCommand(
           `Token expires: ${summary.expires_iso} (refresh_token: ${summary.has_refresh_token ? "yes" : "no"})\n` +
           `Credentials saved: ${summary.credentials_path}\n`
       );
+    }
+    return 0;
+  }
+
+  if (subcmd === "token") {
+    const envToken = process.env.TRACEVEIL_TOKEN?.trim();
+    if (envToken) {
+      if (flags.jsonMode) writeJson({ access_token: envToken, source: "env:TRACEVEIL_TOKEN" }, Boolean(flags.pretty));
+      else process.stdout.write(`${envToken}\n`);
+      return 0;
+    }
+
+    let creds = loadCredentials();
+    if (!creds) {
+      const msg = "Not logged in. Run `traceveil auth login --url https://<your-host>`.";
+      if (flags.jsonMode) writeJson({ error: "auth_required", message: msg }, Boolean(flags.pretty));
+      else process.stderr.write(`${msg}\n`);
+      return 2;
+    }
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    if (nowSec >= creds.expires_at - 60) {
+      if (!creds.refresh_token) {
+        const msg = `Session expired and no refresh_token is available. Run \`traceveil auth login --url ${creds.url}\`.`;
+        if (flags.jsonMode) writeJson({ error: "auth_required", message: msg }, Boolean(flags.pretty));
+        else process.stderr.write(`${msg}\n`);
+        return 2;
+      }
+      creds = await refreshCredentials(creds);
+    }
+
+    if (flags.jsonMode) {
+      writeJson(
+        {
+          access_token: creds.access_token,
+          expires_at: creds.expires_at,
+          expires_iso: new Date(creds.expires_at * 1000).toISOString(),
+          url: creds.url
+        },
+        Boolean(flags.pretty)
+      );
+    } else {
+      process.stdout.write(`${creds.access_token}\n`);
     }
     return 0;
   }
@@ -125,22 +152,28 @@ export async function runAuthCommand(
     if (!creds) {
       if (urlFlag) {
         try {
-          const cfg = await fetchAuthConfig(urlFlag);
-          if (cfg.local_dev && !cfg.configured) {
-            const devStatus = {
-              authenticated: true,
-              source: "local_dev",
-              url: normalizeBaseUrl(urlFlag),
-              email: "local@dev",
-              local_dev: true
-            };
-            if (flags.jsonMode) writeJson(devStatus, Boolean(flags.pretty));
-            else {
-              process.stdout.write(
-                `Target ${devStatus.url} is running in local Vite dev mode (no OIDC required).\n`
-              );
+          const probe = await httpRequest(
+            `${normalizeBaseUrl(urlFlag)}/api/agent/me`,
+            { headers: { Accept: "application/json" }, redirect: "manual", attempts: 1, timeoutMs: 5000 }
+          );
+          if (probe.status === 200) {
+            const cfg = await probe.json<{ local_dev?: boolean }>();
+            if (cfg.local_dev) {
+              const devStatus = {
+                authenticated: true,
+                source: "local_dev",
+                url: normalizeBaseUrl(urlFlag),
+                email: "local@dev",
+                local_dev: true
+              };
+              if (flags.jsonMode) writeJson(devStatus, Boolean(flags.pretty));
+              else {
+                process.stdout.write(
+                  `Target ${devStatus.url} is running in local Vite dev mode (no Cloudflare Access auth required).\n`
+                );
+              }
+              return 0;
             }
-            return 0;
           }
         } catch {
           // Ignore unreachable URL when reporting logged-out status
@@ -169,17 +202,14 @@ export async function runAuthCommand(
       }
     }
 
-    const bearer = selectBearerToken(creds);
-    const payload = decodeJwtPayload(bearer);
-    const exp =
-      (payload && typeof payload.exp === "number" ? payload.exp : creds.expires_at) ||
-      0;
+    const exp = creds.expires_at || 0;
     const valid = nowSec < exp;
 
     const statusObj = {
       authenticated: valid,
       source: "credentials_file",
       url: creds.url,
+      resource: creds.resource,
       email: creds.email,
       sub: creds.sub,
       expires_at: exp,
@@ -205,9 +235,15 @@ export async function runAuthCommand(
   }
 
   if (subcmd === "logout") {
+    const existing = loadCredentials();
+    let revoked = false;
+    if (existing) {
+      revoked = await revokeCredentials(existing);
+    }
     const removed = removeCredentials();
     const outObj = {
       logged_out: true,
+      revoked,
       removed_credentials: removed,
       credentials_path: getCredentialsPath()
     };
@@ -215,12 +251,14 @@ export async function runAuthCommand(
     else {
       process.stdout.write(
         removed
-          ? `Logged out (removed ${getCredentialsPath()}).\n`
+          ? `Logged out (removed ${getCredentialsPath()}${revoked ? ", revoked remote token" : ""}).\n`
           : "Already logged out (no credentials file found).\n"
       );
     }
     return 0;
   }
 
-  throw new Error(`Unknown auth subcommand: ${subcmd}. Expected login | status | logout.`);
+  throw new Error(
+    `Unknown auth subcommand: ${subcmd}. Expected login | status | token | logout.`
+  );
 }

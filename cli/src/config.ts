@@ -4,14 +4,16 @@ import path from "node:path";
 
 export interface StoredCredentials {
   url: string;
+  resource: string;
   issuer: string;
   client_id: string;
-  audience?: string;
+  client_secret?: string;
   authorization_endpoint: string;
   token_endpoint: string;
-  scopes: string;
+  registration_endpoint?: string;
+  revocation_endpoint?: string;
+  redirect_uri: string;
   access_token: string;
-  id_token?: string;
   refresh_token?: string;
   expires_at: number;
   email: string | null;
@@ -19,17 +21,27 @@ export interface StoredCredentials {
   updated_at: number;
 }
 
-export function getConfigDir(): string {
+export function getDataDir(): string {
   const override = process.env.TRACEVEIL_CONFIG_DIR?.trim();
   if (override) return override;
-  const xdg = process.env.XDG_CONFIG_HOME?.trim();
-  if (xdg) return path.join(xdg, "traceveil");
   if (process.platform === "win32") {
-    const appData =
-      process.env.APPDATA?.trim() || path.join(os.homedir(), "AppData", "Roaming");
-    return path.join(appData, "traceveil");
+    const localAppData =
+      process.env.LOCALAPPDATA?.trim() ||
+      path.join(os.homedir(), "AppData", "Local");
+    return path.join(localAppData, "traceveil");
   }
-  return path.join(os.homedir(), ".config", "traceveil");
+  if (process.platform === "darwin") {
+    return path.join(
+      os.homedir(),
+      "Library",
+      "Application Support",
+      "traceveil"
+    );
+  }
+  const xdgData =
+    process.env.XDG_DATA_HOME?.trim() ||
+    path.join(os.homedir(), ".local", "share");
+  return path.join(xdgData, "traceveil");
 }
 
 export function getCacheDir(): string {
@@ -41,13 +53,15 @@ export function getCacheDir(): string {
     const localAppData =
       process.env.LOCALAPPDATA?.trim() ||
       path.join(os.homedir(), "AppData", "Local");
-    return path.join(localAppData, "traceveil");
+    return path.join(localAppData, "traceveil", "cache");
   }
   return path.join(os.homedir(), ".cache", "traceveil");
 }
 
 export function getCredentialsPath(): string {
-  return path.join(getConfigDir(), "credentials.json");
+  const explicitFile = process.env.TRACEVEIL_AUTH_FILE?.trim();
+  if (explicitFile) return path.resolve(explicitFile);
+  return path.join(getDataDir(), "oauth.json");
 }
 
 export function getBlobCacheDir(): string {
@@ -66,8 +80,15 @@ export function loadCredentials(): StoredCredentials | null {
   const filePath = getCredentialsPath();
   if (!fs.existsSync(filePath)) return null;
   try {
-    const parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as StoredCredentials;
-    if (!parsed || typeof parsed.url !== "string" || typeof parsed.access_token !== "string") {
+    const parsed = JSON.parse(
+      fs.readFileSync(filePath, "utf8")
+    ) as StoredCredentials;
+    if (
+      !parsed ||
+      typeof parsed.url !== "string" ||
+      typeof parsed.access_token !== "string" ||
+      typeof parsed.token_endpoint !== "string"
+    ) {
       return null;
     }
     return parsed;

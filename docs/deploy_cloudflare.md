@@ -106,8 +106,8 @@ two things break and are easy to miss:
 Other routes stay protected; all data is under `/api/*`, so protecting the whole hostname
 protects all track data.
 
-> **Agent / CLI Access (OIDC)**: To let an AI agent or the `traceveil` CLI query
-> read-only tracks via `/api/agent/*` behind Cloudflare Access, follow
+> **Agent / CLI Access (Managed OAuth)**: To let an AI agent or the `traceveil` CLI query
+> read-only tracks via `/api/agent/*` behind Cloudflare Access Managed OAuth, follow
 > [docs/agent_cli_setup.md](agent_cli_setup.md).
 
 ## 6. Teardown

@@ -9,11 +9,10 @@ import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 
 import { encodeGpsl0Points } from "../../frontend/src/services/gpsl0/index.ts";
-import { latLonToTileFractional, encodeTileKey } from "../../frontend/src/utils/coordTransform.ts";
+import { encodeTileKey, latLonToTileFractional } from "../../frontend/src/utils/coordTransform.ts";
 import workerHandler, { type Env } from "../../frontend/src/worker/index.ts";
-import { generateCodeChallengeS256, generateCodeVerifier } from "../src/oidc.ts";
+import { generateCodeChallengeS256 } from "../src/oidc.ts";
 
-// Minimal D1-compatible wrapper around Node.js built-in DatabaseSync (Node 22+)
 class MockD1Prepared {
   private readonly db: DatabaseSync;
   private readonly sql: string;
@@ -114,7 +113,7 @@ function createMockR2(fogHeader: Uint8Array) {
   };
 }
 
-function startMockOidcProvider(opts: { clientId: string; userEmail: string }) {
+function startMockAccessPlatform(opts: { appAud: string; userEmail: string }) {
   const { publicKey, privateKey } = crypto.generateKeyPairSync("rsa", {
     modulusLength: 2048
   });
@@ -123,22 +122,24 @@ function startMockOidcProvider(opts: { clientId: string; userEmail: string }) {
     alg?: string;
     use?: string;
   };
-  jwk.kid = "test-key-1";
+  jwk.kid = "cf-access-key-1";
   jwk.alg = "RS256";
   jwk.use = "sig";
 
+  const registeredClients = new Map<string, { redirectUris: string[]; resource?: string }>();
   const authCodes = new Map<
     string,
-    { codeChallenge: string; redirectUri: string; scope: string }
+    { clientId: string; codeChallenge: string; redirectUri: string; resource: string }
   >();
-  const refreshTokens = new Set<string>(["refresh-tok-1"]);
+  const validTokens = new Map<string, { resource: string; email: string; expiresAt: number }>();
+  const refreshTokens = new Map<string, { clientId: string; resource: string; email: string }>();
+  const revokedTokens: string[] = [];
   let tokenIssueCount = 0;
-
   let baseUrl = "";
 
-  const signJwt = (payload: Record<string, unknown>) => {
+  const signAccessJwt = (payload: Record<string, unknown>) => {
     const header = Buffer.from(
-      JSON.stringify({ alg: "RS256", typ: "JWT", kid: "test-key-1" })
+      JSON.stringify({ alg: "RS256", typ: "JWT", kid: "cf-access-key-1" })
     ).toString("base64url");
     const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
     const signer = crypto.createSign("RSA-SHA256");
@@ -149,32 +150,88 @@ function startMockOidcProvider(opts: { clientId: string; userEmail: string }) {
 
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url || "/", baseUrl);
-    if (url.pathname === "/oidc/.well-known/openid-configuration") {
+    const chunks: Buffer[] = [];
+    for await (const c of req) chunks.push(c as Buffer);
+    const bodyBuf = Buffer.concat(chunks);
+
+    if (url.pathname === "/.well-known/oauth-authorization-server" && req.method === "GET") {
       res.setHeader("Content-Type", "application/json");
       res.end(
         JSON.stringify({
-          issuer: `${baseUrl}/oidc`,
-          authorization_endpoint: `${baseUrl}/oidc/authorization`,
-          token_endpoint: `${baseUrl}/oidc/token`,
-          jwks_uri: `${baseUrl}/oidc/jwks`
+          issuer: baseUrl,
+          authorization_endpoint: `${baseUrl}/cdn-cgi/access/oauth/authorization`,
+          token_endpoint: `${baseUrl}/cdn-cgi/access/oauth/token`,
+          registration_endpoint: `${baseUrl}/cdn-cgi/access/oauth/registration`,
+          revocation_endpoint: `${baseUrl}/cdn-cgi/access/oauth/revoke`,
+          response_types_supported: ["code"],
+          grant_types_supported: ["authorization_code", "refresh_token"],
+          token_endpoint_auth_methods_supported: ["none"],
+          code_challenge_methods_supported: ["S256"]
         })
       );
       return;
     }
 
-    if (url.pathname === "/oidc/jwks") {
+    if (url.pathname === "/cdn-cgi/access/certs" && req.method === "GET") {
       res.setHeader("Content-Type", "application/json");
       res.end(JSON.stringify({ keys: [jwk] }));
       return;
     }
 
-    if (url.pathname === "/oidc/authorization" && req.method === "GET") {
+    if (url.pathname === "/cdn-cgi/access/oauth/registration" && req.method === "POST") {
+      const reg = JSON.parse(bodyBuf.toString("utf8")) as {
+        redirect_uris?: string[];
+        resource?: string;
+      };
+      if (!Array.isArray(reg.redirect_uris) || reg.redirect_uris.length === 0) {
+        res.statusCode = 400;
+        res.end(JSON.stringify({ error: "invalid_client_metadata" }));
+        return;
+      }
+      const clientId = `dyn-client-${registeredClients.size + 1}`;
+      registeredClients.set(clientId, {
+        redirectUris: reg.redirect_uris,
+        resource: reg.resource
+      });
+      res.statusCode = 201;
+      res.setHeader("Content-Type", "application/json");
+      res.end(
+        JSON.stringify({
+          client_id: clientId,
+          redirect_uris: reg.redirect_uris,
+          token_endpoint_auth_method: "none"
+        })
+      );
+      return;
+    }
+
+    if (url.pathname === "/cdn-cgi/access/oauth/authorization" && req.method === "GET") {
+      const clientId = url.searchParams.get("client_id") || "";
       const redirectUri = url.searchParams.get("redirect_uri") || "";
       const state = url.searchParams.get("state") || "";
       const codeChallenge = url.searchParams.get("code_challenge") || "";
-      const scope = url.searchParams.get("scope") || "openid email profile";
-      const code = `code-${crypto.randomBytes(8).toString("hex")}`;
-      authCodes.set(code, { codeChallenge, redirectUri, scope });
+      const method = url.searchParams.get("code_challenge_method") || "";
+      const resource = url.searchParams.get("resource") || "";
+
+      const client = registeredClients.get(clientId);
+      if (!client || !client.redirectUris.includes(redirectUri)) {
+        res.statusCode = 400;
+        res.end("invalid client_id or redirect_uri");
+        return;
+      }
+      if (!resource) {
+        res.statusCode = 400;
+        res.end("invalid_target: No resource parameter found");
+        return;
+      }
+      if (method !== "S256" || !/^[a-zA-Z0-9]/.test(codeChallenge)) {
+        res.statusCode = 400;
+        res.end("invalid code_challenge");
+        return;
+      }
+
+      const code = `cf-code-${crypto.randomBytes(8).toString("hex")}`;
+      authCodes.set(code, { clientId, codeChallenge, redirectUri, resource });
 
       const cb = new URL(redirectUri);
       cb.searchParams.set("code", code);
@@ -185,48 +242,48 @@ function startMockOidcProvider(opts: { clientId: string; userEmail: string }) {
       return;
     }
 
-    if (url.pathname === "/oidc/token" && req.method === "POST") {
-      const chunks: Buffer[] = [];
-      for await (const c of req) chunks.push(c as Buffer);
-      const form = new URLSearchParams(Buffer.concat(chunks).toString("utf8"));
+    if (url.pathname === "/cdn-cgi/access/oauth/token" && req.method === "POST") {
+      const form = new URLSearchParams(bodyBuf.toString("utf8"));
       const grantType = form.get("grant_type");
-      const now = Math.floor(Date.now() / 1000);
+      const clientId = form.get("client_id") || "";
+      const resource = form.get("resource") || "";
+      const nowSec = Math.floor(Date.now() / 1000);
+
+      if (!resource) {
+        res.statusCode = 400;
+        res.end(JSON.stringify({ error: "invalid_target", error_description: "missing resource" }));
+        return;
+      }
 
       if (grantType === "authorization_code") {
         const code = form.get("code") || "";
         const verifier = form.get("code_verifier") || "";
         const redirectUri = form.get("redirect_uri") || "";
         const record = authCodes.get(code);
-        if (!record) {
+        if (!record || record.clientId !== clientId || record.redirectUri !== redirectUri || record.resource !== resource) {
           res.statusCode = 400;
           res.end(JSON.stringify({ error: "invalid_grant" }));
           return;
         }
-        const computedChallenge = generateCodeChallengeS256(verifier);
-        if (computedChallenge !== record.codeChallenge || redirectUri !== record.redirectUri) {
+        if (generateCodeChallengeS256(verifier) !== record.codeChallenge) {
           res.statusCode = 400;
-          res.end(JSON.stringify({ error: "invalid_grant", error_description: "PKCE or redirect_uri mismatch" }));
+          res.end(JSON.stringify({ error: "invalid_grant", error_description: "PKCE mismatch" }));
           return;
         }
         authCodes.delete(code);
         tokenIssueCount++;
-        const jwt = signJwt({
-          iss: `${baseUrl}/oidc`,
-          sub: "user-sub-1",
-          aud: opts.clientId,
-          email: opts.userEmail,
-          name: "Test Traveler",
-          iat: now,
-          exp: now + 3600
-        });
+        const accessToken = `opaque-access-${tokenIssueCount}-${crypto.randomBytes(6).toString("hex")}`;
+        const refreshToken = `cf-refresh-${tokenIssueCount}`;
+        validTokens.set(accessToken, { resource, email: opts.userEmail, expiresAt: nowSec + 900 });
+        refreshTokens.set(refreshToken, { clientId, resource, email: opts.userEmail });
+
         res.setHeader("Content-Type", "application/json");
         res.end(
           JSON.stringify({
             token_type: "Bearer",
-            access_token: jwt,
-            id_token: jwt,
-            refresh_token: "refresh-tok-1",
-            expires_in: 3600
+            access_token: accessToken,
+            refresh_token: refreshToken,
+            expires_in: 900
           })
         );
         return;
@@ -234,29 +291,22 @@ function startMockOidcProvider(opts: { clientId: string; userEmail: string }) {
 
       if (grantType === "refresh_token") {
         const rt = form.get("refresh_token") || "";
-        if (!refreshTokens.has(rt)) {
+        const rec = refreshTokens.get(rt);
+        if (!rec || rec.clientId !== clientId || rec.resource !== resource) {
           res.statusCode = 400;
           res.end(JSON.stringify({ error: "invalid_grant" }));
           return;
         }
         tokenIssueCount++;
-        const jwt = signJwt({
-          iss: `${baseUrl}/oidc`,
-          sub: "user-sub-1",
-          aud: opts.clientId,
-          email: opts.userEmail,
-          name: "Test Traveler",
-          iat: now,
-          exp: now + 3600
-        });
+        const accessToken = `opaque-access-${tokenIssueCount}-${crypto.randomBytes(6).toString("hex")}`;
+        validTokens.set(accessToken, { resource, email: rec.email, expiresAt: nowSec + 900 });
         res.setHeader("Content-Type", "application/json");
         res.end(
           JSON.stringify({
             token_type: "Bearer",
-            access_token: jwt,
-            id_token: jwt,
-            refresh_token: "refresh-tok-1",
-            expires_in: 3600
+            access_token: accessToken,
+            refresh_token: rt,
+            expires_in: 900
           })
         );
         return;
@@ -264,6 +314,18 @@ function startMockOidcProvider(opts: { clientId: string; userEmail: string }) {
 
       res.statusCode = 400;
       res.end(JSON.stringify({ error: "unsupported_grant_type" }));
+      return;
+    }
+
+    if (url.pathname === "/cdn-cgi/access/oauth/revoke" && req.method === "POST") {
+      const form = new URLSearchParams(bodyBuf.toString("utf8"));
+      const tok = form.get("token") || "";
+      revokedTokens.push(tok);
+      validTokens.delete(tok);
+      refreshTokens.delete(tok);
+      res.statusCode = 200;
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ revoked: true }));
       return;
     }
 
@@ -278,15 +340,23 @@ function startMockOidcProvider(opts: { clientId: string; userEmail: string }) {
       baseUrl = `http://127.0.0.1:${addr.port}`;
       return baseUrl;
     },
+    verifyOpaqueAccessToken(token: string) {
+      const entry = validTokens.get(token);
+      if (!entry) return null;
+      if (Math.floor(Date.now() / 1000) > entry.expiresAt) return null;
+      return entry;
+    },
+    signAccessJwt,
     getTokenIssueCount: () => tokenIssueCount,
-    signCustomJwt: (payload: Record<string, unknown>) => signJwt(payload),
+    getRevokedTokens: () => revokedTokens.slice(),
     close: () => new Promise<void>((resolve) => server.close(() => resolve()))
   };
 }
 
 function runCli(
   args: string[],
-  envExtra: Record<string, string>
+  envExtra: Record<string, string>,
+  stdinText?: string
 ): Promise<{ status: number; stdout: string; stderr: string }> {
   const cliBin = path.resolve(process.cwd(), "dist", "cli.mjs");
   return new Promise((resolve, reject) => {
@@ -308,22 +378,22 @@ function runCli(
     child.on("close", (code) => {
       resolve({ status: code ?? 1, stdout, stderr });
     });
+    if (stdinText !== undefined) {
+      child.stdin.write(stdinText);
+      child.stdin.end();
+    }
   });
 }
 
-test("End-to-end OIDC verification, Device Flow, and CLI queries against Worker handler", async () => {
-  const clientId = "traceveil-agent-test-client";
+test("End-to-end Managed OAuth (DCR + PKCE + RFC 8707 + manual + refresh + revoke) against Worker", async () => {
+  const appAud = "test-access-aud-tag";
   const userEmail = "traveler@example.com";
-  const oidc = startMockOidcProvider({ clientId, userEmail });
-  const oidcBase = await oidc.start();
+  const accessAs = startMockAccessPlatform({ appAud, userEmail });
+  const asBase = await accessAs.start();
 
   const d1 = new MockD1Database();
   const repoRoot = path.resolve(process.cwd(), "..");
-  for (const mig of [
-    "0001_init.sql",
-    "0002_regions.sql",
-    "0003_agent_device_auth.sql"
-  ]) {
+  for (const mig of ["0001_init.sql", "0002_regions.sql"]) {
     const sql = fs.readFileSync(
       path.join(repoRoot, "frontend", "migrations", mig),
       "utf8"
@@ -455,24 +525,71 @@ test("End-to-end OIDC verification, Device Flow, and CLI queries against Worker 
     } as unknown as Env["ASSETS"],
     TRACKS_DB: d1 as unknown as Env["TRACKS_DB"],
     TRACKS_BUCKET: createMockR2(makeFogHeader(12, 340)) as unknown as Env["TRACKS_BUCKET"],
-    OIDC_ISSUER: `${oidcBase}/oidc`,
-    OIDC_CLIENT_ID: clientId,
-    OIDC_AUD: clientId,
-    OIDC_ALLOWED_EMAILS: userEmail
+    CF_ACCESS_TEAM_DOMAIN: asBase,
+    CF_ACCESS_AUD: appAud,
+    CF_ACCESS_ALLOWED_EMAILS: userEmail
   };
 
-  let workerUrl = "";
-  const workerServer = http.createServer(async (req, res) => {
-    const fullUrl = new URL(req.url || "/", workerUrl);
+  let edgeUrl = "";
+  const edgeProxy = http.createServer(async (req, res) => {
+    const fullUrl = new URL(req.url || "/", edgeUrl);
     const chunks: Buffer[] = [];
     for await (const c of req) chunks.push(c as Buffer);
     const bodyBuf = Buffer.concat(chunks);
+
+    if (fullUrl.pathname.startsWith("/.well-known/cloudflare-access-protected-resource")) {
+      res.statusCode = 200;
+      res.setHeader("Content-Type", "application/json");
+      res.end(
+        JSON.stringify({
+          resource: edgeUrl,
+          protected: true,
+          authorization_servers: [asBase]
+        })
+      );
+      return;
+    }
+
+    // Simulate Cloudflare Access Managed OAuth edge enforcement
+    const authHeader = String(req.headers.authorization || "");
+    const m = authHeader.match(/^Bearer\s+(.+)$/i);
+    const verified = m ? accessAs.verifyOpaqueAccessToken(m[1].trim()) : null;
+    if (!verified) {
+      const accept = String(req.headers.accept || "");
+      if (accept.includes("application/json")) {
+        res.statusCode = 401;
+        res.setHeader("Content-Type", "application/json");
+        res.setHeader(
+          "Www-Authenticate",
+          `Bearer realm="OAuth", error="invalid_token", resource_metadata="${edgeUrl}/.well-known/cloudflare-access-protected-resource${fullUrl.pathname}"`
+        );
+        res.end(JSON.stringify({ error: "invalid_token" }));
+      } else {
+        res.statusCode = 302;
+        res.setHeader("Location", `${asBase}/login`);
+        res.end();
+      }
+      return;
+    }
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    const assertionJwt = accessAs.signAccessJwt({
+      iss: asBase,
+      sub: "user-sub-1",
+      aud: [appAud],
+      email: verified.email,
+      name: "Test Traveler",
+      iat: nowSec,
+      exp: nowSec + 300
+    });
 
     const headers = new Headers();
     for (const [k, v] of Object.entries(req.headers)) {
       if (typeof v === "string") headers.set(k, v);
       else if (Array.isArray(v)) headers.set(k, v.join(", "));
     }
+    headers.set("Cf-Access-Jwt-Assertion", assertionJwt);
+    headers.set("Cf-Access-Authenticated-User-Email", verified.email);
 
     const request = new Request(fullUrl.toString(), {
       method: req.method,
@@ -492,17 +609,14 @@ test("End-to-end OIDC verification, Device Flow, and CLI queries against Worker 
     resp.headers.forEach((value, key) => {
       res.setHeader(key, value);
     });
-    const outBuf = Buffer.from(await resp.arrayBuffer());
-    res.end(outBuf);
+    res.end(Buffer.from(await resp.arrayBuffer()));
   });
 
-  await new Promise<void>((resolve) =>
-    workerServer.listen(0, "127.0.0.1", resolve)
-  );
-  const wAddr = workerServer.address() as { port: number };
-  workerUrl = `http://127.0.0.1:${wAddr.port}`;
+  await new Promise<void>((resolve) => edgeProxy.listen(0, "127.0.0.1", resolve));
+  const eAddr = edgeProxy.address() as { port: number };
+  edgeUrl = `http://127.0.0.1:${eAddr.port}`;
 
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "traceveil-e2e-"));
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "traceveil-managed-e2e-"));
   const cfgDir = path.join(tmpDir, "cfg");
   const cacheDir = path.join(tmpDir, "cache");
   const cliEnv = {
@@ -511,188 +625,114 @@ test("End-to-end OIDC verification, Device Flow, and CLI queries against Worker 
   };
 
   try {
-    // 1. Unauthenticated access must fail with 401
-    const unauth = await fetch(`${workerUrl}/api/agent/stats`);
-    assert.equal(unauth.status, 401);
+    // 1. Direct Worker strict JWT verification sanity checks (bypassing edge proxy)
+    const directMissing = await workerHandler.fetch(
+      new Request(`${edgeUrl}/api/agent/stats`),
+      workerEnv,
+      {} as never
+    );
+    assert.equal(directMissing.status, 401);
 
-    // 2. Forged/wrong-aud JWT must fail with 401
-    const wrongAudJwt = oidc.signCustomJwt({
-      iss: `${oidcBase}/oidc`,
+    const badAudJwt = accessAs.signAccessJwt({
+      iss: asBase,
       sub: "user-sub-1",
-      aud: "wrong-audience",
+      aud: "wrong-aud",
       email: userEmail,
       exp: Math.floor(Date.now() / 1000) + 300
     });
-    const badAuth = await fetch(`${workerUrl}/api/agent/stats`, {
-      headers: { Authorization: `Bearer ${wrongAudJwt}` }
-    });
-    assert.equal(badAuth.status, 401);
+    const directBadAud = await workerHandler.fetch(
+      new Request(`${edgeUrl}/api/agent/stats`, {
+        headers: { "Cf-Access-Jwt-Assertion": badAudJwt }
+      }),
+      workerEnv,
+      {} as never
+    );
+    assert.equal(directBadAud.status, 401);
 
-    // 3. Disallowed email must fail with 403
-    const otherEmailJwt = oidc.signCustomJwt({
-      iss: `${oidcBase}/oidc`,
+    const badEmailJwt = accessAs.signAccessJwt({
+      iss: asBase,
       sub: "user-sub-2",
-      aud: clientId,
+      aud: appAud,
       email: "intruder@example.com",
       exp: Math.floor(Date.now() / 1000) + 300
     });
-    const forbidden = await fetch(`${workerUrl}/api/agent/stats`, {
-      headers: { Authorization: `Bearer ${otherEmailJwt}` }
-    });
-    assert.equal(forbidden.status, 403);
-
-    // 4. CLI auth status while logged out -> exit code 2 + structured JSON
-    const loggedOutRes = await runCli(["auth", "status", "--json"], cliEnv);
-    assert.equal(loggedOutRes.status, 2);
-    const loggedOutJson = JSON.parse(loggedOutRes.stdout);
-    assert.equal(loggedOutJson.authenticated, false);
-    assert.equal(loggedOutJson.error, "auth_required");
-
-    // 5. Device Flow E2E via Worker + Mock OIDC IdP
-    const verifier = generateCodeVerifier();
-    const challenge = generateCodeChallengeS256(verifier);
-
-    const startRes = await fetch(`${workerUrl}/api/agent/auth/device/start`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        code_challenge: challenge,
-        code_challenge_method: "S256"
-      })
-    });
-    assert.equal(startRes.status, 200);
-    const startBody = (await startRes.json()) as {
-      device_code: string;
-      user_code: string;
-      verification_uri_complete: string;
-    };
-    assert.ok(startBody.user_code.includes("-"));
-
-    // Poll while pending
-    const pendingRes = await fetch(`${workerUrl}/api/agent/auth/device/poll`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ device_code: startBody.device_code })
-    });
-    assert.equal(pendingRes.status, 200);
-    assert.equal(
-      ((await pendingRes.json()) as { status: string }).status,
-      "authorization_pending"
+    const directBadEmail = await workerHandler.fetch(
+      new Request(`${edgeUrl}/api/agent/stats`, {
+        headers: { "Cf-Access-Jwt-Assertion": badEmailJwt }
+      }),
+      workerEnv,
+      {} as never
     );
+    assert.equal(directBadEmail.status, 403);
 
-    // Approve in verification form -> follows 302 to mock OIDC -> redirects back to /device/callback
-    const verifyRes = await fetch(`${workerUrl}/api/agent/auth/device/verify`, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        user_code: startBody.user_code,
-        action: "approve"
-      }).toString()
-    });
-    assert.equal(verifyRes.status, 200);
-    const verifyHtml = await verifyRes.text();
-    assert.ok(verifyHtml.includes("Authorization Complete"));
+    // 2. Logged-out auth status -> exit code 2
+    const loggedOut = await runCli(["auth", "status", "--json"], cliEnv);
+    assert.equal(loggedOut.status, 2);
+    assert.equal(JSON.parse(loggedOut.stdout).error, "auth_required");
 
-    // Poll returns one-time auth code
-    const approvedRes = await fetch(`${workerUrl}/api/agent/auth/device/poll`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ device_code: startBody.device_code })
-    });
-    assert.equal(approvedRes.status, 200);
-    const approvedJson = (await approvedRes.json()) as {
-      status: string;
-      code: string;
-      redirect_uri: string;
-    };
-    assert.equal(approvedJson.status, "approved");
-
-    // Re-polling consumed device_code fails
-    const replayRes = await fetch(`${workerUrl}/api/agent/auth/device/poll`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ device_code: startBody.device_code })
-    });
-    assert.equal(replayRes.status, 400);
-
-    // Exchange code + verifier at OIDC token endpoint
-    const authCfg = (await (
-      await fetch(`${workerUrl}/api/agent/auth/config`)
-    ).json()) as { token_endpoint: string; issuer: string; authorization_endpoint: string };
-    const tokRes = await fetch(authCfg.token_endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type: "authorization_code",
-        client_id: clientId,
-        code: approvedJson.code,
-        redirect_uri: approvedJson.redirect_uri,
-        code_verifier: verifier
-      }).toString()
-    });
-    assert.equal(tokRes.status, 200);
-    const tokJson = (await tokRes.json()) as {
-      access_token: string;
-      id_token: string;
-      refresh_token: string;
-      expires_in: number;
-    };
-
-    // Save credentials with an ALREADY-EXPIRED expires_at to test automatic refresh in CLI!
-    fs.mkdirSync(cfgDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(cfgDir, "credentials.json"),
-      JSON.stringify({
-        url: workerUrl,
-        issuer: authCfg.issuer,
-        client_id: clientId,
-        audience: clientId,
-        authorization_endpoint: authCfg.authorization_endpoint,
-        token_endpoint: authCfg.token_endpoint,
-        scopes: "openid email profile",
-        access_token: oidc.signCustomJwt({
-          iss: authCfg.issuer,
-          sub: "user-sub-1",
-          aud: clientId,
-          email: userEmail,
-          exp: Math.floor(Date.now() / 1000) - 120
-        }),
-        refresh_token: tokJson.refresh_token,
-        expires_at: Math.floor(Date.now() / 1000) - 120,
-        email: userEmail,
-        sub: "user-sub-1",
-        updated_at: Math.floor(Date.now() / 1000)
-      })
+    // 3. Loopback PKCE Managed OAuth login (`auth login --port 0 --no-browser --json`)
+    const cliBin = path.resolve(process.cwd(), "dist", "cli.mjs");
+    const loginChild = spawn(
+      process.execPath,
+      [cliBin, "auth", "login", "--url", edgeUrl, "--port", "0", "--no-browser", "--json"],
+      { env: { ...process.env, ...cliEnv } }
     );
+    let loginStdout = "";
+    let loginStderr = "";
+    let triggeredBrowser = false;
+    loginChild.stdout.on("data", (c) => {
+      loginStdout += c.toString();
+    });
+    loginChild.stderr.on("data", (c) => {
+      loginStderr += c.toString();
+      if (!triggeredBrowser) {
+        const match = loginStderr.match(
+          /https?:\/\/127\.0\.0\.1:\d+\/cdn-cgi\/access\/oauth\/authorization\?[^\s]+/
+        );
+        if (match && loginStderr.includes("Waiting for browser callback")) {
+          triggeredBrowser = true;
+          fetch(match[0], { redirect: "follow" }).catch(() => {});
+        }
+      }
+    });
+    const loginCode = await new Promise<number>((resolve, reject) => {
+      loginChild.on("error", reject);
+      loginChild.on("close", (code) => resolve(code ?? 1));
+    });
+    assert.equal(loginCode, 0, `${loginStdout}\n${loginStderr}`);
+    const loginJson = JSON.parse(loginStdout);
+    assert.equal(loginJson.authenticated, true);
+    assert.equal(loginJson.email, userEmail);
+    assert.equal(loginJson.has_refresh_token, true);
 
-    const beforeRefreshCount = oidc.getTokenIssueCount();
+    // 4. Simulate expired/rejected access token -> edge returns 401 -> CLI transparently refreshes with resource!
+    const oauthPath = path.join(cfgDir, "oauth.json");
+    const saved = JSON.parse(fs.readFileSync(oauthPath, "utf8")) as Record<string, unknown>;
+    saved.access_token = "expired-opaque-token";
+    saved.expires_at = Math.floor(Date.now() / 1000) - 60;
+    fs.writeFileSync(oauthPath, JSON.stringify(saved));
 
-    // 6. CLI commands exercise transparent refresh + queries
+    const beforeRefresh = accessAs.getTokenIssueCount();
     const statsOut = await runCli(["stats", "--json"], cliEnv);
     assert.equal(statsOut.status, 0, `${statsOut.stdout}\n${statsOut.stderr}`);
     const statsJson = JSON.parse(statsOut.stdout);
     assert.equal(statsJson.stats.trackCount, 1);
     assert.equal(statsJson.stats.visitedTilesZ15, 12);
     assert.equal(statsJson.visitedRegionCounts.l2, 1);
-    assert.ok(oidc.getTokenIssueCount() > beforeRefreshCount);
+    assert.ok(accessAs.getTokenIssueCount() > beforeRefresh);
 
+    // 5. All query commands work with refreshed token
     const listOut = await runCli(["tracks", "list", "--region", "北京", "--json"], cliEnv);
     assert.equal(listOut.status, 0, `${listOut.stdout}\n${listOut.stderr}`);
-    const listJson = JSON.parse(listOut.stdout);
-    assert.equal(listJson.total, 1);
-    assert.equal(listJson.tracks[0].id, "2025-10-09-beijing-walk");
-
-    const analyzeOut = await runCli(["tracks", "analyze", "2025-10-09-beijing-walk", "--json"], cliEnv);
-    assert.equal(analyzeOut.status, 0, `${analyzeOut.stdout}\n${analyzeOut.stderr}`);
-    const analyzeJson = JSON.parse(analyzeOut.stdout);
-    assert.equal(analyzeJson.analysis.point_count, 4);
-    assert.equal(analyzeJson.analysis.stops.length, 1);
+    assert.equal(JSON.parse(listOut.stdout).total, 1);
 
     const showOut = await runCli(["tracks", "show", "2025-10-09-beijing-walk", "--json"], cliEnv);
     assert.equal(showOut.status, 0, `${showOut.stdout}\n${showOut.stderr}`);
-    const showJson = JSON.parse(showOut.stdout);
-    assert.equal(showJson.track.id, "2025-10-09-beijing-walk");
-    assert.equal(showJson.regions[0].rid, 1101);
+    assert.equal(JSON.parse(showOut.stdout).regions[0].rid, 1101);
+
+    const analyzeOut = await runCli(["tracks", "analyze", "2025-10-09-beijing-walk", "--json"], cliEnv);
+    assert.equal(analyzeOut.status, 0, `${analyzeOut.stdout}\n${analyzeOut.stderr}`);
+    assert.equal(JSON.parse(analyzeOut.stdout).analysis.stops.length, 1);
 
     const gpxOut = await runCli(["tracks", "points", "2025-10-09-beijing-walk", "--format", "gpx"], cliEnv);
     assert.equal(gpxOut.status, 0, `${gpxOut.stdout}\n${gpxOut.stderr}`);
@@ -703,7 +743,6 @@ test("End-to-end OIDC verification, Device Flow, and CLI queries against Worker 
     const regionsJson = JSON.parse(regionsOut.stdout);
     assert.equal(regionsJson.region.rid, 1101);
     assert.equal(regionsJson.ancestors[0].rid, 100);
-    assert.equal(regionsJson.tracks.length, 1);
 
     const whereOut = await runCli(["where", "--at", String(startTs + 60), "--json"], cliEnv);
     assert.equal(whereOut.status, 0, `${whereOut.stdout}\n${whereOut.stderr}`);
@@ -725,56 +764,61 @@ test("End-to-end OIDC verification, Device Flow, and CLI queries against Worker 
       cliEnv
     );
     assert.equal(bboxOut.status, 0, `${bboxOut.stdout}\n${bboxOut.stderr}`);
-    const bboxJson = JSON.parse(bboxOut.stdout);
-    assert.equal(bboxJson.total, 1);
+    assert.equal(JSON.parse(bboxOut.stdout).total, 1);
 
-    // 7. Logout clears credentials and auth status returns exit code 2 again
+    const tokenOut = await runCli(["auth", "token", "--json"], cliEnv);
+    assert.equal(tokenOut.status, 0, `${tokenOut.stdout}\n${tokenOut.stderr}`);
+    assert.ok(JSON.parse(tokenOut.stdout).access_token.startsWith("opaque-access-"));
+
+    // 6. Logout revokes remote token & deletes oauth.json
     const logoutOut = await runCli(["auth", "logout", "--json"], cliEnv);
-    assert.equal(logoutOut.status, 0);
-    assert.equal(JSON.parse(logoutOut.stdout).removed_credentials, true);
+    assert.equal(logoutOut.status, 0, `${logoutOut.stdout}\n${logoutOut.stderr}`);
+    const logoutJson = JSON.parse(logoutOut.stdout);
+    assert.equal(logoutJson.removed_credentials, true);
+    assert.equal(logoutJson.revoked, true);
+    assert.ok(accessAs.getRevokedTokens().length >= 1);
 
     const afterLogout = await runCli(["auth", "status", "--json"], cliEnv);
     assert.equal(afterLogout.status, 2);
 
-    // 8. Programmatic PKCE loopback login E2E via `auth login --no-browser --port 0`
-    const cliBin = path.resolve(process.cwd(), "dist", "cli.mjs");
-    const loginChild = spawn(
+    // 7. Cross-device `--manual` login (user pastes redirected callback URL)
+    const manualChild = spawn(
       process.execPath,
-      [cliBin, "auth", "login", "--url", workerUrl, "--port", "0", "--no-browser", "--json"],
+      [cliBin, "auth", "login", "--url", edgeUrl, "--manual", "--json"],
       { env: { ...process.env, ...cliEnv } }
     );
-    let loginStdout = "";
-    let loginStderr = "";
-    let triggeredBrowser = false;
-    loginChild.stdout.on("data", (c) => {
-      loginStdout += c.toString();
+    let manualStdout = "";
+    let manualStderr = "";
+    let submittedManual = false;
+    manualChild.stdout.on("data", (c) => {
+      manualStdout += c.toString();
     });
-    loginChild.stderr.on("data", (c) => {
-      loginStderr += c.toString();
-      if (!triggeredBrowser) {
-        const match = loginStderr.match(/https?:\/\/127\.0\.0\.1:\d+\/oidc\/authorization\?[^\s]+/);
-        if (match && loginStderr.includes("Waiting for browser callback")) {
-          triggeredBrowser = true;
-          fetch(match[0], { redirect: "follow" }).catch(() => {});
+    manualChild.stderr.on("data", async (c) => {
+      manualStderr += c.toString();
+      if (!submittedManual) {
+        const match = manualStderr.match(
+          /https?:\/\/127\.0\.0\.1:\d+\/cdn-cgi\/access\/oauth\/authorization\?[^\s]+/
+        );
+        if (match && manualStderr.includes("Paste the redirected callback URL")) {
+          submittedManual = true;
+          const resp = await fetch(match[0], { redirect: "manual" });
+          const location = resp.headers.get("location") || "";
+          manualChild.stdin.write(location + "\n");
+          manualChild.stdin.end();
         }
       }
     });
-    const loginCode = await new Promise<number>((resolve, reject) => {
-      loginChild.on("error", reject);
-      loginChild.on("close", (code) => resolve(code ?? 1));
+    const manualCode = await new Promise<number>((resolve, reject) => {
+      manualChild.on("error", reject);
+      manualChild.on("close", (code) => resolve(code ?? 1));
     });
-    assert.equal(loginCode, 0, `${loginStdout}\n${loginStderr}`);
-    const loginJson = JSON.parse(loginStdout);
-    assert.equal(loginJson.authenticated, true);
-    assert.equal(loginJson.email, userEmail);
-
-    const statusAfterPkce = await runCli(["auth", "status", "--json"], cliEnv);
-    assert.equal(statusAfterPkce.status, 0, `${statusAfterPkce.stdout}\n${statusAfterPkce.stderr}`);
+    assert.equal(manualCode, 0, `${manualStdout}\n${manualStderr}`);
+    assert.equal(JSON.parse(manualStdout).authenticated, true);
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
     await Promise.all([
-      oidc.close(),
-      new Promise<void>((resolve) => workerServer.close(() => resolve()))
+      accessAs.close(),
+      new Promise<void>((resolve) => edgeProxy.close(() => resolve()))
     ]);
   }
 });

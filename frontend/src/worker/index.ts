@@ -18,10 +18,10 @@ import type {
   VisitedRegion
 } from "../types/track.ts";
 import { handleAgentRequest } from "./agentApi.ts";
-import type { OidcEnv } from "./oidcAuth.ts";
+import type { AccessAuthEnv } from "./accessAuth.ts";
 import { handleRegionTileRequest } from "./regionTiles.ts";
 
-export interface Env extends OidcEnv {
+export interface Env extends AccessAuthEnv {
   ASSETS: Fetcher;
   TRACKS_BUCKET: R2Bucket;
   TRACKS_DB: D1Database;

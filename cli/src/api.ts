@@ -7,11 +7,8 @@ import {
   normalizeBaseUrl,
   type StoredCredentials
 } from "./config.ts";
-import {
-  fetchAuthConfig,
-  refreshCredentials,
-  selectBearerToken
-} from "./oidc.ts";
+import { httpRequest, type HttpRequestInit, type HttpResponse } from "./http.ts";
+import { refreshCredentials } from "./oidc.ts";
 
 export class AuthRequiredError extends Error {
   readonly code: string;
@@ -156,16 +153,23 @@ export class TraceveilClient {
         );
       }
 
-      const bearer = selectBearerToken(this.creds);
-      return { Authorization: `Bearer ${bearer}` };
+      return { Authorization: `Bearer ${this.creds.access_token}` };
     }
 
-    // Check if target is local Vite dev server (no OIDC configured)
+    // Check if target is local Vite dev server (no Cloudflare Access auth)
     if (!this.localDevChecked) {
       this.localDevChecked = true;
       try {
-        const cfg = await fetchAuthConfig(this.baseUrl);
-        this.isLocalDev = Boolean(cfg.local_dev && !cfg.configured);
+        const probe = await httpRequest(`${this.baseUrl}/api/agent/me`, {
+          headers: { Accept: "application/json" },
+          redirect: "manual",
+          attempts: 1,
+          timeoutMs: 5000
+        });
+        if (probe.status === 200) {
+          const data = await probe.json<{ local_dev?: boolean }>();
+          this.isLocalDev = Boolean(data?.local_dev);
+        }
       } catch {
         this.isLocalDev = false;
       }
@@ -175,26 +179,33 @@ export class TraceveilClient {
     }
 
     throw new AuthRequiredError(
-      `No saved session for ${this.baseUrl}. Run \`traceveil auth login --url ${this.baseUrl}\` (or add \`--device\` on headless/SSH servers).`
+      `No saved session for ${this.baseUrl}. Run \`traceveil auth login --url ${this.baseUrl}\` (or add \`--manual\` for cross-device login).`
     );
   }
 
   private async fetchAuthed(
     apiPath: string,
-    init?: RequestInit
-  ): Promise<Response> {
+    init?: HttpRequestInit
+  ): Promise<HttpResponse> {
     const authHeaders = await this.ensureAuthHeaders();
     const url = `${this.baseUrl}${apiPath}`;
-    const resp = await fetch(url, {
+    const baseHeaders: Record<string, string> = {
+      Accept: "application/json",
+      ...(init?.headers ?? {})
+    };
+
+    const resp = await httpRequest(url, {
       ...init,
+      redirect: "manual",
       headers: {
-        ...(init?.headers as Record<string, string> | undefined),
+        ...baseHeaders,
         ...authHeaders
       }
     });
 
+    const needsRefresh = resp.status === 401 || resp.status === 302;
     if (
-      resp.status === 401 &&
+      needsRefresh &&
       !this.explicitToken &&
       this.creds &&
       this.creds.url === this.baseUrl &&
@@ -202,16 +213,32 @@ export class TraceveilClient {
     ) {
       try {
         this.creds = await refreshCredentials(this.creds);
-        const retryHeaders = {
-          ...(init?.headers as Record<string, string> | undefined),
-          Authorization: `Bearer ${selectBearerToken(this.creds)}`
-        };
-        return fetch(url, { ...init, headers: retryHeaders });
-      } catch {
+        const retryResp = await httpRequest(url, {
+          ...init,
+          redirect: "manual",
+          headers: {
+            ...baseHeaders,
+            Authorization: `Bearer ${this.creds.access_token}`
+          }
+        });
+        if (retryResp.status === 401 || retryResp.status === 302) {
+          throw new AuthRequiredError(
+            `Access token rejected (${retryResp.status}). Run \`traceveil auth login --url ${this.baseUrl}\`.`
+          );
+        }
+        return retryResp;
+      } catch (err) {
+        if (err instanceof AuthRequiredError) throw err;
         throw new AuthRequiredError(
-          `Token rejected (401) and refresh failed. Run \`traceveil auth login --url ${this.baseUrl}\`.`
+          `Token rejected (${resp.status}) and refresh failed. Run \`traceveil auth login --url ${this.baseUrl}\`.`
         );
       }
+    }
+
+    if (resp.status === 302) {
+      throw new AuthRequiredError(
+        "Redirected to Cloudflare Access login. Run `traceveil auth login` (and ensure Managed OAuth is enabled on the Access application)."
+      );
     }
 
     return resp;
@@ -226,11 +253,6 @@ export class TraceveilClient {
     try {
       data = JSON.parse(text);
     } catch {
-      if (resp.status === 302 || text.includes("cloudflareaccess")) {
-        throw new AuthRequiredError(
-          "Blocked by Cloudflare Access login redirect. Ensure /api/agent/* has an Access Bypass policy and valid OIDC token."
-        );
-      }
       throw new ApiError(
         resp.status,
         "invalid_response",
@@ -302,12 +324,13 @@ export class TraceveilClient {
     }
 
     const resp = await this.fetchAuthed(
-      `/api/agent/tracks/${encodeURIComponent(safeId)}/gpsl0`
+      `/api/agent/tracks/${encodeURIComponent(safeId)}/gpsl0`,
+      { headers: { Accept: "application/octet-stream, application/json" } }
     );
     if (!resp.ok) {
       let msg = `Failed to download GPSL0 for ${safeId} (${resp.status})`;
       try {
-        const err = (await resp.json()) as { error?: string; message?: string };
+        const err = await resp.json<{ error?: string; message?: string }>();
         msg = err.message || err.error || msg;
       } catch {
         // Ignore non-JSON body
