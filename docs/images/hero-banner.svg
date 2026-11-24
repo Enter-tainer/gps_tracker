@@ -1,0 +1,163 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 340" width="1200" height="340" role="img" aria-label="GPS Tracker · Traceveil Hero Banner">
+  <defs>
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#090e1a"/>
+      <stop offset="55%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#0a192f"/>
+    </linearGradient>
+    <radialGradient id="fogGlow" cx="78%" cy="44%" r="38%">
+      <stop offset="0%" stop-color="#0ea5e9" stop-opacity="0.22"/>
+      <stop offset="55%" stop-color="#0284c7" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#0f172a" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="fixGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#fbbf24" stop-opacity="0.38"/>
+      <stop offset="100%" stop-color="#fbbf24" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="trackGrad" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.3"/>
+      <stop offset="45%" stop-color="#38bdf8"/>
+      <stop offset="78%" stop-color="#34d399"/>
+      <stop offset="100%" stop-color="#fbbf24"/>
+    </linearGradient>
+    <linearGradient id="pillBorder" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#334155" stop-opacity="0.6"/>
+    </linearGradient>
+    <clipPath id="cardClip">
+      <rect x="2" y="2" width="1196" height="336" rx="16"/>
+    </clipPath>
+  </defs>
+
+  <!-- Outer Card -->
+  <rect x="2" y="2" width="1196" height="336" rx="16" fill="url(#bgGrad)" stroke="#1e293b" stroke-width="1.5"/>
+
+  <g clip-path="url(#cardClip)">
+    <!-- Fog-of-War Revealed Ambient Glow -->
+    <rect x="2" y="2" width="1196" height="336" fill="url(#fogGlow)"/>
+
+    <!-- Subtle Cartographic Grid -->
+    <g stroke="#1e293b" stroke-width="1" opacity="0.65">
+      <line x1="720" y1="0" x2="720" y2="340"/>
+      <line x1="840" y1="0" x2="840" y2="340"/>
+      <line x1="960" y1="0" x2="960" y2="340"/>
+      <line x1="1080" y1="0" x2="1080" y2="340"/>
+      <line x1="640" y1="70" x2="1200" y2="70"/>
+      <line x1="640" y1="140" x2="1200" y2="140"/>
+      <line x1="640" y1="210" x2="1200" y2="210"/>
+    </g>
+
+    <!-- Topographic Contours (Right Side) -->
+    <g fill="none" stroke="#1e3a5f" stroke-width="1.2" opacity="0.55">
+      <path d="M 760 220 C 810 165, 880 185, 925 135 C 970 85, 1040 70, 1110 95 C 1155 110, 1185 150, 1210 185"/>
+      <path d="M 800 230 C 845 182, 895 198, 940 148 C 985 98, 1045 86, 1100 108 C 1140 124, 1165 155, 1190 190"/>
+      <path d="M 845 235 C 885 198, 920 202, 958 158 C 998 112, 1048 102, 1090 120 C 1120 134, 1140 158, 1155 185"/>
+      <ellipse cx="1042" cy="128" rx="46" ry="30" transform="rotate(-18 1042 128)" stroke="#0e7490" opacity="0.6"/>
+    </g>
+
+    <!-- Revealed Fog Corridor & Glowing GPS Track -->
+    <path d="M 705 225 C 760 222, 795 185, 845 190 C 895 195, 912 156, 956 150 C 995 145, 1008 114, 1048 122"
+          fill="none" stroke="#38bdf8" stroke-width="16" stroke-linecap="round" opacity="0.10"/>
+    <path d="M 705 225 C 760 222, 795 185, 845 190 C 895 195, 912 156, 956 150 C 995 145, 1008 114, 1048 122"
+          fill="none" stroke="#38bdf8" stroke-width="7" stroke-linecap="round" opacity="0.18"/>
+    <path d="M 705 225 C 760 222, 795 185, 845 190 C 895 195, 912 156, 956 150 C 995 145, 1008 114, 1048 122"
+          fill="none" stroke="url(#trackGrad)" stroke-width="3" stroke-linecap="round"/>
+
+    <!-- Track Waypoints -->
+    <circle cx="765" cy="212" r="3" fill="#38bdf8" opacity="0.75"/>
+    <circle cx="845" cy="190" r="3.5" fill="#38bdf8"/>
+    <circle cx="912" cy="171" r="3.5" fill="#2dd4bf"/>
+    <circle cx="962" cy="149" r="3.5" fill="#34d399"/>
+    <circle cx="1008" cy="126" r="3.5" fill="#a3e635"/>
+
+    <!-- Active GPS Fix Marker -->
+    <circle cx="1048" cy="122" r="28" fill="url(#fixGlow)"/>
+    <circle cx="1048" cy="122" r="13" fill="none" stroke="#fbbf24" stroke-width="1.2" opacity="0.5"/>
+    <circle cx="1048" cy="122" r="5" fill="#fbbf24" stroke="#0f172a" stroke-width="1.5"/>
+
+    <!-- GNSS Satellite & Signal Arcs (Top Right) -->
+    <g transform="translate(1105, 58)" stroke="#38bdf8" fill="none" stroke-linecap="round">
+      <path d="M -22 14 A 24 24 0 0 1 -6 30" stroke-width="1.4" opacity="0.45"/>
+      <path d="M -30 18 A 34 34 0 0 1 -2 38" stroke-width="1.4" opacity="0.25"/>
+      <g transform="rotate(-35)">
+        <rect x="-5" y="-5" width="10" height="10" rx="2" fill="#0f2942" stroke="#38bdf8" stroke-width="1.5"/>
+        <rect x="-19" y="-3.5" width="11" height="7" rx="1" fill="#0284c7" fill-opacity="0.35" stroke="#38bdf8" stroke-width="1.2"/>
+        <rect x="8" y="-3.5" width="11" height="7" rx="1" fill="#0284c7" fill-opacity="0.35" stroke="#38bdf8" stroke-width="1.2"/>
+      </g>
+    </g>
+
+    <!-- Telemetry Readout Chip (Top Right) -->
+    <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11">
+      <rect x="854" y="34" width="212" height="26" rx="6" fill="#0b1526" fill-opacity="0.85" stroke="#1e293b"/>
+      <circle cx="870" cy="47" r="3.5" fill="#34d399"/>
+      <text x="881" y="51" fill="#94a3b8">FIX · HDOP 0.8 · <tspan fill="#38bdf8">4.63 b/pt</tspan></text>
+    </g>
+
+    <!-- Left Content: Eyebrow Pill -->
+    <rect x="56" y="40" width="446" height="28" rx="14" fill="#0c233b" stroke="#0ea5e9" stroke-opacity="0.45" stroke-width="1"/>
+    <text x="279" y="58.5" text-anchor="middle"
+          font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+          font-size="11.5" font-weight="600" letter-spacing="1.4" fill="#38bdf8">
+      OPEN HARDWARE · RUST EMBEDDED · PERSONAL GEO-ARCHIVE
+    </text>
+
+    <!-- Main Title -->
+    <text x="56" y="124"
+          font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif"
+          font-size="52" font-weight="800" letter-spacing="-0.8">
+      <tspan fill="#f8fafc">GPS Tracker</tspan>
+      <tspan fill="#475569" font-weight="400"> · </tspan>
+      <tspan fill="#38bdf8">Traceveil</tspan>
+    </text>
+
+    <!-- Subtitle -->
+    <text x="56" y="164"
+          font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif"
+          font-size="17" font-weight="500" fill="#cbd5e1">
+      nRF52840 低功耗轨迹记录器 × 世界迷雾地图 × GPSL0 极限压缩 × AI Agent CLI
+    </text>
+
+    <!-- Feature Line -->
+    <text x="56" y="198"
+          font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif"
+          font-size="13.5" fill="#64748b">
+      Slim / 21700 双形态外壳 · 6 态智能断电续航 · Apple Find My · 全球 5 级区划热力 · Cloudflare 零信任部署
+    </text>
+
+    <!-- Bottom 5-Stage Pipeline Cards -->
+    <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+      <!-- Stage 1 -->
+      <rect x="56" y="240" width="194" height="58" rx="10" fill="#0b1526" fill-opacity="0.92" stroke="url(#pillBorder)" stroke-width="1"/>
+      <text x="72" y="264" font-size="13.5" font-weight="700" fill="#f1f5f9">PCB + 双形态外壳</text>
+      <text x="72" y="284" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" fill="#38bdf8">EPRO2 · STEP · 3MF</text>
+
+      <text x="264" y="274" text-anchor="middle" font-size="15" font-weight="700" fill="#475569">→</text>
+
+      <!-- Stage 2 -->
+      <rect x="278" y="240" width="198" height="58" rx="10" fill="#0b1526" fill-opacity="0.92" stroke="url(#pillBorder)" stroke-width="1"/>
+      <text x="294" y="264" font-size="13.5" font-weight="700" fill="#f1f5f9">Rust no_std 固件</text>
+      <text x="294" y="284" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" fill="#34d399">Embassy · S140 · Find My</text>
+
+      <text x="490" y="274" text-anchor="middle" font-size="15" font-weight="700" fill="#475569">→</text>
+
+      <!-- Stage 3 -->
+      <rect x="504" y="240" width="196" height="58" rx="10" fill="#0b1526" fill-opacity="0.92" stroke="url(#pillBorder)" stroke-width="1"/>
+      <text x="520" y="264" font-size="13.5" font-weight="700" fill="#f1f5f9">GPZ / GPSL0 编码</text>
+      <text x="520" y="284" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" fill="#fbbf24">4.63 bits/pt · 8.77×</text>
+
+      <text x="714" y="274" text-anchor="middle" font-size="15" font-weight="700" fill="#475569">→</text>
+
+      <!-- Stage 4 -->
+      <rect x="728" y="240" width="198" height="58" rx="10" fill="#0b1526" fill-opacity="0.92" stroke="url(#pillBorder)" stroke-width="1"/>
+      <text x="744" y="264" font-size="13.5" font-weight="700" fill="#f1f5f9">Traceveil 迷雾地图</text>
+      <text x="744" y="284" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" fill="#38bdf8">PWA · Workers · D1 · R2</text>
+
+      <text x="940" y="274" text-anchor="middle" font-size="15" font-weight="700" fill="#475569">→</text>
+
+      <!-- Stage 5 -->
+      <rect x="954" y="240" width="190" height="58" rx="10" fill="#0b1526" fill-opacity="0.92" stroke="url(#pillBorder)" stroke-width="1"/>
+      <text x="970" y="264" font-size="13.5" font-weight="700" fill="#f1f5f9">traceveil Agent</text>
+      <text x="970" y="284" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" fill="#a78bfa">Managed OAuth · Skill</text>
+    </g>
+  </g>
+</svg>

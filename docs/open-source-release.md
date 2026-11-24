@@ -13,11 +13,11 @@
 | 提交历史里是否混入密钥 | ✅ `findmy-keys-*.json`、`fmdn-eik-*.json`、`tools/.../auth.json` 均**不在** HEAD，历史中也查不到 |
 | 仓库体积 | ✅ 约 1.8 MiB（pack），干净，没有误提交的 `node_modules` / `target` |
 | `.gitignore` 覆盖 | ⚠️ 原先没有覆盖密钥、`.venv/`、SoftDevice hex —— **已补** |
-| README 与实现是否一致 | ❌ 原 README 写的还是已废弃的 C++ / PlatformIO / LittleFS，**已重写** |
-| LICENSE | ⚠️ 文件是 Apache-2.0，README 却写 MIT —— **已统一为 Apache-2.0**，硬件/文档另加许可 |
-| 硬件资料 | ❌ 仓库里完全没有 PCB 和外壳 —— **已新增 `hardware/`** |
-| Gerber / 坐标 / 原理图 PDF | ❌ 仍缺，需要你在 EasyEDA Pro 里导出（见 §3） |
-| 实拍照片 | ❌ 仍缺，需要你拍照（见 §3） |
+| README 与实现是否一致 | ✅ 已对齐全栈实现（硬件双壳 + Rust 固件 + GPSL0 + Traceveil + AI Agent CLI） |
+| LICENSE | ✅ 代码 Apache-2.0 · 硬件 CERN-OHL-S-2.0 · 文档 CC BY 4.0 |
+| 硬件资料 | ✅ `hardware/` 已补齐：`.epro2` + 3D `.step` + BOM + Slim & 21700 双形态外壳（3MF + STL + 渲染图） |
+| Gerber / 坐标 / 原理图 PDF | ⚠️ 仍待 EasyEDA Pro 一键导出（`hardware/pcb/fabrication/`，见 §3 ①） |
+| 实拍照片 / 实机界面图 | ⚠️ Traceveil 世界迷雾演示截图已补充（`docs/images/traceveil-fog-*.png`）；仍待补充硬件实物实拍（目前已有 3D CAD 渲染图，见 §3 ②） |
 
 ## 2. 本次已经补上的东西
 
@@ -25,21 +25,29 @@
 hardware/
 ├── README.md                        # 硬件总览：规格、框图、制造、许可
 ├── pcb/
-│   ├── gps-tracker-nrf52840-v1.epro2   # EasyEDA Pro 源工程（428 KB）
-│   ├── BOM.csv                      # 从工程网表 + 原理图整理的 13 项物料
-│   ├── preview.webp                 # 工程内嵌预览图
-│   └── README.md                    # 打开方式、导出 Gerber、打样参数、网络表
+│   ├── gps-tracker-nrf52840-v1.epro2   # EasyEDA Pro 源工程（~428 KB）
+│   ├── gps-tracker-nrf52840-v1.step    # 3D PCB STEP 模型（9.1 MB，AP214 彩色）
+│   ├── BOM.csv                         # 从工程网表 + 原理图整理的 13 项物料
+│   ├── preview.webp                    # PCB 2D 布局预览图
+│   ├── preview-3d.png                  # PCB 3D STEP 渲染图
+│   └── README.md                       # 打开方式、导出 Gerber、打样参数、网络表
 ├── enclosure/
-│   ├── case-slim-v1.3mf             # 原始打印工程
-│   ├── case-slim-v1-part-{1,2,3}.stl# 由 3MF 转出的二进制 STL（mm）
-│   ├── preview.png                  # 3MF 缩略图
-│   └── README.md                    # 模型尺寸、打印参数、装壳注意
+│   ├── case-slim-v1.3mf                # Slim 轻薄版 3MF 工程（配软包薄电池）
+│   ├── case-slim-v1-part-{1,2,3}.stl   # Slim 版二进制 STL（mm）
+│   ├── preview.png                     # Slim 版缩略图
+│   ├── case-21700-v1.3mf               # 21700 续航版 3MF 工程（配 21700 电池）
+│   ├── case-21700-v1.stl               # 21700 版二进制 STL（mm）
+│   ├── preview-21700.png               # 21700 版 3D 渲染预览图
+│   └── README.md                       # 双版本尺寸、打印参数、装壳注意
 ├── LICENSE-CERN-OHL-S-2.0.txt
 └── LICENSE-CC-BY-4.0.txt
 
+docs/images/hero-banner.svg          # README 矢量主题头图
+docs/images/traceveil-fog-regions.png # Traceveil 宏观区划热力 LOD 演示截图
+docs/images/traceveil-fog-street.png  # Traceveil 街道精准迷雾演示截图
 docs/hardware/pinout.md              # MCU 引脚 / 模块焊盘 / I2C 地址 / 外设资源
 docs/hardware/assembly.md            # 从裸板到成品的装配与自检
-README.md                            # 重写（中文主 + English 摘要 + 首图）
+README.md                            # 全面重写（全栈架构 + 双外壳 + GPSL0 + Traceveil + AI Agent CLI + English）
 CONTRIBUTING.md  SECURITY.md         # 贡献指南 / 安全策略
 .github/ISSUE_TEMPLATE/              # bug / 硬件求助 两个表单 + config
 .gitignore                           # 密钥、venv、SoftDevice、个人轨迹
@@ -85,8 +93,8 @@ git push origin master --tags
 Release 页面（`gh release create v0.1.0` 或网页操作）附加：
 
 - `gps-tracker-combined.uf2`（Actions 里下载，或本地 `cd tools && uv run gt uf2 build`）
-- `gps-tracker-nrf52840-v1.epro2`
-- `case-slim-v1.zip`（3MF + 3 个 STL）
+- `gps-tracker-nrf52840-v1.epro2` + `gps-tracker-nrf52840-v1.step`
+- `case-slim-v1.zip`（Slim 版 3MF + 3 个 STL）与 `case-21700-v1.zip`（21700 版 3MF + STL）
 - `gerber.zip`（① 导出的）
 - `schematic.pdf`
 - 源码 zip 由 GitHub 自动生成，不用管

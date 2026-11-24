@@ -1,285 +1,521 @@
-# GPS Tracker · nRF52840 低功耗 GPS 轨迹记录器
+<div align="center">
 
-[![License: Apache-2.0](https://img.shields.io/badge/code-Apache--2.0-blue.svg)](LICENSE)
-[![Hardware: CERN-OHL-S-2.0](https://img.shields.io/badge/hardware-CERN--OHL--S--2.0-brightgreen.svg)](hardware/LICENSE-CERN-OHL-S-2.0.txt)
-[![MCU: nRF52840](https://img.shields.io/badge/MCU-nRF52840-orange.svg)](hardware/README.md)
-[![Firmware: Rust + Embassy](https://img.shields.io/badge/firmware-Rust%20%2B%20Embassy-red.svg)](firmware/)
+<img src="docs/images/hero-banner.svg" alt="GPS Tracker · Traceveil" width="100%" />
 
-一个可以自己焊、自己刷、自己改的 GPS 轨迹记录器：**nRF52840 + L76K GNSS + 21700 电池**。
-核心设计是「用加速度计判断你动没动，没动就把 GPS 整段断电」的功耗策略 —— 这也是整机续航能到周级别的原因。
+<h3>从零开源的 nRF52840 低功耗 GPS 记录器 × Traceveil 世界迷雾地图 × AI Agent 足迹档案</h3>
 
-> **一句话**：把它扔在车上/包里，它会自己判断你在不在动，动就记轨迹、不动就彻底关掉 GPS 省电；
-> 回家用浏览器（Web Bluetooth）连上，把轨迹导成 GPX。
-> 全部硬件源文件、固件、前端、工具都在这个仓库里，没有半成品二进制。
+<p>
+  <strong>PCB 源工程 &amp; 3D STEP + 双形态 3D 打印外壳</strong> ·
+  <strong>Rust <code>no_std</code> 异步固件</strong> ·
+  <strong>Apple Find My 防丢</strong> ·
+  <strong>GPSL0 4.63 bits/pt 压缩</strong> ·
+  <strong>Cloudflare Workers 迷雾地图</strong> ·
+  <strong>Agent CLI</strong>
+</p>
+
+<p>
+  <a href="https://github.com/Enter-tainer/gps_tracker/actions/workflows/build-firmware-uf2.yml"><img src="https://img.shields.io/github/actions/workflow/status/Enter-tainer/gps_tracker/build-firmware-uf2.yml?branch=master&style=flat-square&logo=githubactions&label=Firmware%20UF2" alt="Firmware UF2 CI" /></a>
+  <a href="https://github.com/Enter-tainer/gps_tracker/actions/workflows/deploy-frontend.yml"><img src="https://img.shields.io/github/actions/workflow/status/Enter-tainer/gps_tracker/deploy-frontend.yml?branch=master&style=flat-square&logo=githubpages&label=Web%20App" alt="Deploy Frontend CI" /></a>
+  <a href="hardware/README.md"><img src="https://img.shields.io/badge/MCU-nRF52840-f97316?style=flat-square&logo=nordicsemiconductor&logoColor=white" alt="MCU nRF52840" /></a>
+  <a href="firmware/"><img src="https://img.shields.io/badge/Firmware-Rust%20%2B%20Embassy-dc2626?style=flat-square&logo=rust&logoColor=white" alt="Rust + Embassy" /></a>
+  <a href="docs/gpsl0_impl_report.md"><img src="https://img.shields.io/badge/GPSL0-4.63%20bits%2Fpt%20(8.77x)-0ea5e9?style=flat-square" alt="GPSL0 4.63 bits/pt" /></a>
+  <a href="docs/deploy_cloudflare.md"><img src="https://img.shields.io/badge/Cloud-Workers%20%2B%20D1%20%2B%20R2-f59e0b?style=flat-square&logo=cloudflare&logoColor=white" alt="Cloudflare Workers" /></a>
+  <a href="cli/"><img src="https://img.shields.io/badge/Agent-traceveil%20CLI%20%2B%20Skill-8b5cf6?style=flat-square" alt="traceveil CLI" /></a>
+</p>
+
+<p>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/Code-Apache--2.0-3b82f6?style=flat-square" alt="Code License" /></a>
+  <a href="hardware/LICENSE-CERN-OHL-S-2.0.txt"><img src="https://img.shields.io/badge/Hardware-CERN--OHL--S--2.0-10b981?style=flat-square" alt="Hardware License" /></a>
+  <a href="hardware/LICENSE-CC-BY-4.0.txt"><img src="https://img.shields.io/badge/Docs-CC%20BY%204.0-64748b?style=flat-square" alt="Docs License" /></a>
+</p>
+
+<p>
+  <a href="#核心能力一览">核心能力</a> ·
+  <a href="#硬件与双形态外壳">硬件与双外壳</a> ·
+  <a href="#全栈架构与状态机">全栈架构</a> ·
+  <a href="#gpsl0-信息论级轨迹压缩">GPSL0 压缩</a> ·
+  <a href="#traceveil-迷雾地图与私有云">迷雾地图</a> ·
+  <a href="#ai-agent-cli-与-skill">AI Agent CLI</a> ·
+  <a href="#快速开始">快速开始</a> ·
+  <a href="#english">English</a>
+</p>
+
+</div>
 
 ---
 
-## 目录
-
-- [特性](#特性)
-- [硬件](#硬件)
-- [软件架构](#软件架构)
-- [仓库结构](#仓库结构)
-- [快速开始](#快速开始)
-- [使用流程](#使用流程)
-- [隐私与安全](#隐私与安全)
-- [文档](#文档)
-- [项目状态](#项目状态)
-- [贡献](#贡献)
-- [许可](#许可)
-- [English](#english)
+> **一句话定位**：把这枚巴掌大的开源追踪器丢进背包或车里，它会通过加速度计感知运动，**静止时自动给 GNSS 模块整段硬断电、移动时唤醒高精度采样**；回家后用浏览器通过 **Web Bluetooth** 直连导入轨迹，在个人 **Traceveil** 私有云上解锁全球 5 级行政区划与街道「世界迷雾」，还能直接让 AI Agent 用自然语言检索你去过的每一个角落。
 
 ---
 
-## 特性
+## 核心能力一览
 
-**记录**
-- 智能功耗状态机：加速度计判断静止/运动，静止时 GPS 整段断电（S2），运动时 10 s 一个点（S3，HDOP < 2.0）
-- A-GNSS 星历注入：网页端拉取星历 → BLE 灌进设备，室内外冷启动都能明显加速（S5）
-- 自定义 **GPZ** 二进制格式：ZigZag + LEB128 增量压缩，每 64 个增量点插一个全量块，支持 1e-5 / 1e-7 两种精度
-- microSD 存储，FAT 文件系统；插 USB 还能直接当 U 盘读卡（USB Mass Storage）
-- IANA 时区库：GPS 的 UTC 时间直接换算本地时间，OLED 显示的是你所在时区（时区表预生成在 `firmware/data/`）
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>🛠️ 完整开源硬件 · Slim / 21700 双形态</h3>
+      <ul>
+        <li><strong>95 × 30 mm 双层板</strong>：ProMicro nRF52840 + Quectel L76K + 25 mm 陶瓷天线 + LIS3DHTR + BMP280 + 0.96" OLED + microSD，共 13 项精选 BOM。</li>
+        <li><strong>两种可打印外壳</strong>：<strong>Slim 轻薄版</strong>配背面软包薄锂电（接 <code>CN2</code>），<strong>21700 续航版</strong>配板载 <code>U8</code> 电池座装单节 21700 大电芯。</li>
+        <li><strong>工程源文件全公开</strong>：立创 EDA Pro 可编辑源工程（<code>.epro2</code>）、AP214 彩色 3D STEP 模型与两套外壳 <code>.3mf</code> / <code>.stl</code>。</li>
+      </ul>
+    </td>
+    <td width="50%" valign="top">
+      <h3>🦀 纯 Rust <code>no_std</code> 异步固件</h3>
+      <ul>
+        <li><strong>6 态智能功耗状态机</strong>：静止 60 s 后彻底切断 L76K 供电（<code>GPSEN</code> 拉低），周级别便携续航；支持 A-GNSS 星历注入冷启加速。</li>
+        <li><strong>Apple Find My 离线查找</strong>：默认启用 P-224 ANSI X9.63 15 分钟滚动密钥广播，通过优先级调度器与主 BLE 轮替，丢失可借全球 iPhone 网络回溯。</li>
+        <li><strong>三模极简交互</strong>：短按切屏、长按快广播刷盘、超长按秒变 USB U 盘直读 TF 卡；内置离线 IANA 时区库，OLED 直接显示本地时间。</li>
+      </ul>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>🗺️ Traceveil 世界迷雾 &amp; GPSL0 极限压缩</h3>
+      <ul>
+        <li><strong>4 大空间视图</strong>：世界迷雾（Z15/Z21 街道擦除）、足迹热力、全部轨迹、点/框选空间反查，叠加 OpenRailwayMap 铁路与 Mapterhorn 3D 地形。</li>
+        <li><strong>全球 5 级区划 LOD</strong>：缩放自适应切换「国家 → 省/州 → 地市 → 区县 → 街道」，Worker 端动态切片 MVT 矢量瓦片。</li>
+        <li><strong>GPSL0 无损压缩</strong>：面向归档的二阶运动学预测 + 11-bit Range Coder，在 202 万真实点上压至 <strong>4.63 bits/pt</strong>（比 GPZ 小 <strong>8.77×</strong>，比 GPX 小 <strong>~220×</strong>）。</li>
+      </ul>
+    </td>
+    <td width="50%" valign="top">
+      <h3>🤖 Cloudflare 私有云 &amp; AI Agent CLI</h3>
+      <ul>
+        <li><strong>单 Worker 一体化云端</strong>：SPA 控制台 + <code>/api/*</code> + D1 空间索引与轨迹块 + R2 全球迷雾位图，开箱接入 Cloudflare Access 零信任鉴权。</li>
+        <li><strong><code>traceveil</code> Agent CLI</strong>：基于 Cloudflare Access Managed OAuth（PKCE + 自动刷新，零 Bypass 规则），支持远端 <code>--manual</code> 授权。</li>
+        <li><strong>内置 Agent Skill</strong>：直接配合 <code>skills/traceveil/SKILL.md</code>，支持行程停靠分析、GCJ-02/WGS-84 坐标反查与时间定位。</li>
+      </ul>
+    </td>
+  </tr>
+</table>
 
-**取数**
-- BLE NUS 文件传输协议（分块、可断点续传式读写、目录列表、删除）
-- 网页端实时状态：GPS 状态、卫星数、HDOP、电量、传感器、SD 卡状态
-- 轨迹可视化（MapLibre）、一键导出 GPX、海拔/速度剖面
+---
 
-**周边**
-- 0.96" OLED 多页 UI（状态页、GPS 页、Find My 页）
-- 短按 / 长按 / 超长按三级按键逻辑
-- Apple Find My 离线查找（`findmy` feature，默认开启）：P-224 滚动密钥，每 15 分钟轮换，设备丢了也能被附近 iPhone 找到
+## 硬件与双形态外壳
 
-## 硬件
+一套 PCB 兼容**轻薄便携**与**超长续航**两种装机形态——只需在焊接电池接口（`CN2` vs `U8`）时二选一，再打印对应的外壳即可。
 
-![PCB preview](hardware/pcb/preview.webp)
-![Enclosure preview](hardware/enclosure/preview.png)
+<div align="center">
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="hardware/pcb/preview.webp" alt="PCB 2D 布局预览" width="420" /><br />
+      <sub><strong>2 层 PCB 布局（EasyEDA Pro）</strong> · 95.0 × 30.0 mm · 13 项物料</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="hardware/pcb/preview-3d.png" alt="PCB 3D STEP 装配渲染" width="420" /><br />
+      <sub><strong>3D PCB STEP 装配渲染</strong> · <a href="hardware/pcb/gps-tracker-nrf52840-v1.step"><code>gps-tracker-nrf52840-v1.step</code></a></sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="hardware/enclosure/preview.png" alt="Slim 轻薄版外壳" width="340" /><br />
+      <sub><strong>Slim 轻薄版外壳（<code>case-slim-v1</code>）</strong> · 99.7 × 21.9 × 33.2 mm · 软包薄锂电</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="hardware/enclosure/preview-21700.png" alt="21700 续航版外壳" width="340" /><br />
+      <sub><strong>21700 续航版外壳（<code>case-21700-v1</code>）</strong> · 97.2 × 37.8 × 33.2 mm · 21700 电芯</sub>
+    </td>
+  </tr>
+</table>
+</div>
 
-| 项目 | 参数 |
-| --- | --- |
-| 主控 | ProMicro nRF52840 核心板（Cortex-M4F，1 MB Flash / 256 KB RAM） |
-| 定位 | Quectel L76K（GPS/BDS，CASIC 协议，支持 A-GNSS 注入） |
-| 天线 | 25×25×4 mm 陶瓷贴片天线（板载） |
-| 传感器 | LIS3DHTR 加速度计 · BMP280 气压/温度 |
-| 显示 | 0.96" 128×64 OLED（I2C） |
-| 存储 | microSD（SPI） |
-| 电池 | 单节 21700（3.6/3.7 V），USB-C 充电 |
-| PCB | 2 层，**95 × 30 mm**，13 个元件 |
-| 外壳 | 3D 打印（slim v1，STL + 3MF） |
+### Slim 轻薄版 vs 21700 续航版
 
-完整规格、BOM、打样参数、装配步骤：
+| 维度 | Slim 轻薄版 (`case-slim-v1`) | 21700 续航版 (`case-21700-v1`) |
+| --- | --- | --- |
+| **外包络尺寸** | `99.70 × 21.90 × 33.20 mm`（3 个零件） | `97.20 × 37.80 × 33.20 mm`（一体主体） |
+| **供电方案** | 背面**软包薄锂电池**（带保护板） | 单节 **21700 圆柱大电池**（3.6 / 3.7 V） |
+| **PCB 焊接差异** | **不焊 `U8`**，电池接入 1.25 mm 2P 座 **`CN2`** | 焊接板载 21700 电池座 **`U8`** |
+| **外壳文件** | [`case-slim-v1.3mf`](hardware/enclosure/case-slim-v1.3mf) + `part-{1,2,3}.stl` | [`case-21700-v1.3mf`](hardware/enclosure/case-21700-v1.3mf) + [`case-21700-v1.stl`](hardware/enclosure/case-21700-v1.stl) |
+| **适用场景** | 贴身背包、骑行挂袋、极简轻薄携带 | 车载常驻、长途自驾、周级别超长待机 |
 
-- [hardware/README.md](hardware/README.md) —— 硬件总览
-- [hardware/pcb/BOM.csv](hardware/pcb/BOM.csv) —— 13 项物料清单
-- [docs/hardware/pinout.md](docs/hardware/pinout.md) —— 引脚/网络对照表
-- [docs/hardware/assembly.md](docs/hardware/assembly.md) —— 从裸板到成品的装配指南
+### 核心硬件规格
 
-## 软件架构
+| 模块 | 选型与核心参数 | 硬件文档 |
+| --- | --- | --- |
+| **主控 MCU** | ProMicro nRF52840 核心板（Cortex-M4F，1 MB Flash / 256 KB RAM，板载 USB-C 充放电 & UF2） | [pinout.md](docs/hardware/pinout.md) |
+| **GNSS 定位** | Quectel L76K（GPS/BDS，CASIC 二进制 115200 / 5 Hz，A-GNSS 注入，`GPSEN` 硬断电） | [casic_agnss.md](docs/casic_agnss.md) |
+| **板载天线** | `25 × 25 × 4 mm` 陶瓷贴片天线直焊 PCB（无 SMA 座，天线下方严格净空） | [hardware/pcb/README.md](hardware/pcb/README.md) |
+| **传感器** | `LIS3DHTR` 三轴加速度计（I2C `0x18`，运动检测）· `BMP280` 气压/温度（I2C `0x76`） | [hardware/pcb/BOM.csv](hardware/pcb/BOM.csv) |
+| **显示与存储** | 0.96" 128×64 OLED（I2C `0x3C`）· microSD / TF 卡座（SPI3，FAT32 存储 `.gpz`） | [assembly.md](docs/hardware/assembly.md) |
+| **电量检测** | `200 kΩ` / `300 kΩ` 精密分压接 12-bit SAADC（`Vbat = Vadc × 5/3`） | [firmware/src/battery.rs](firmware/src/battery.rs) |
+| **设计源工程** | EasyEDA Pro [`gps-tracker-nrf52840-v1.epro2`](hardware/pcb/gps-tracker-nrf52840-v1.epro2) · 3D 模型 [`gps-tracker-nrf52840-v1.step`](hardware/pcb/gps-tracker-nrf52840-v1.step) | [hardware/README.md](hardware/README.md) |
 
+---
+
+## 全栈架构与状态机
+
+### 端到端数据链路
+
+```mermaid
+flowchart LR
+  subgraph HW["1. 开源硬件 · nRF52840"]
+    ACC["LIS3DHTR 运动检测"]
+    GPS["L76K GNSS · GPSEN 硬断电"]
+    MEM["microSD FAT32 · GPZ V1/V2"]
+    DISP["0.96 OLED · IANA 本地时间"]
+  end
+
+  subgraph FW["2. Rust Embassy 固件"]
+    SM["6 态功耗状态机 S0-S5"]
+    BLE["BLE NUS 分包协议 0x01-0x0E"]
+    FM["Find My P-224 滚动密钥调度"]
+    USB["USB MSC U 盘模式"]
+  end
+
+  subgraph APP["3. Traceveil PWA & 边缘云"]
+    CON["Web Bluetooth 控制台 /"]
+    CODEC["GPSL0 4.63 b/pt 编解码"]
+    CF["Cloudflare Worker · D1 + R2"]
+    MAP["MapLibre 世界迷雾 /map"]
+  end
+
+  subgraph AI["4. AI Agent & 工具"]
+    CLI["traceveil CLI · Managed OAuth"]
+    GT["gt Python CLI · Find My / UF2"]
+  end
+
+  ACC --> SM
+  SM --> GPS --> MEM
+  SM --> DISP
+  MEM --> BLE --> CON
+  MEM --> USB
+  FM -. "15 min 轮换广播" .-> GT
+  CON --> CODEC --> CF --> MAP
+  CF --> CLI
 ```
-┌────────────── 浏览器（React + Web Bluetooth）──────────────┐
-│  连接 / 状态监控 · 文件浏览下载 · GPX 可视化 · A-GNSS 注入  │
-│  Find My 密钥生成与下发                                     │
-└───────────────────────────┬────────────────────────────────┘
-                            │ BLE NUS，244 B 分包
-┌───────────────────────────┴────────────────────────────────┐
-│  nRF52840 固件（Rust + Embassy + SoftDevice S140）          │
-│  ble.rs / protocol.rs ─ 命令分发                            │
-│  gps/ ─ 6 态状态机（S0–S5）+ NMEA 解析 + CASIC 命令          │
-│  storage.rs ─ SD 卡 + GPZ 编码（ZigZag/LEB128）             │
-│  accel.rs ─ 运动检测 → 触发 GPS 上下电                      │
-│  display.rs / button.rs / battery.rs / usb_msc.rs / findmy  │
-└─────────────────────────────────────────────────────────────┘
+
+### GPS 6 态智能功耗状态机
+
+> 完整转换条件与阈值见 [docs/state_spec.md](docs/state_spec.md)，固件实现见 [firmware/src/gps/state_machine.rs](firmware/src/gps/state_machine.rs)。
+
+```mermaid
+stateDiagram-v2
+  [*] --> S0
+  state "S0 初始化外设与时区表" as S0
+  state "S1 搜星定位中 (冷启 90s / 重捕 30s)" as S1
+  state "S2 休眠 · L76K 整段断电" as S2
+  state "S3 活动追踪 · 10s 采样写入 GPZ" as S3
+  state "S4 静止分析 (60s < 0.1g & 速度 < 5km/h)" as S4
+  state "S5 A-GNSS 星历注入 (≤ 70 条)" as S5
+
+  S0 --> S1: 初始化完成
+  S1 --> S3: 获取有效 Fix (HDOP < 2.0)
+  S1 --> S2: 搜星超时 · 断电休眠
+  S3 --> S4: 持续静止 < 0.1g 达 60s
+  S3 --> S1: 信号丢失 · 30s 重捕获
+  S4 --> S3: 检测到移动或车速 ≥ 5km/h
+  S4 --> S2: 确认驻停 · 关闭 GPS 电源
+  S2 --> S1: 加速度唤醒 / BLE 指令 0x0A
+  S1 --> S5: 收到 BLE A-GNSS 数据
+  S2 --> S5: 收到 BLE A-GNSS 数据
+  S5 --> S1: 星历注入完成 · 加速冷启
 ```
 
-- **固件**：`no_std`、无堆，`StaticCell`/栈分配；SoftDevice 占用 RTC0，时间驱动用 RTC1/TIMER1
-- **协议**：`[CMD:1B][LEN:2B LE][payload]`，命令 0x01–0x0B（文件/系统/AGNSS/GPS 唤醒），0x0C–0x0E 为 Find My
-- **格式**：GPZ V1（1e-5 ≈ 1.1 m）/ V2（1e-7 ≈ 1.1 cm）混合块，详见 [docs/delta_compress_gpx.md](docs/delta_compress_gpx.md)
+### 单按键三段交互（`UUSR` · `P1.00`）
+
+| 操作 | 常规模式行为 | USB U 盘模式行为 |
+| --- | --- | --- |
+| **短按** (`< 2 s`) | 唤醒 / 熄灭 OLED 屏幕（重置息屏计时） | 忽略 |
+| **长按** (`2 s – 5 s`) | 触发快速 BLE 广播（方便手机连接）并刷写 SD 缓存 | 退出 U 盘模式并重启回正常模式 |
+| **超长按** (`≥ 5 s`) | 写入启动标志并重启进入 **USB Mass Storage U 盘模式** | — |
+
+---
+
+## GPSL0 信息论级轨迹压缩
+
+设备端实时写入紧凑的流式 **GPZ V1/V2** 格式（`no_std` 无堆，ZigZag + LEB128 一阶差分 + 64 点全量帧），同步至浏览器或云端时再由 **GPSL0**（[`frontend/src/services/gpsl0/`](frontend/src/services/gpsl0/)）完成面向归档的极限压缩。
+
+GPSL0 利用宏观轨迹的牛顿惯性特性：**时间归一化二阶运动学预测** + **6 档速度域上下文建模** + **11-bit 纯整数 LZMA 风格二值 Range Coder** + **块索引 Seek/Sync 解耦预热**。
+
+在 **123 条真实 GPS 轨迹（2,022,295 个点）** 上的全量实测结果（[完整基准报告](docs/gpsl0_impl_report.md)）：
+
+| 编码方案 | 123 轨总大小 | 平均码率 | 相对 GPZ V2 | 坐标精度 / 耗时 |
+| --- | ---: | ---: | ---: | --- |
+| 原始 GPX XML | `257.50 MB` | `~1018 bits/pt` | `0.04×` | 文本冗余 |
+| 紧凑定长二进制 (`14 B/pt`) | `28.31 MB` | `112.0 bits/pt` | `0.36×` | 无损 |
+| **`GPZ V2`（设备端实写格式）** | `10.28 MB` | `40.65 bits/pt` | `1.00×` | 无堆流式写入 |
+| `GPZ V2 + gzip -9` | `3.75 MB` | `14.85 bits/pt` | `2.74×` | 通用压缩 |
+| `GPZ V2 + brotli q11` | `3.29 MB` | `13.02 bits/pt` | `3.12×` | 最强通用压缩 |
+| **`GPSL0 v1`（线上默认归档）** | **`1.17 MB`** | **`4.63 bits/pt`** | **`8.77×`** | **123/123 经纬度比特级无损 · 编码 406 ms / 解码 234 ms** |
+
+> 相比原始 GPX XML 缩减 **~220×**，相比最强通用压缩 `GPZ + brotli q11` 仍领先 **2.81×**；全量 200 万点单线程解码仅需 `234 ms`。
+
+---
+
+## Traceveil 迷雾地图与私有云
+
+前端（[`frontend/`](frontend/)）是一套 **离线优先 PWA + Cloudflare 一体化私有足迹平台**，包含两个无缝切换的路由（切换页面时 Web Bluetooth 不断连）：
+
+<div align="center">
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="docs/images/traceveil-fog-regions.png" alt="Traceveil 宏观区划热力 LOD" width="440" /><br />
+      <sub><strong>宏观区划热力 LOD</strong> · 国 / 省州 / 地市 / 区县分级点亮</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="docs/images/traceveil-fog-street.png" alt="Traceveil 街道精准迷雾" width="440" /><br />
+      <sub><strong>街道精准迷雾</strong> · Z15/Z21 擦除 + 铁路 &amp; 3D 地形叠加</sub>
+    </td>
+  </tr>
+</table>
+<sub>* 以上截图采用虚拟欧洲演示轨迹渲染，不含任何个人真实足迹。</sub>
+</div>
+
+- **`/` 设备同步控制台**（完全离线可用）：BLE 搜索连接 `GPS Tracker`、实时刷新卫星/HDOP/气压/温度/电量/运动状态、浏览与下载 TF 卡 `.gpz` 文件、一键导出 `.gpx`、拉取并注入 A-GNSS 星历、生成/备份/下发 Find My 密钥、触发 USB U 盘模式。
+- **`/map` Traceveil 空间工作区**（按需懒加载 MapLibre 引擎）：
+  - **4 种核心视图**：`世界迷雾`、`足迹热力`、`全部轨迹`、`空间反查`（点半径 / 矩形框检索历史轨与精准到访时段）。
+  - **全球 5 级行政区划 LOD**：缩小看全球国家/省州/地市/区县点亮热度，放大平滑过渡到 **Z15/Z21 街道级精准迷雾擦除**。
+  - **地图叠加能力**：集成 [`@atlas-realm/map`](https://github.com/Enter-tainer/atlas-realm)（OpenRailwayMap 铁路网与设施弹窗、Mapterhorn 3D 地形起伏与等高线）、海拔/速度剖面图、以及一键 WGS-84 / GCJ-02 坐标系纠偏切换。
+- **Cloudflare 单 Worker 全栈架构**（部署指南见 [docs/deploy_cloudflare.md](docs/deploy_cloudflare.md)）：
+  - `ASSETS` 托管静态 PWA + `/api/*` 透传 Worker；
+  - **D1 (`gps_tracks`)** 存储轨迹元数据、空间瓦片/区划倒排索引与内联 `GPSL0` 轨迹块；
+  - **R2 (`gps-tracks`)** 存储全球迷雾位图 `fog/global-fog.bin` 与区划 PMTiles，由 Worker 直接按 XYZ 切片输出带不可变 ETag 缓存的 MVT 矢量瓦片。
+
+---
+
+## AI Agent CLI 与 Skill
+
+仓库内置面向 AI Agent 与终端重度用户的 [`traceveil` CLI](cli/) 与标准 Agent Skill（[`skills/traceveil/SKILL.md`](skills/traceveil/SKILL.md)），原生支持 **Cloudflare Access Managed OAuth**（RFC 9728 / 8414 / 7591 + PKCE）——**无需配置任何 Access Bypass 规则**即可安全访问私有轨迹库（详细配置见 [docs/agent_cli_setup.md](docs/agent_cli_setup.md)）。
+
+```bash
+# 1. 登录受 Cloudflare Access 保护的私有 Traceveil 实例（SSH/无桌面环境可加 --manual）
+traceveil auth login --url https://gps-fog-tracker.<your-team>.workers.dev
+
+# 2. 年度足迹统计 & 空间反查（原生支持国内地图 GCJ-02 坐标自动转 WGS-84 + 精确米级距离）
+traceveil stats --year 2026 --json
+traceveil nearby --lat 31.2304 --lon 121.4737 --radius 500 --coord gcj02 --exact --json
+
+# 3. 回溯特定时间我在哪、点亮了哪些省市县、或结构化分析单条行程的驻留点与速度段
+traceveil where --at 2026-10-03T14:30:00+08:00 --json
+traceveil regions list --level 2 --country CN --sort days --json
+traceveil tracks analyze <track_id> --json
+```
+
+---
+
+## Apple Find My 离线查找
+
+固件默认开启 `findmy` feature（[`firmware/src/findmy.rs`](firmware/src/findmy.rs)），在无蜂窝网络的纯离线硬件上实现与 AirTag 同源的防丢回溯能力：
+
+- **滚动密钥与匿名性**：基于 P-224 曲线与 ANSI X9.63 KDF，根据 GPS 授时每 **15 分钟**轮换一次广播公钥，旁观者无法追踪，仅持有 68 字节主密钥的用户可解码历史报告。
+- **双广播调度**：SoftDevice S140 仅支持单广播句柄，[`adv_scheduler.rs`](firmware/src/adv_scheduler.rs) 实现可连接主 BLE 服务与不可连接 Find My 广播的优先级分时复用。
+- **浏览器配对 & 工具查询**：在网页端一键生成并下发密钥至设备 SD 卡 `/FINDMY.KEY`（记得导出 JSON 备份），配合 `anisette-v3-server` 使用 `uv run gt findmy fetch` 或 `gt fetch` 拉取解密并导出 GPX。
+
+---
 
 ## 仓库结构
 
-```
+```text
 gps_tracker/
-├── firmware/          # Rust 固件（Embassy + nrf-softdevice），主开发分支
-│   ├── src/
-│   ├── data/          # 预生成的时区表（供 timezone.rs 使用）
-│   └── Cargo.toml
-├── frontend/          # React + TypeScript + Vite PWA，Web Bluetooth 上位机
-├── tools/             # uv 管理的 Python 工具包（CLI 名 gt）
-│   └── src/gps_tracker_tools/   # findmy / casic / gps_format / uf2 / gpx
-├── hardware/          # ★ 硬件：PCB 源工程、BOM、3D 外壳、STL
-├── docs/              # 协议、格式、状态机、硬件文档
-├── scripts/           # 时区表/logo 生成脚本
-├── src/               # ⚠ 已废弃的 Arduino C++ 固件，仅存档，勿改
-├── boards/            # ⚠ PlatformIO 板级定义（同上，历史遗留）
-└── platformio.ini     # ⚠ 旧 C++ 构建配置，勿用
+├── hardware/                    # ★ 开源硬件设计（CERN-OHL-S-2.0 / CC BY 4.0）
+│   ├── pcb/
+│   │   ├── gps-tracker-nrf52840-v1.epro2   # EasyEDA Pro 源工程（含原理图 + PCB + 器件库）
+│   │   ├── gps-tracker-nrf52840-v1.step    # AP214 彩色 3D PCB STEP 模型
+│   │   ├── BOM.csv                         # 13 项物料清单
+│   │   ├── preview.webp / preview-3d.png   # 2D 布局图 & 3D STEP 渲染图
+│   │   └── README.md                       # 打样参数、导出步骤与网络表
+│   └── enclosure/
+│       ├── case-slim-v1.3mf / part-*.stl   # Slim 轻薄版外壳（配软包薄电池）+ preview.png
+│       ├── case-21700-v1.3mf / .stl        # 21700 续航版外壳（配 21700 电池）+ preview-21700.png
+│       └── README.md                       # 双版本外壳尺寸、打印参数与装壳说明
+├── firmware/                    # ★ Rust no_std 异步固件（Embassy + SoftDevice S140）
+│   ├── src/                     # 状态机 / GPS / CASIC / GPZ 存储 / BLE / Find My / USB MSC / 时区
+│   └── data/                    # 预生成 IANA 离线时区栅格表
+├── frontend/                    # ★ Traceveil PWA 上位机 + Cloudflare Worker/D1/R2 后端
+│   ├── src/services/gpsl0/      # GPSL0 信息论级轨迹压缩编解码器
+│   ├── src/worker/              # Workers API、Access OIDC 校验、Worker 端 MVT 切片
+│   └── scripts/                 # ETL 导入、区划构建、GPSL0 基准测试与 Cloudflare 同步
+├── cli/                         # ★ traceveil AI Agent CLI（Cloudflare Access Managed OAuth）
+├── skills/traceveil/            # ★ 可直接装入 Coding Agent 的迹线查询 Skill
+├── tools/                       # ★ uv 管理的 Python 工具包（gt CLI：uf2 / findmy / casic / gps）
+├── docs/                        # ★ 协议规范、状态机、硬件引脚与装配、GPSL0 论文级报告、部署指南
+├── scripts/                     # 时区表与 OLED 图标生成脚本
+└── src/ & platformio.ini        # ⚠ 早期废弃的 C++ Arduino 固件（仅存档，请勿使用）
 ```
 
-> 新开发请只用 `firmware/`（Rust）。`src/` 与 `platformio.ini` 是项目早期的 C++ 版本，保留是为了存档。
+---
 
 ## 快速开始
 
-### 1. 固件
+### 1. 硬件打样与打印
+
+1. **PCB 打样**：用 [嘉立创 EDA 专业版](https://pro.lceda.cn/) 打开 [`hardware/pcb/gps-tracker-nrf52840-v1.epro2`](hardware/pcb/gps-tracker-nrf52840-v1.epro2) 导出 Gerber（板厚 1.6 mm，2 层 `95 × 30 mm`，**勿勾阻抗控制**，确认陶瓷天线下方净空无铺铜），按 [`BOM.csv`](hardware/pcb/BOM.csv) 备齐 13 项物料。
+2. **二选一外壳打印**：
+   - 要极简轻薄 → 打印 [`case-slim-v1.3mf`](hardware/enclosure/case-slim-v1.3mf)，PCB 上**不焊 `U8`**，软包薄电池接 `CN2`；
+   - 要周级超长续航 → 打印 [`case-21700-v1.3mf`](hardware/enclosure/case-21700-v1.3mf)，PCB 上**焊接 `U8`** 装 21700 电芯。
+3. **焊接与自检**：按 [装配指南](docs/hardware/assembly.md) 完成焊接与万用表短路排查。
+
+### 2. 编译或刷入固件
+
+> **懒人方式**：仓库已配置 GitHub Actions 自动构建，可直接到 [Build Firmware UF2](https://github.com/Enter-tainer/gps_tracker/actions/workflows/build-firmware-uf2.yml) 下载最新 `gps-tracker-combined.uf2`，**双击设备复位键进入 UF2 U 盘模式拖入即可**（已合并 SoftDevice S140，无需单独刷协议栈）。
+
+本地构建合并 UF2 或通过 SWD 调试烧录：
 
 ```bash
-# 工具链（一次性）
+# 一次性工具链准备
 rustup target add thumbv7em-none-eabihf
 cargo install flip-link probe-rs-tools
 
-cd firmware
-cargo build --release          # 产物在 target/thumbv7em-none-eabihf/release/
-cargo run --release            # 用 probe-rs 经 SWD 烧录
-DEFMT_LOG=info cargo run --release   # 顺便看 RTT 日志
-```
-
-生成可以直接拖进 U 盘（bootloader）的 UF2，包含 SoftDevice 合并：
-
-```bash
+# 方式 A：构建自带 S140 SoftDevice 的合并 UF2（SoftDevice hex 将自动下载）
 cd tools
 uv run gt uf2 build
-# → firmware/target/thumbv7em-none-eabihf/release/gps-tracker-combined.uf2
+# 产物：firmware/target/thumbv7em-none-eabihf/release/gps-tracker-combined.uf2
+
+# 方式 B：SWD 直接烧录并实时查看 defmt RTT 日志
+cd ../firmware
+DEFMT_LOG=info cargo run --release
 ```
 
-> 仓库**不附带** Nordic S140 SoftDevice 的 hex（许可证限制），构建脚本会自动下载。
-> CI 每次推送都会构建 UF2，也可以直接从 Actions 的 artifact 里取。
-
-### 2. 网页上位机
+### 3. 启动 Traceveil 网页上位机 / 部署私有云
 
 ```bash
 cd frontend
 npm install
-npm run dev      # http://localhost:3000
-npm run build    # 产物 dist/
+
+# 本地开发（Web Bluetooth 控制台 + 本地离线预览，http://localhost:3000）
+npm run dev
+
+# （可选）全量部署到自己的 Cloudflare Workers + D1 + R2，详见 docs/deploy_cloudflare.md
+npx wrangler d1 migrations apply gps_tracks --remote
+npm run ingest && npm run sync:cf
+npm run deploy:cf
 ```
 
-推送到 `master` 会自动部署到 GitHub Pages（`.github/workflows/deploy-frontend.yml`）。
-需要 Chrome / Edge 等支持 **Web Bluetooth** 的浏览器（Safari、Firefox 不支持）。
+> Web Bluetooth 需要 **Chrome / Edge / Android Chrome** 等支持蓝牙 API 的浏览器（iOS Safari 暂不支持）。本地或 GitHub Pages 静态版无需后端也可正常连设备、导 GPX、注入星历与本地轨迹预览。
 
-### 3. 命令行工具
+### 4. 安装命令行工具（Agent CLI & 硬件工具）
 
 ```bash
-cd tools
+# 安装 traceveil AI Agent CLI
+cd cli && npm install && npm run build && npm link
+traceveil --help
+
+# 使用 Python 工具链（gt CLI）
+cd ../tools
 uv run gt --help
-uv run gt findmy --help        # Apple Find My 位置报告查询 / GPX 导出
-uv run gt casic --help         # CASIC 协议解析
-uv run gt gps --help           # GPZ 编解码
-uv run gt uf2 build            # 构建合并 UF2
+uv run gt findmy --help   # Apple Find My 报告拉取与 GPX 导出
+uv run gt gps --help      # GPZ 轨迹编解码调试
+uv run gt casic --help    # CASIC 协议抓包解析
 ```
-
-## 使用流程
-
-1. **连上设备**：网页端点「连接设备」→ 选择 `GPS Tracker`。
-2. **看状态**：GPS 状态机（S0–S5）、卫星数、HDOP、电池电压、SD 卡、传感器都会实时刷新。
-3. **灌星历（可选，强烈建议）**：AGNSS 页面拉取星历 → 写入设备，下次冷启动快很多。
-4. **记录**：带着走就行。静止 60 s 后自动进 S2（GPS 断电），有运动再唤醒。
-5. **导出**：文件管理页浏览 `/` 下的 `.gpz` → 下载 → 网页端解码成 GPX（也可用 `gt gps`）。
-6. **USB 模式**：网页端触发后设备重启成 U 盘，直接读 TF 卡（大文件更快）。
-
-## 隐私与安全
-
-这个项目有两处**必须注意**的隐私问题：
-
-- **轨迹就是你的行踪**。分享 `.gpz` / GPX 前先裁剪或用工具做偏移，别把住址、公司发出去。
-- **Find My 密钥 = 设备的私钥**。`keys.json`（68 字节主密钥材料）泄露后别人可以解出设备所有历史位置；
-  `tools/src/gps_tracker_tools/auth.json` 是你的 Apple 账号令牌。这两类文件**已在 `.gitignore` 中排除**，
-  实测也从未进入过提交历史，但**永远不要** `git add -f`。
-- 设备端的 Find My 广告密钥每 15 分钟轮换一次，对旁观者匿名；但拿到主密钥的人可以完整回溯。
-
-硬件安全：21700 锂电请用正规电芯 + 保护板，首次上电串限流；详见 [装配指南](docs/hardware/assembly.md)。
-
-## 文档
-
-| 文档 | 内容 |
-| --- | --- |
-| [docs/state_spec.md](docs/state_spec.md) | GPS 功耗状态机 S0–S5 的完整转移条件与阈值 |
-| [docs/uart_file_proto.md](docs/uart_file_proto.md) | BLE NUS 文件传输协议（命令/响应格式） |
-| [docs/protocol_parity_spec.md](docs/protocol_parity_spec.md) | BLE 协议命令参考与前后端一致性 |
-| [docs/casic_agnss.md](docs/casic_agnss.md) | CASIC 二进制协议与 A-GNSS 注入流程 |
-| [docs/delta_compress_gpx.md](docs/delta_compress_gpx.md) | GPZ V1/V2 格式与增量压缩算法 |
-| [docs/protocol_test_vectors.md](docs/protocol_test_vectors.md) | 协议测试向量 |
-| [docs/hardware/pinout.md](docs/hardware/pinout.md) | 引脚 / 网络 / I2C 地址对照 |
-| [docs/hardware/assembly.md](docs/hardware/assembly.md) | 装配与自检 |
-| [docs/open-source-release.md](docs/open-source-release.md) | 本仓库开源发布清单（还差什么、怎么补） |
-
-## 项目状态
-
-能用的部分（作者自己在用，记录了多条真实轨迹）：
-
-- ✅ 硬件 v1.0（PCB + 外壳）可复现
-- ✅ 固件：状态机、存储、BLE、USB MSC、OLED、按键、电量、（可选）Find My
-- ✅ 网页上位机 + 自动部署
-- ✅ Python 工具链（`gt`）
-
-还差的、欢迎 PR 的部分：
-
-- ⬜ **Gerber / 贴片坐标 / 原理图 PDF 尚未入库**（导出方法已写在 [hardware/pcb/README.md](hardware/pcb/README.md)）
-- ⬜ 实拍照片、装配过程图
-- ⬜ 更多外壳版本（v0 / v1 / v2 / v4 未发布）
-- ⬜ 电池续航实测数据（不同采样间隔/运动模式）
-- ⬜ 固件单元测试（目前硬件相关代码只能上机验证）
-
-## FAQ
-
-**续航多久？**
-作者自用的经验是 1–2 周，具体取决于运动频率和唤醒间隔。静止时 GPS 完全断电，所以「放着不动」几乎不耗电；
-连续记录（一直在走/开车）会明显缩短。
-
-**冷启动多久能定位？**
-室外冷启动最长 90 s（S1 状态超时），热启动 30 s。灌了 A-GNSS 星历后通常几十秒内出点，有历史位置时更快。
-
-**为什么固件从 C++ 迁移到了 Rust？**
-仓库里的 `src/` 是早期的 Arduino/PlatformIO 版本，已废弃。Rust + Embassy 版本（`firmware/`）在功耗管理、
-类型安全和可维护性上都更好，功能已完全覆盖旧版。新开发请只用 `firmware/`。
-
-**网页端需要装软件吗？**
-不需要。任何支持 **Web Bluetooth** 的浏览器都可以（Chrome / Edge / 安卓 Chrome），打开网页即可。
-iOS 的 Safari 不支持 Web Bluetooth，暂时用不了网页端。
-
-**能换别的 GPS 模块吗？**
-可以，但必须是支持 **CASIC 私有协议**的模块（L76K / ATGM336H 系列）。换成纯 NMEA 模块能定位，
-但会失去 A-GNSS 注入和 `PCAS` 配置能力。
-
-**能换成 18650 或别的电池吗？**
-能，注意外壳和电池座尺寸要一起改；分压电阻是 200k/300k，换电池化学体系后电量曲线需要重新标定
-（`firmware/src/battery.rs` 的 `VOLTAGE_POINTS`）。
-
-## 贡献
-
-见 [CONTRIBUTING.md](CONTRIBUTING.md)。安全问题请走 [SECURITY.md](SECURITY.md)，**不要**开 public issue。
-
-## 许可
-
-| 内容 | 许可 |
-| --- | --- |
-| 固件 / 前端 / 工具代码 | [Apache-2.0](LICENSE) |
-| 硬件设计（PCB 工程、外壳、BOM） | [CERN-OHL-S-2.0](hardware/LICENSE-CERN-OHL-S-2.0.txt) |
-| 文档、图片 | [CC BY 4.0](hardware/LICENSE-CC-BY-4.0.txt) |
-
-第三方组件（Embassy、nrf-softdevice、nmea、embedded-sdmmc、MapLibre 等）遵循各自许可；
-Nordic SoftDevice 的二进制不在仓库内，使用需接受 Nordic 的许可协议。
 
 ---
 
-## English
+## 日常使用流程
 
-A DIY, fully open GPS track logger built around **nRF52840 + Quectel L76K + a single 21700 cell**.
+1. **蓝牙连机**：Chrome 打开 Traceveil 首页 `/` → 点击连接 `GPS Tracker`（或长按设备键 2 s 触发快速广播）。
+2. **灌入 A-GNSS 星历（强烈推荐）**：在控制台拉取星历经 BLE 写入设备，大幅缩短室外冷启动搜星时间。
+3. **随身记录**：插好 FAT32 TF 卡直接带走——静止 60 s 自动切入 `S2` 彻底断电省电，移动后自动唤醒恢复 `10 s` 采样。
+4. **同步入库与点亮迷雾**：回家后在浏览器中下载 `.gpz` 文件，本地自动解码为高精度点迹并编码为 **GPSL0** 写入个人 D1/R2 档案库，同时刷新全球迷雾位图与行政区划成就；大批量导出也可长按 5 s 切到 **USB U 盘模式**高速拷贝。
 
-- **Firmware** (Rust, `no_std`, Embassy + SoftDevice S140): 6-state power-management state
-  machine, motion-triggered GPS power gating, A-GNSS injection over CASIC, custom **GPZ**
-  delta-compressed track format on microSD, BLE NUS file transfer, USB mass storage,
-  SSD1306 UI, and optional Apple Find My offline finding (P-224 rolling keys).
-- **Web app** (React + TypeScript + Vite PWA): connects over Web Bluetooth, live status,
-  file browser, GPX export, MapLibre track view, A-GNSS provisioning, Find My key management.
-- **Hardware**: 2-layer 95 × 30 mm board (EasyEDA Pro source project + BOM) and a 3D-printed
-  slim enclosure (3MF + STL). See [hardware/](hardware/README.md).
-- **Tools**: `gt` CLI (uv-managed) for Find My report fetching, CASIC/NMEA parsing, GPZ
-  decode/encode, and UF2 packaging.
+---
 
-Build: `cd firmware && cargo build --release`, `cd frontend && npm run dev`,
-`cd tools && uv run gt uf2 build`. Full instructions above (Chinese) and in
-[docs/](docs/).
+## 隐私与安全
 
-**License**: code Apache-2.0 · hardware CERN-OHL-S-2.0 · docs CC BY 4.0.
+- **位置轨迹极度敏感**：`.gpz` / `.gpx` / `.gpsl0` 包含精确到米的长期行踪，仓库 `.gitignore` 已默认屏蔽 `*.gpz`、`*.gpx`、`local-data/`。分享轨迹前务必对家庭与工作地点裁剪或加偏移。
+- **Find My 主密钥与账号令牌**：`findmy-keys-*.json`（68 字节主密钥材料）与 `tools/src/gps_tracker_tools/auth.json` 均已由 `.gitignore` 排除且从未进入提交历史——**切勿** `git add -f` 提交。
+- **锂电安全**：无论使用 21700 电芯还是背面软包薄锂电，**强烈建议选用带保护板的正规电芯**；`CN2` 接软包电池前务必核对 1.25 mm 端子正负极；首次上电建议配合限流电源（3.8 V / 200 mA）。
 
-**Privacy warning**: track files reveal your whereabouts, and the Find My master key can
-decrypt every location report of your device. Never commit `keys.json` or `auth.json`.
+---
+
+## 文档导航
+
+| 文档 | 内容 |
+| --- | --- |
+| [hardware/README.md](hardware/README.md) · [pcb/](hardware/pcb/README.md) · [enclosure/](hardware/enclosure/README.md) | 硬件总览、打样参数、Slim / 21700 双形态外壳尺寸与打印指南 |
+| [docs/hardware/pinout.md](docs/hardware/pinout.md) · [assembly.md](docs/hardware/assembly.md) | MCU 引脚 / 模块焊盘 / I2C 地址对照、完整焊接装配与自检清单 |
+| [docs/state_spec.md](docs/state_spec.md) | GPS 6 态功耗状态机 `S0–S5` 完整转移条件与阈值 |
+| [docs/uart_file_proto.md](docs/uart_file_proto.md) · [protocol_parity_spec.md](docs/protocol_parity_spec.md) | BLE NUS 二进制协议（`0x01–0x0E`）与前后端一致性规范 |
+| [docs/casic_agnss.md](docs/casic_agnss.md) | CASIC 二进制协议与 A-GNSS 星历注入流程 |
+| [docs/delta_compress_gpx.md](docs/delta_compress_gpx.md) | 设备端 GPZ V1/V2 增量压缩二进制格式 |
+| [docs/gpsl0_design.md](docs/gpsl0_design.md) · [gpsl0_format.md](docs/gpsl0_format.md) · [gpsl0_impl_report.md](docs/gpsl0_impl_report.md) | GPSL0 信息论级轨迹压缩格式设计、规范与 200 万点实测报告 |
+| [docs/deploy_cloudflare.md](docs/deploy_cloudflare.md) · [agent_cli_setup.md](docs/agent_cli_setup.md) | Cloudflare Workers + D1 + R2 部署与 Managed OAuth Agent CLI 配置 |
+| [docs/open-source-release.md](docs/open-source-release.md) | 开源复现自检清单与剩余优化项 |
+
+---
+
+## 项目成熟度与待补清单
+
+目前从**硬件建模到云端与 AI 检索的整套闭环已可用**（作者日常自用，已累计记录 123 条真实轨迹 / 200 万+ 采样点）：
+
+- ✅ **硬件**：95 × 30 mm PCB EasyEDA Pro 源工程、AP214 3D STEP 模型、13 项 BOM、Slim 软包壳 + 21700 续航壳（3MF + STL）
+- ✅ **固件**：Rust + Embassy 6 态功耗管理、CASIC A-GNSS、GPZ 写入、BLE 传输、USB MSC、OLED 本地时区 UI、Apple Find My
+- ✅ **云端与压缩**：Traceveil PWA + 全球 5 级区划 LOD + `@atlas-realm/map` 铁路/地形 + GPSL0 (`4.63 bits/pt`) + Cloudflare 部署
+- ✅ **工具与 Agent**：`traceveil` CLI + `skills/traceveil` Skill + `gt` Python 工具链 + 双路 GitHub Actions CI
+- ⬜ **锦上添花的发布加分项**（欢迎 PR，见 [open-source-release.md](docs/open-source-release.md)）：从 EasyEDA Pro 导出一键下单的 `gerber.zip` / 贴片坐标 / 原理图 PDF；补充实拍成品照与实测续航曲线。
+
+---
+
+## 常见问题
+
+<details>
+<summary><strong>Q1. 实际续航多久？Slim 软包和 21700 怎么选？</strong></summary>
+
+静止时 `GPSEN` 会彻底切断 L76K 电源，所以放置不动的静态耗电极低；实际续航取决于每天移动时长。使用单节 21700（4500–5000 mAh 级）在日常通勤场景下可达 **1–2 周**；如果追求放在小包或口袋里的轻薄体积，选用 `case-slim-v1` + 背面软包薄电池接 `CN2`（注意 Slim 版不要焊 `U8`）。
+
+</details>
+
+<details>
+<summary><strong>Q2. 冷启动需要多久能定位？</strong></summary>
+
+室外空旷环境下 `S1` 冷启动超时上限为 `90 s`，信号丢失重捕获上限为 `30 s`。建议出发前通过网页控制台或手机端注入一次 **A-GNSS 星历**，注入后冷启动出点速度会显著加快。
+
+</details>
+
+<details>
+<summary><strong>Q3. 工程文件里为什么出现 <code>meshtastic nrf52840 prototype</code> 字样？</strong></summary>
+
+那是早期在 EasyEDA Pro 建工程时沿用的模板名称，属于历史命名遗留；本项目硬件**不包含 LoRa 模块**，所有网表与器件均为纯 GPS 轨迹记录器设计。
+
+</details>
+
+<details>
+<summary><strong>Q4. 仓库里的 <code>src/</code> 和 <code>platformio.ini</code> 还需要管吗？</strong></summary>
+
+不需要。`src/` 与 `platformio.ini` 是早期 Arduino C++ 原型代码，现已全面废弃，仅作历史存档保留。全部新开发请只使用 `firmware/` 下的 Rust 工程。
+
+</details>
+
+<details>
+<summary><strong>Q5. 没有买 SWD 调试器能刷固件吗？</strong></summary>
+
+可以。直接下载 GitHub Actions 构建的 `gps-tracker-combined.uf2`（或本地运行 `uv run gt uf2 build`），双击 `URST` 复位键进入 UF2 Bootloader 虚拟 U 盘，把文件拖进去即完成烧录（内含 S140 协议栈）。
+
+</details>
+
+---
+
+## 贡献与许可
+
+欢迎提交 Issue 与 Pull Request，具体规范见 [CONTRIBUTING.md](CONTRIBUTING.md)；安全漏洞请按 [SECURITY.md](SECURITY.md) 私下报告，切勿直接公开提交。
+
+| 内容 | 许可证 |
+| --- | --- |
+| 固件 / 前端 / CLI / Python 工具代码 | [Apache-2.0](LICENSE) |
+| 硬件设计（PCB 源工程、3D STEP、双版本外壳、BOM） | [CERN-OHL-S-2.0](hardware/LICENSE-CERN-OHL-S-2.0.txt) |
+| 文档与渲染图 | [CC BY 4.0](hardware/LICENSE-CC-BY-4.0.txt) |
+
+---
+
+<a id="english"></a>
+
+## English Summary
+
+**GPS Tracker · Traceveil** is a fully open, end-to-end personal GPS logging and spatial geo-archive platform built around **nRF52840 + Quectel L76K**:
+
+- **Open Hardware (`hardware/`)**: 2-layer `95 × 30 mm` PCB (EasyEDA Pro `.epro2`, AP214 full-color 3D `.step`, 13-item BOM) with **two printable enclosures** — **`case-slim-v1`** (`99.7 × 21.9 × 33.2 mm`, flat LiPo pouch cell via `CN2`, omit `U8`) and **`case-21700-v1`** (`97.2 × 37.8 × 33.2 mm`, single 21700 cell in onboard holder `U8`).
+- **Rust `no_std` Firmware (`firmware/`)**: Embassy async runtime + SoftDevice S140; 6-state motion-gated GPS power state machine (`S0–S5`) that hard-cuts power to L76K while stationary; CASIC A-GNSS injection; streaming delta-compressed `GPZ` logging to FAT32 microSD; USB Mass Storage mode; offline IANA timezone lookup; and optional **Apple Find My** P-224 15-minute rolling key offline finding.
+- **GPSL0 Archive Codec (`frontend/src/services/gpsl0/`)**: Time-normalized 2nd-order kinematics predictor + 6-regime context model + 11-bit binary range coder. Benchmarks across **123 real tracks / 2,022,295 points** shrink `257.50 MB` GPX XML (`10.28 MB` GPZ V2) down to **`1.17 MB` (`4.63 bits/pt`, `8.77×` vs GPZ V2)** with **123/123 bit-exact lat/lon reconstruction**.
+- **Traceveil Web App & Edge Cloud (`frontend/`)**: Offline-capable Web Bluetooth console (`/`) + lazy-loaded MapLibre workspace (`/map`) featuring Fog-of-War, heatmaps, spatial proximity search, 5-tier global administrative LOD (`Country → Province → City → District → Z15/Z21 street fog`), OpenRailwayMap & 3D terrain overlays (`@atlas-realm/map`), deployable to a single **Cloudflare Worker + D1 + R2** behind Cloudflare Access.
+- **AI Agent CLI & Skill (`cli/`, `skills/traceveil/`, `tools/`)**: `traceveil` CLI authenticates via **Cloudflare Access Managed OAuth** (PKCE, zero bypass rules) to query travel stats, visited regions, dwell stops, and WGS-84/GCJ-02 spatial proximity; `gt` (`uv`-managed Python CLI) handles UF2 image assembly, Find My report decryption, and CASIC/GPZ inspection.
+
+**Quick build**:
+```bash
+cd tools && uv run gt uf2 build          # Build combined SoftDevice + Rust UF2 firmware
+cd ../frontend && npm install && npm run dev   # Start Traceveil Web Bluetooth console + local UI
+cd ../cli && npm install && npm run build      # Build traceveil AI Agent CLI
+```
+
+**License**: Code [Apache-2.0](LICENSE) · Hardware [CERN-OHL-S-2.0](hardware/LICENSE-CERN-OHL-S-2.0.txt) · Docs [CC BY 4.0](hardware/LICENSE-CC-BY-4.0.txt).

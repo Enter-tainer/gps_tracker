@@ -17,11 +17,12 @@ nRF52840 GPS 轨迹记录器的完整硬件资料：PCB（EasyEDA Pro 源工程�
 | 气压 / 温度 | BMP280（I2C `0x76`，SDO 接地） |
 | 显示 | 0.96" 128×64 OLED，4P I2C 模块（I2C `0x3C`） |
 | 存储 | microSD / TF 卡座（SPI），轨迹以 GPZ 二进制格式保存 |
-| 电池 | 单节 21700 锂电（3.6 / 3.7 V），板载电池座 + 1.25 mm 2P 外接座 |
+| 电池 | 双方案二选一：单节 **21700**（板载电池座 `U8`）或**软包薄锂电池**（`CN2` 1.25 mm 2P 外接座），均支持 USB-C 充电 |
 | 电量检测 | 200 kΩ / 300 kΩ 分压到 ADC：`Vbat = Vadc × 5/3` |
 | 按键 | 复位键 `URST`（接模块 RST）、用户键 `UUSR`（接 `P1.00`，短/长/超长按） |
 | 烧录 / 调试 | USB（UF2 bootloader）或 SWD（`probe-rs`） |
-| PCB | 2 层，95.0 × 30.0 mm，四角 R2 圆角，工程版本 REV 1.0 |
+| PCB | 2 层，95.0 × 30.0 mm，四角 R2 圆角，工程版本 REV 1.0（含 EasyEDA Pro 源工程 + 3D STEP） |
+| 外壳 | 3D 打印双版本：**Slim 轻薄版**（`case-slim-v1`，配软包薄电池） / **21700 续航版**（`case-21700-v1`，配 21700 电池） |
 
 > 工程设计文件内的 Board / Schematic 名称仍为早期模板名 `meshtastic nrf52840 prototype`，
 > 属于历史遗留命名，与本项目硬件功能无关，也不包含 LoRa 模块。
@@ -32,14 +33,19 @@ nRF52840 GPS 轨迹记录器的完整硬件资料：PCB（EasyEDA Pro 源工程�
 hardware/
 ├── pcb/
 │   ├── gps-tracker-nrf52840-v1.epro2   # EasyEDA Pro 源工程（可编辑，含原理图 + PCB + 库）
+│   ├── gps-tracker-nrf52840-v1.step    # 3D PCB STEP 模型（用于 CAD 外壳设计与干涉检查）
 │   ├── BOM.csv                         # 物料清单（13 项）
-│   ├── preview.webp                    # 工程自带预览图
+│   ├── preview.webp                    # PCB 2D 布局预览图
+│   ├── preview-3d.png                  # PCB 3D STEP 渲染预览图
 │   └── README.md                       # 打样 / 导出 Gerber / 下单说明
 ├── enclosure/
-│   ├── case-slim-v1.3mf                # 原始打印工程（3 个实体）
-│   ├── case-slim-v1-part-{1,2,3}.stl   # 从 3MF 转出的二进制 STL（mm）
-│   ├── preview.png                     # 3MF 缩略图
-│   └── README.md                       # 打印参数与装配顺序
+│   ├── case-slim-v1.3mf                # Slim 轻薄版 3MF 工程（3 实体，配软包薄电池）
+│   ├── case-slim-v1-part-{1,2,3}.stl   # Slim 版二进制 STL（mm）
+│   ├── preview.png                     # Slim 版渲染缩略图
+│   ├── case-21700-v1.3mf               # 21700 续航版 Bambu 3MF 工程（配单节 21700）
+│   ├── case-21700-v1.stl               # 21700 版二进制 STL（mm）
+│   ├── preview-21700.png               # 21700 版渲染缩略图
+│   └── README.md                       # 双版本外壳尺寸、打印参数与装配顺序
 ├── LICENSE-CERN-OHL-S-2.0.txt          # 硬件设计许可
 └── LICENSE-CC-BY-4.0.txt               # 文档与图片许可
 ```
@@ -47,9 +53,9 @@ hardware/
 ## 系统框图
 
 ```
-                    ┌──────────────────────────────┐
-   21700 锂电 ──────┤ U8 电池座 / CN2 外接座       │
-        │           └──────────────┬───────────────┘
+                    ┌──────────────────────────────────────────┐
+   21700 / 软包电池 ──┤ U8 电池座 (21700) / CN2 外接座 (Slim)   │
+        │           └──────────────┬───────────────────────────┘
         │ BAT                      │
         ├──── 200k/300k 分压 ── ADC ──┐
         │                             │

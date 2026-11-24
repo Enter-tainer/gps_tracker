@@ -2,13 +2,15 @@
 
 | 文件 | 说明 |
 | --- | --- |
-| `gps-tracker-nrf52840-v1.epro2` | EasyEDA Pro 工程包（ZIP，内含 `.epru` 工程数据 + 预览图），**这是唯一的可编辑源文件** |
+| `gps-tracker-nrf52840-v1.epro2` | EasyEDA Pro 工程包（ZIP，内含 `.epru` 工程数据 + 预览图），**唯一的可编辑 EDA 源文件** |
+| `gps-tracker-nrf52840-v1.step` | 3D PCB 模型（AP214 STEP，含板体、铜皮/焊盘、各器件 3D 装配，用于 CAD 外壳设计与干涉检查） |
 | `BOM.csv` | 13 项物料清单，含型号、封装、备注、已知立创编号 |
-| `preview.webp` | 工程内嵌预览图（EasyEDA 导出） |
+| `preview.webp` | 工程内嵌 2D PCB 布局预览图 |
+| `preview-3d.png` | 由 `gps-tracker-nrf52840-v1.step` 渲染的 3D 装配预览图 |
 
 ## 打开工程
 
-1. 安装 [嘉立创 EDA 专业版 / EasyEDA Pro](https://pro.lceda.cn/)（工程由 4.1.100 版本创建，建议 ≥ 该版本）。
+1. 安装 [嘉立创 EDA 专业版 / EasyEDA Pro](https://pro.lceda.cn/)（最新导出由 4.1.105 版本保存，建议 ≥ 4.1.100 版本）。
 2. 「文件 → 打开 → EasyEDA Pro 工程」，选择 `gps-tracker-nrf52840-v1.epro2`。
    - 该格式是 ZIP 包，也可以自行解压查看其中的 `nrf52840 gps tracker.epru`（逐行 JSON 文本）。
 3. 工程内嵌了全部用到的符号、封装与 3D 模型，**不需要额外安装库**。
@@ -45,9 +47,12 @@
 
 1. **ProMicro nRF52840 模块**是竖贴的方形焊盘（26 pad），务必确认模块版本是 **3.3V / nRF52840**，且 USB-C 朝外壳开孔方向。
 2. **L76K 模块**为 18 pin LGA，注意 1 脚方向；模块与陶瓷天线之间的射频走线尽量短。
-3. **TF 卡座**注意插入方向与外壳卡槽对齐（外壳为 slim 版，卡槽在侧边）。
-4. **按键**为 4 脚贴片（`URST` / `UUSR`），高度约 2 mm 级别，装壳后需能从外壳按键位按到。
-5. **分压电阻** `R5=200k` 在 BAT 侧、`R6=300k` 在 GND 侧，接反会导致电量显示偏高，见 `firmware/src/battery.rs` 注释。
+3. **TF 卡座**注意插入方向与外壳卡槽对齐（卡槽位于板卡一端）。
+4. **电池选型（二选一）**：
+   - 装 **21700 续航版外壳（`case-21700-v1`）** 时，焊接 `U8` 21700 电池座（焊盘面积较大，建议热风 + 烙铁补焊）；
+   - 装 **Slim 轻薄版外壳（`case-slim-v1`）** 时，**不要焊接 `U8`**，将背面软包薄锂电池接入 `CN2`（1.25 mm 2P 座），插电前务必核对正负极。
+5. **按键**为 4 脚贴片（`URST` / `UUSR`），高度约 2 mm 级别，装壳后需能从外壳按键位按到。
+6. **分压电阻** `R5=200k` 在 BAT 侧、`R6=300k` 在 GND 侧，接反会导致电量显示偏高，见 `firmware/src/battery.rs` 注释。
 
 详细步骤见 [docs/hardware/assembly.md](../../docs/hardware/assembly.md)。
 
