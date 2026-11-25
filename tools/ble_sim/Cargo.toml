@@ -1,0 +1,24 @@
+[package]
+name = "ble-sim"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+trouble-host = { version = "0.8.0", features = [
+    "default-packet-pool-mtu-251",
+    "extended-advertising",
+    "peripheral",
+    "gatt",
+    "derive",
+] }
+bt-hci = { version = "0.10", features = ["uuid"] }
+embedded-io = "0.7"
+embassy-futures = "0.1"
+embassy-sync = "0.8"
+embassy-time = { version = "0.5.1", features = ["std", "generic-queue-8"] }
+critical-section = { version = "1", features = ["std"] }
+heapless = "0.9"
+static_cell = "2.1"
+p224 = { version = "0.13", default-features = false, features = ["arithmetic"] }
+sha2 = { version = "0.10", default-features = false }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }

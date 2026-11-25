@@ -21,15 +21,14 @@ use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use embassy_executor::task;
 use embassy_futures::select::{Either, select};
 use embassy_sync::blocking_mutex::{Mutex as CsMutex, raw::CriticalSectionRawMutex};
+use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, Timer};
 use p224::elliptic_curve::ops::Reduce;
 use p224::elliptic_curve::sec1::ToEncodedPoint;
 use p224::{FieldBytes, ProjectivePoint, Scalar};
 use sha2::{Digest, Sha256};
 
-use nrf_softdevice::{RawError, Softdevice, raw};
-
-use crate::adv_scheduler::{ADV_SCHEDULER, ALTERNATION_SECS, AdvPriority};
+use crate::ble::{self, FindMyAdvData};
 use crate::display;
 use crate::storage;
 use crate::system_info::SYSTEM_INFO;
@@ -37,14 +36,10 @@ use crate::system_info::SYSTEM_INFO;
 /// Key rotation interval in seconds (15 minutes).
 const KEY_ROTATION_SECS: u64 = 900;
 
-/// BLE advertising interval in units of 0.625ms.
-/// 2000ms balances discoverability and power consumption.
-const FINDMY_ADV_INTERVAL_UNITS: u32 = 3200;
-
 /// Enable/disable Find My advertising at runtime.
 static FINDMY_ENABLED: AtomicBool = AtomicBool::new(false);
 static FINDMY_DIAG_STATE: AtomicU8 = AtomicU8::new(FindMyDiagState::Disabled as u8);
-static FINDMY_ADV_HANDLE: AtomicU8 = AtomicU8::new(raw::BLE_GAP_ADV_SET_HANDLE_NOT_SET as u8);
+static FINDMY_WAKE_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 /// Master key material. Set once during initialization.
 struct MasterKeys {
@@ -77,6 +72,7 @@ static SK_CACHE: CsMutex<CriticalSectionRawMutex, RefCell<SkCache>> =
 
 #[repr(u8)]
 #[derive(Clone, Copy, Eq, PartialEq)]
+#[allow(dead_code)]
 pub enum FindMyDiagState {
     Disabled = 0,
     WaitingGpsTime = 1,
@@ -111,53 +107,6 @@ fn set_diag_state(state: FindMyDiagState) {
 pub fn diag_state() -> FindMyDiagState {
     let raw = FINDMY_DIAG_STATE.load(Ordering::Acquire);
     FindMyDiagState::from_raw(raw).unwrap_or(FindMyDiagState::Disabled)
-}
-
-fn configure_adv_set(
-    adv_data: &raw::ble_gap_adv_data_t,
-    adv_params: &raw::ble_gap_adv_params_t,
-) -> Result<u8, RawError> {
-    let mut handle = FINDMY_ADV_HANDLE.load(Ordering::Acquire);
-    let result = unsafe {
-        RawError::convert(raw::sd_ble_gap_adv_set_configure(
-            &mut handle,
-            adv_data as *const _,
-            adv_params as *const _,
-        ))
-    };
-    match result {
-        Ok(()) => {
-            FINDMY_ADV_HANDLE.store(handle, Ordering::Release);
-            Ok(handle)
-        }
-        // Single advertising set device: if no free handle, reconfigure handle 0.
-        Err(RawError::NoMem) => {
-            handle = 0;
-            unsafe {
-                RawError::convert(raw::sd_ble_gap_adv_set_configure(
-                    &mut handle,
-                    adv_data as *const _,
-                    adv_params as *const _,
-                ))?;
-            }
-            FINDMY_ADV_HANDLE.store(handle, Ordering::Release);
-            Ok(handle)
-        }
-        // Handle became stale; request a fresh one.
-        Err(RawError::BleInvalidAdvHandle) => {
-            handle = raw::BLE_GAP_ADV_SET_HANDLE_NOT_SET as u8;
-            unsafe {
-                RawError::convert(raw::sd_ble_gap_adv_set_configure(
-                    &mut handle,
-                    adv_data as *const _,
-                    adv_params as *const _,
-                ))?;
-            }
-            FINDMY_ADV_HANDLE.store(handle, Ordering::Release);
-            Ok(handle)
-        }
-        Err(e) => Err(e),
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -488,6 +437,7 @@ pub fn init(private_key: &[u8; 28], symmetric_key: &[u8; 32], epoch: u64) {
     SK_CACHE.lock(|cell| {
         cell.borrow_mut().valid = false;
     });
+    FINDMY_WAKE_SIGNAL.signal(());
 }
 
 /// Load SK cache from SD card. Call after `init()` to accelerate cold start.
@@ -507,7 +457,9 @@ pub fn set_enabled(enabled: bool) {
         set_diag_state(FindMyDiagState::WaitingGpsTime);
     } else {
         set_diag_state(FindMyDiagState::Disabled);
+        ble::set_findmy_adv(None);
     }
+    FINDMY_WAKE_SIGNAL.signal(());
 }
 
 pub fn is_enabled() -> bool {
@@ -553,13 +505,11 @@ async fn adv_data_for_unix(unix_ts: u64) -> Option<([u8; 31], [u8; 6], u32)> {
 
 /// Background task: Find My BLE advertiser with GPS-time-based key rotation.
 ///
-/// Waits for initial GPS time to establish anchor, then advertises with rolling keys.
-/// After first sync, if GPS time is temporarily unavailable, unix time is estimated
-/// from monotonic uptime and the last GPS timestamp.
-/// Key rotation happens at 15-minute boundaries aligned to the epoch.
-/// Uses `AdvScheduler` to coordinate with main BLE advertising.
+/// Waits for initial GPS time to establish anchor, then publishes rolling Find My
+/// advertisement payloads to `crate::ble` so `nrf-sdc` broadcasts Find My
+/// concurrently on advertising set 1 alongside main NUS BLE on set 0.
 #[task]
-pub async fn findmy_task(_sd: &'static Softdevice) {
+pub async fn findmy_task() {
     defmt::info!("FindMy: task started, waiting for enable + GPS time");
     set_diag_state(FindMyDiagState::Disabled);
     let mut time_anchor: Option<TimeAnchor> = None;
@@ -567,8 +517,10 @@ pub async fn findmy_task(_sd: &'static Softdevice) {
     loop {
         // Wait until enabled
         while !is_enabled() {
+            ble::set_findmy_adv(None);
+            display::send_command(display::DisplayCommand::ClearFindMyAddress);
             set_diag_state(FindMyDiagState::Disabled);
-            Timer::after(Duration::from_secs(1)).await;
+            FINDMY_WAKE_SIGNAL.wait().await;
         }
 
         // Wait for initial time anchor and epoch reachability.
@@ -582,7 +534,9 @@ pub async fn findmy_task(_sd: &'static Softdevice) {
                     break c;
                 }
             }
-            Timer::after(Duration::from_secs(5)).await;
+            match select(FINDMY_WAKE_SIGNAL.wait(), Timer::after(Duration::from_secs(5))).await {
+                Either::First(()) | Either::Second(()) => {}
+            }
         };
 
         if !is_enabled() {
@@ -594,29 +548,17 @@ pub async fn findmy_task(_sd: &'static Softdevice) {
         save_sk_cache_to_sd().await;
 
         let mut current_counter = counter;
+        let mut last_published_counter: Option<u32> = None;
 
         // Main advertising loop
-        loop {
-            if !is_enabled() {
-                break;
-            }
-
-            // Acquire advertising resource (blocks if main BLE holds it).
-            set_diag_state(FindMyDiagState::WaitingBleIdle);
-            let guard = ADV_SCHEDULER.acquire(AdvPriority::FindMyAdv).await;
-
-            if !is_enabled() {
-                drop(guard);
-                break;
-            }
-
+        while is_enabled() {
             let unix_ts = match unix_ts_with_fallback(&mut time_anchor).await {
                 Some(ts) => ts,
                 None => {
+                    ble::set_findmy_adv(None);
                     set_diag_state(FindMyDiagState::WaitingGpsTime);
                     defmt::warn!("FindMy: waiting for initial GPS time");
-                    drop(guard);
-                    Timer::after(Duration::from_secs(10)).await;
+                    let _ = select(FINDMY_WAKE_SIGNAL.wait(), Timer::after(Duration::from_secs(10))).await;
                     continue;
                 }
             };
@@ -624,10 +566,10 @@ pub async fn findmy_task(_sd: &'static Softdevice) {
             let (adv_payload, ble_addr, new_counter) = match adv_data_for_unix(unix_ts).await {
                 Some(d) => d,
                 None => {
+                    ble::set_findmy_adv(None);
                     set_diag_state(FindMyDiagState::WaitingGpsTime);
                     defmt::warn!("FindMy: unix time before epoch, retrying in 10s");
-                    drop(guard);
-                    Timer::after(Duration::from_secs(10)).await;
+                    let _ = select(FINDMY_WAKE_SIGNAL.wait(), Timer::after(Duration::from_secs(10))).await;
                     continue;
                 }
             };
@@ -640,103 +582,27 @@ pub async fn findmy_task(_sd: &'static Softdevice) {
                 save_sk_cache_to_sd().await;
             }
 
-            // Save original BLE address before overriding
-            let mut orig_addr = raw::ble_gap_addr_t {
-                _bitfield_1: raw::ble_gap_addr_t::new_bitfield_1(0, 0),
-                addr: [0u8; 6],
-            };
-            let _ = unsafe { raw::sd_ble_gap_addr_get(&mut orig_addr) };
-
-            // Set Find My BLE address
-            let addr = raw::ble_gap_addr_t {
-                _bitfield_1: raw::ble_gap_addr_t::new_bitfield_1(
-                    0,
-                    raw::BLE_GAP_ADDR_TYPE_RANDOM_STATIC as u8,
-                ),
-                addr: ble_addr,
-            };
-            if let Err(e) = RawError::convert(unsafe { raw::sd_ble_gap_addr_set(&addr) }) {
-                defmt::warn!("FindMy: set addr failed: {:?}", e);
-                set_diag_state(FindMyDiagState::SetAddrFailed);
-                drop(guard);
-                Timer::after(Duration::from_secs(5)).await;
-                continue;
+            if last_published_counter != Some(new_counter) {
+                ble::set_findmy_adv(Some(FindMyAdvData {
+                    payload: adv_payload,
+                    addr: ble_addr,
+                }));
+                last_published_counter = Some(new_counter);
+                defmt::info!("FindMy: advertising concurrently (counter={})", current_counter);
             }
-
-            // Configure and start non-connectable advertising
-            // Safety: zeroed base is correct for this FFI struct (all-zeros = valid defaults).
-            let adv_params = raw::ble_gap_adv_params_t {
-                properties: raw::ble_gap_adv_properties_t {
-                    type_: raw::BLE_GAP_ADV_TYPE_NONCONNECTABLE_NONSCANNABLE_UNDIRECTED as u8,
-                    ..unsafe { core::mem::zeroed() }
-                },
-                interval: FINDMY_ADV_INTERVAL_UNITS,
-                duration: 0,
-                filter_policy: raw::BLE_GAP_ADV_FP_ANY as u8,
-                primary_phy: raw::BLE_GAP_PHY_1MBPS as u8,
-                ..unsafe { core::mem::zeroed() }
-            };
-
-            let adv_data = raw::ble_gap_adv_data_t {
-                adv_data: raw::ble_data_t {
-                    p_data: adv_payload.as_ptr() as *mut u8,
-                    len: adv_payload.len() as u16,
-                },
-                scan_rsp_data: raw::ble_data_t {
-                    p_data: core::ptr::null_mut(),
-                    len: 0,
-                },
-            };
-
-            let adv_handle = match configure_adv_set(&adv_data, &adv_params) {
-                Ok(h) => h,
-                Err(e) => {
-                    defmt::warn!("FindMy: adv configure failed: {:?}", e);
-                    set_diag_state(FindMyDiagState::AdvConfigureFailed);
-                    let _ = unsafe { raw::sd_ble_gap_addr_set(&orig_addr) };
-                    drop(guard);
-                    Timer::after(Duration::from_secs(5)).await;
-                    continue;
-                }
-            };
-
-            if let Err(e) = RawError::convert(unsafe {
-                raw::sd_ble_gap_adv_start(adv_handle, raw::BLE_CONN_CFG_TAG_DEFAULT as u8)
-            }) {
-                defmt::warn!("FindMy: adv start failed: {:?}", e);
-                set_diag_state(FindMyDiagState::AdvStartFailed);
-                let _ = unsafe { raw::sd_ble_gap_addr_set(&orig_addr) };
-                drop(guard);
-                Timer::after(Duration::from_secs(5)).await;
-                continue;
-            }
-
             set_diag_state(FindMyDiagState::Advertising);
-            defmt::info!("FindMy: advertising (counter={})", current_counter);
 
-            // Wait until: preempted by main BLE, yield slice expires, or
-            // rotation timer fires.
-            let sleep_secs =
-                secs_until_next_rotation_from_unix(unix_ts).unwrap_or(KEY_ROTATION_SECS);
-            let adv_secs = core::cmp::min(sleep_secs + 1, ALTERNATION_SECS);
-            let rotation_timer = Timer::after(Duration::from_secs(adv_secs));
-
-            match select(guard.wait_preempted(), rotation_timer).await {
-                Either::First(()) => {
-                    // Preempted by main BLE — stop advertising and yield.
-                    defmt::info!("FindMy: preempted by main BLE");
-                }
-                Either::Second(()) => {
-                    // Rotation timer expired — normal cycle end.
-                }
-            }
-
-            // Stop advertising and restore original address.
-            let _ = RawError::convert(unsafe { raw::sd_ble_gap_adv_stop(adv_handle) });
-            let _ = unsafe { raw::sd_ble_gap_addr_set(&orig_addr) };
-            drop(guard);
+            let sleep_secs = secs_until_next_rotation_from_unix(unix_ts)
+                .unwrap_or(KEY_ROTATION_SECS)
+                .saturating_add(1);
+            let _ = select(
+                FINDMY_WAKE_SIGNAL.wait(),
+                Timer::after(Duration::from_secs(sleep_secs)),
+            )
+            .await;
         }
 
+        ble::set_findmy_adv(None);
         display::send_command(display::DisplayCommand::ClearFindMyAddress);
         set_diag_state(FindMyDiagState::Disabled);
         defmt::info!("FindMy: disabled");

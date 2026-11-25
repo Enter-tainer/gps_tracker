@@ -9,7 +9,6 @@ use embassy_nrf::usb::vbus_detect::{SoftwareVbusDetect, VbusDetect};
 use embassy_nrf::Peri;
 use embassy_time::Timer;
 use embedded_sdmmc::{Block, BlockDevice, BlockIdx};
-use nrf_softdevice::{raw, RawError};
 use nrf_pac as pac;
 use nrf_usbd::Usbd;
 use static_cell::StaticCell;
@@ -28,7 +27,6 @@ const USB_PID: u16 = 0x4001;
 const MAX_PACKET_SIZE: u16 = 64;
 const MSC_BUFFER_SIZE: usize = 512;
 const USB_POWER_READY_TIMEOUT_MS: u64 = 200;
-const USB_HFCLK_POLL_MS: u64 = 1;
 const READ_AHEAD_BLOCKS: usize = 8;
 
 const SENSE_KEY_NO_SENSE: u8 = 0x00;
@@ -69,19 +67,6 @@ pub fn init_vbus() -> &'static SoftwareVbusDetect {
     USB_VBUS.init(SoftwareVbusDetect::new(false, false))
 }
 
-async fn wait_hfclk_running() {
-    loop {
-        let mut running = 0u32;
-        if RawError::convert(unsafe { raw::sd_clock_hfclk_is_running(&mut running as *mut _) })
-            .is_ok()
-            && running != 0
-        {
-            break;
-        }
-        Timer::after_millis(USB_HFCLK_POLL_MS).await;
-    }
-}
-
 #[task]
 pub async fn usb_msc_task(usbd: Peri<'static, peripherals::USBD>, vbus: &'static SoftwareVbusDetect) {
     defmt::info!("USB MSC task start");
@@ -109,8 +94,9 @@ pub async fn usb_msc_task(usbd: Peri<'static, peripherals::USBD>, vbus: &'static
         }
 
         defmt::info!("USB power ready");
-        let _ = unsafe { raw::sd_clock_hfclk_request() };
-        wait_hfclk_running().await;
+        if let Err(err) = nrf_mpsl::Hfclk::wait().await {
+            warn!("USB HFCLK wait failed: {:?}", err);
+        }
 
         if usb_dev.is_none() {
             let buf = usb_buf.take().unwrap();

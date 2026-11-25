@@ -72,6 +72,12 @@ impl FileTransferProtocol {
         &self.response[..len]
     }
 
+    pub fn reset(&mut self) {
+        self.reset_state();
+        self.agnss_len = 0;
+        self.agnss_write_in_progress = false;
+    }
+
     pub async fn push_byte(&mut self, byte: u8) -> Option<usize> {
         match self.cmd_state {
             CommandState::WaitCmdId => {
@@ -153,9 +159,7 @@ impl FileTransferProtocol {
         if self.cmd_id == CMD_CLOSE_FILE {
             let _ = storage::close_file().await;
         } else if self.cmd_id == CMD_DELETE_FILE {
-            let path_len = payload.get(0).copied().unwrap_or(0) as usize;
-            let path_len = core::cmp::min(path_len, payload_len.saturating_sub(1));
-            let path = &payload[1..1 + path_len];
+            let path = extract_path(payload);
             let _ = storage::delete_file(path).await;
         }
 
@@ -164,10 +168,7 @@ impl FileTransferProtocol {
     }
 
     async fn handle_list_dir(&mut self, payload: &[u8]) -> Option<usize> {
-        let payload_len = payload.len();
-        let path_len = payload.get(0).copied().unwrap_or(0) as usize;
-        let path_len = core::cmp::min(path_len, payload_len.saturating_sub(1));
-        let path = &payload[1..1 + path_len];
+        let path = extract_path(payload);
 
         match storage::list_dir_next(path).await {
             storage::ListDirOutcome::Entry {
@@ -207,10 +208,7 @@ impl FileTransferProtocol {
     }
 
     async fn handle_open_file(&mut self, payload: &[u8]) -> Option<usize> {
-        let payload_len = payload.len();
-        let path_len = payload.get(0).copied().unwrap_or(0) as usize;
-        let path_len = core::cmp::min(path_len, payload_len.saturating_sub(1));
-        let path = &payload[1..1 + path_len];
+        let path = extract_path(payload);
 
         let Some(size) = storage::open_file(path).await else {
             return Some(self.encode_empty_response());
@@ -431,4 +429,12 @@ impl FileTransferProtocol {
         self.response[1] = 0;
         2
     }
+}
+
+fn extract_path(payload: &[u8]) -> &[u8] {
+    let Some((&raw_len, rest)) = payload.split_first() else {
+        return &[];
+    };
+    let path_len = core::cmp::min(raw_len as usize, rest.len());
+    &rest[..path_len]
 }
