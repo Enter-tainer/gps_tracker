@@ -201,11 +201,11 @@ GPS_RST (M1.P0.02) ──→ U4.pin9 RESET_N
 | SDA | 脚4 ↔ ACC_SDA | 脚6 ↔ ACC_SDA |
 | CS（I²C 模式） | 脚2 → 3.3V_AON | 脚8 → 3.3V_AON |
 | **SA0（地址）** | 脚3 → **3.3V_AON**（0x19） | 脚7 → **GND**（0x18） |
-| INT1 | 脚12 → ACC_INT1 | 脚10 → ACC_INT1 |
+| INT1 | 脚12 → ACC_INT1 | **脚11** → ACC_INT1 |
 | INT2 | 脚11 悬空 | 脚9 悬空 |
 | VDD | 脚9 → 3.3V_AON | 脚14 → 3.3V_AON |
 | VDD_IO | 脚10 → 3.3V_AON | 脚1 → 3.3V_AON |
-| GND | 脚6 / 脚7(RES 必须接 GND) / 脚8 | 脚5 / 脚12 |
+| GND | 脚6 / **脚7 RES 必须接 GND** / 脚8 | 脚5 / **脚10 RES 必须接 GND** / 脚12 |
 | 退耦 | C5 100nF + C10 10µF 紧贴脚9 | 共用 C5 + C10 |
 
 两颗地址天然不同（0x19 / 0x18），固件探测两个地址即可自动识别。

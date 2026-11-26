@@ -40,8 +40,8 @@
         "name": "TraceveilV2",
         "board": "408d68e1e7b1c65e",
         "source": "",
-        "version": "1795713450568",
-        "updateTime": 1795713450568
+        "version": "1795715924731",
+        "updateTime": 1795715924731
       },
       "c66ffdfc2e464bbf810a7c026dc23547": {
         "uuid": "c66ffdfc2e464bbf810a7c026dc23547",
@@ -78,6 +78,15 @@
         "source": "",
         "version": "1795713450568",
         "updateTime": 1795713450568
+      },
+      "c691791b117ccf97": {
+        "uuid": "c691791b117ccf97",
+        "title": "P10",
+        "schematic_uuid": "5d0cea22eca72c28",
+        "zIndex": 15,
+        "source": "",
+        "version": "1795715924731",
+        "updateTime": 1795715924731
       }
     },
     "pcbs": {
