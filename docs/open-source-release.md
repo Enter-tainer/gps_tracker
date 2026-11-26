@@ -132,8 +132,8 @@ Release 说明里写清：**刷 UF2 不需要另装 SoftDevice**、电池规格�
   embassy-rs / tinygo 的镜像下载。使用者需自行接受 Nordic 的许可。
 - **`uf2conv.py` / `uf2families.json`**：来自 Microsoft 的 [UF2](https://github.com/microsoft/uf2) 工具（MIT），
   入仓库时没有版权头。建议在两个文件头补一段来源说明 + MIT 声明，避免被人当作本项目原创。
-- **`src/`、`platformio.ini`、`boards/`、`extra_script.py`**：早期 Arduino/PlatformIO 版本，保留为存档。
-  如果里面混有第三方库代码，建议单独加 `src/README.md` 说明「已废弃，可能含第三方代码」。
+- **`src/`、`platformio.ini`、`boards/`、`extra_script.py`**：早期 Arduino/PlatformIO 版本，**已从仓库删除**，
+  只保留在 git 历史里。随文件删除不再涉及分发；需要审计旧代码请 checkout 旧提交。
 - **工程内 Board 名称** `meshtastic nrf52840 prototype`：只是模板命名，已在新文档里注明，避免误解为
   Meshtastic 衍生设计（本板没有 LoRa 模块）。
 
