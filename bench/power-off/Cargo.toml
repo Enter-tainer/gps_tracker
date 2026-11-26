@@ -1,0 +1,23 @@
+[package]
+name = "power-off"
+version = "0.1.0"
+edition = "2021"
+description = "Throwaway nRF52840 firmware: kill the 3V3 rail, then sleep forever"
+publish = false
+
+[dependencies]
+cortex-m = "0.7"
+cortex-m-rt = "0.7"
+nrf-pac = { version = "0.4.0", features = ["nrf52840"] }
+
+# 只跑一次的东西，体积/速度都不重要，只要别把 LTO 关掉导致代码膨胀。
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+overflow-checks = false
+debug = true
+
+[profile.dev]
+opt-level = "s"
+debug = true

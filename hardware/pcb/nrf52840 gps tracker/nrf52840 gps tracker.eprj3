@@ -1,0 +1,101 @@
+{
+  "name": "nrf52840 gps tracker",
+  "owner_uuid": "38b685a618ed470192e2e0c823507065",
+  "creator_uuid": "38b685a618ed470192e2e0c823507065",
+  "created_at": "2026-11-25 20:46:47",
+  "updated_at": "2026-11-25 20:46:47",
+  "modifier_uuid": "38b685a618ed470192e2e0c823507065",
+  "content": "",
+  "archive": false,
+  "cbb_project": 0,
+  "thumb": "",
+  "ticket": 1,
+  "g_ticket": 1,
+  "boards": [],
+  "block_symbol_attrs_groups": {},
+  "default_sheet": "f34187f4480e822e",
+  "branch_uuid": "",
+  "pcb_count": 0,
+  "format": "folder",
+  "config": {
+    "defaultSheet": "f34187f4480e822e",
+    "settings": {}
+  },
+  "profile": {
+    "boards": {
+      "3aaa7d8a48fbca08": {
+        "uuid": "3aaa7d8a48fbca08",
+        "title": "meshtastic nrf52840 prototype",
+        "zIndex": 1
+      },
+      "408d68e1e7b1c65e": {
+        "uuid": "408d68e1e7b1c65e",
+        "title": "Board1",
+        "zIndex": 2
+      }
+    },
+    "schematics": {
+      "5d0cea22eca72c28": {
+        "uuid": "5d0cea22eca72c28",
+        "name": "TraceveilV2",
+        "board": "408d68e1e7b1c65e",
+        "source": "",
+        "version": "1795709647743",
+        "updateTime": 1795709647743
+      },
+      "c66ffdfc2e464bbf810a7c026dc23547": {
+        "uuid": "c66ffdfc2e464bbf810a7c026dc23547",
+        "name": "v1-meshtastic-nrf52840",
+        "board": "3aaa7d8a48fbca08",
+        "source": "",
+        "version": "1795613151868",
+        "updateTime": 1795613151868
+      }
+    },
+    "sheets": {
+      "44bcaf4846314388a9b7bb158bcb0d80": {
+        "uuid": "44bcaf4846314388a9b7bb158bcb0d80",
+        "title": "Sheet_1",
+        "schematic_uuid": "c66ffdfc2e464bbf810a7c026dc23547",
+        "zIndex": 1,
+        "version": "1757865456000",
+        "updateTime": 1757865456000
+      },
+      "3020d605fda2442a": {
+        "uuid": "3020d605fda2442a",
+        "title": "P8",
+        "schematic_uuid": "5d0cea22eca72c28",
+        "zIndex": 13,
+        "source": "",
+        "version": "1795709644786",
+        "updateTime": 1795709644786
+      }
+    },
+    "pcbs": {
+      "6c5a30410389ff37": {
+        "uuid": "6c5a30410389ff37",
+        "title": "PCB1",
+        "board": "408d68e1e7b1c65e",
+        "parent_uuid": "",
+        "source": "",
+        "version": "1795698961267",
+        "updateTime": 1795698961267
+      },
+      "6913e0292d4d4a57b1e40cac7c67ece0": {
+        "uuid": "6913e0292d4d4a57b1e40cac7c67ece0",
+        "title": "PCB_meshtastic nrf52840 prototype",
+        "board": "3aaa7d8a48fbca08",
+        "parent_uuid": "",
+        "version": "1776345372295",
+        "updateTime": 1776345372295
+      }
+    },
+    "panels": {},
+    "blockSymbols": {},
+    "owner": {
+      "uuid": "38b685a618ed470192e2e0c823507065"
+    },
+    "simSchematics": {},
+    "simulations": {}
+  }
+}

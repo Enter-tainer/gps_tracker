@@ -2,7 +2,7 @@
 
 | 文件 | 说明 |
 | --- | --- |
-| `gps-tracker-nrf52840-v1.epro2` | EasyEDA Pro 工程包（ZIP，内含 `.epru` 工程数据 + 预览图），**唯一的可编辑 EDA 源文件** |
+| `gps-tracker-nrf52840-v1.epro2` | v1 工程包（ZIP 单文件，含 `.epru` 工程数据 + 预览图）。**v1 已定版**，新的 v2.1 工程见下方 `.eprj3` 目录 |
 | `gps-tracker-nrf52840-v1.step` | 3D PCB 模型（AP214 STEP，含板体、铜皮/焊盘、各器件 3D 装配，用于 CAD 外壳设计与干涉检查） |
 | `BOM.csv` | 13 项物料清单，含型号、封装、备注、已知立创编号 |
 | `preview.webp` | 工程内嵌 2D PCB 布局预览图 |
@@ -80,8 +80,68 @@ SPI ：SCK  MOSI  MISO  CS
   - `U4 BMP280` 不要换成 BME280（地址相同但寄存器/校准不同，固件不兼容）；
   - `U7` 必须支持 **CASIC 协议**（L76K / ATGM336H 系列），换成纯 NMEA 模块会丢掉 A-GNSS 注入功能。
 
-## 版本记录
+## v2.1 硬件改版（当前工作区）
 
-| 版本 | 说明 |
-| --- | --- |
-| v1.0 (REV 1.0, 2024-10) | 首个可工作的完整版本：nRF52840 + L76K + LIS3DHTR + BMP280 + OLED + microSD + 21700 |
+**设计依据：[`docs/design-v2.1-final.md`](../../docs/design-v2.1-final.md)** —— 架构、BOM、逐器件连接、
+网络清单、固件约束、PCB 叠层与天线处理全部在那份文档里，本文件不重复。
+
+v1（`gps-tracker-nrf52840-v1.epro2`，已打样验证）保留作对照，**不再修改**。
+
+### 与 v1 的主要差异
+
+| 项 | v1 | v2.1 |
+| --- | --- | --- |
+| 主控 | ProMicro nRF52840 | 同（沿用 26 pad 符号） |
+| 存储 | microSD（TF 卡座） | **W25Q128 NOR**（SPI，深度休眠 1µA） |
+| 加速度计 | LIS3DHTR | **LIS2DW12**（I²C，地址 0x19） |
+| 气压计 | BMP280 | 取消 |
+| 供电 | 单轨 3V3 | **双域**：3.3V_AON（RT9080 常开）+ 3.3V_SW（P0.13 门控） |
+| GPS 省电 | GPSEN 控模块 ON/OFF 脚 | **GPS_EN 控 L76K.WAKEUP**（standby 20µA） |
+| 电池 | 21700 / 软包 | 1500mAh 软包 |
+| PCB | 2 层 | **4 层**（JLC04161H-7628） |
+
+### 可编辑工程（`.eprj3` 文件夹格式）
+
+```text
+hardware/pcb/nrf52840 gps tracker/
+├── nrf52840 gps tracker.eprj3   # 工程索引（boards / schematics / pcbs / sheets）
+├── sch/
+│   ├── v1-meshtastic-nrf52840/  # v1 原理图（对照用）
+│   │   └── Sheet_1.esch2
+│   └── TraceveilV2/             # v2.1 原理图（在建）
+│       └── P8.esch2
+├── pcb/
+│   ├── PCB_meshtastic nrf52840 prototype.epcb2   # v1 PCB
+│   └── PCB1.epcb2                                # v2.1 PCB（待布局）
+└── eprj3-intro.md
+```
+
+`.eprj3` 是逐行 JSON 的**文件夹**格式（不是 SQLite 单文件），可与编辑器双向同步、能被 git diff 审阅。
+**注意：内置 CLI 的 `open --path` 不认 v1 用的 `.epro2` 单文件**（只认 `.eprj/.eprj2/.eprj3/.elib`），
+传 `.epro2` 只会静默开出一个空白编辑器。
+
+打开方式（客户端 v4.1.70+，桌面版运行中）：
+
+```powershell
+& 'C:\Program Files\lceda-pro\lceda-pro.exe' open --path 'C:/Users/mgt/Desktop/proj/gps_tracker/hardware/pcb/nrf52840 gps tracker/nrf52840 gps tracker.eprj3'
+```
+
+### v2.1 原理图进度
+
+按 `docs/design-v2.1-final.md` 分 4 页重画：
+
+| 页 | 内容 | 状态 |
+| --- | --- | --- |
+| PWR | J1 电池座、U1 RT9080、C1/C2、Q1/Q2 电量采样 | 待画 |
+| AON | U2 LIS2DW12 + R2/R3 + C5/C10 | 待画 |
+| SW | U3 W25Q128、U4 L76K + RC 网络 | 待画 |
+| MCU | M1 ProMicro（26 pad）、J2 OLED、SW2/SW3 | 待画 |
+
+画图用 [`scripts/eda-step.js`](scripts/eda-step.js) 单步驱动（见该目录 README），
+每画完一块跑一次网表自检（无匿名网络、无单脚网络）。
+
+### 注意
+
+- 工程目录里若出现 `*_backup/`（EDA 自动备份 `.epro2`），**不要提交**，已在 `.gitignore` 忽略。
+- `BOM.csv` 目前只覆盖 v1；v2.1 的 BOM 在 [docs/design-v2.1-final.md](../../docs/design-v2.1-final.md) §2，
+  且 U7 那一行仍写着 ATGM336H 符号，**改回 L76K 前不要按它下料**。

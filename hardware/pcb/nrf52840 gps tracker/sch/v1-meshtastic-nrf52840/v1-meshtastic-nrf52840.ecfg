@@ -1,0 +1,4 @@
+{"type":"DOCHEAD","ticket":1654}||{"docType":"SCH","client":"05cd0e5f281677a4","uuid":"c66ffdfc2e464bbf810a7c026dc23547","updateTime":1795613151868,"version":"1795613151868","editVersion":"4.1.105","user":{}}|
+{"type":"META","ticket":1654,"id":"META"}||{"title":"v1-meshtastic-nrf52840","source":"","board":"3aaa7d8a48fbca08","zIndex":null}|
+{"type":"RULE","ticket":955,"id":"[\"RULE\",\"TRACK\",\"copperThickness1oz\"]"}||{"ruleState":"DEFAULT","ruleContext":{"unit":"mm","track":{"isOpen":true,"content":[{"layerId":1,"stroDef":0.254,"stroMax":2.54,"stroMin":0.127}]}}}|
+{"type":"RULE","ticket":956,"id":"[\"RULE\",\"TRACK\",\"copperThickness2oz\"]"}||{"ruleState":"NORMAL","ruleContext":{"unit":"mm","track":{"isOpen":true,"content":[{"layerId":1,"stroDef":0.254,"stroMax":2.54,"stroMin":0.203}]}}}
