@@ -112,8 +112,6 @@ Command-response over NUS (see `docs/uart_file_proto.md`):
 
 ## Important Caveats
 
-- `src/` directory contains **deprecated** C++ Arduino firmware — do not modify, use `firmware/` (Rust) for all development
-- `platformio.ini` is for the deprecated C++ build — Rust firmware uses Cargo
 - BLE runs on nrf-sdc 0.4 + nrf-mpsl 0.4 + trouble-host 0.8 (no SoftDevice `sd_*` API anymore); the crates link Nordic's prebuilt MPSL / SDC binaries, so bumping them needs a flash-size and interrupt-priority re-check
 - `tools/ble_sim` is a host-side simulator (`cargo test --manifest-path tools/ble_sim/Cargo.toml`) covering concurrent connectable + Find My advertising; CI runs it
 - The `host-test` feature flag exists in Cargo.toml for potential host-side testing but hardware drivers make most code untestable without a device
@@ -155,22 +153,22 @@ Prerequisites: `auth.json` + running `anisette-v3-server` on `localhost:6969`
 
 ```bash
 cd tools
-pip install cryptography requests
+uv sync
 
 # Fetch last 24 hours, save JSON + GPX
-python findmy_query.py fetch -k keys.json --auth auth.json -H 24 -o results.json --gpx track.gpx
+uv run gt findmy fetch -k keys.json --auth auth.json -H 24 -o results.json --gpx track.gpx
 
 # Fetch last 48 hours
-python findmy_query.py fetch -k keys.json --auth auth.json -H 48 -o results.json --gpx track.gpx
+uv run gt findmy fetch -k keys.json --auth auth.json -H 48 -o results.json --gpx track.gpx
 
 # Convert existing JSON to GPX (with spatial dedup)
-python findmy_query.py gpx results.json -o track.gpx
+uv run gt findmy gpx results.json -o track.gpx
 
 # Show all raw points without dedup
-python findmy_query.py gpx results.json --all -o track_all.gpx
+uv run gt findmy gpx results.json --all -o track_all.gpx
 
 # Inspect rolling keys without querying Apple (no auth needed)
-python findmy_query.py keys -k keys.json -H 24
+uv run gt findmy keys -k keys.json -H 24
 ```
 
 **Important**: Apple's API returns at most ~20 reports per request. The script automatically batches queries (10 key hashes per request) to retrieve all available data.
@@ -194,9 +192,6 @@ python3 request_reports.py -t   # -t for trusted device 2FA push
 
 ## Utility Scripts
 
-- `gps_format_tool.py` — Encode/decode GPZ files for debugging
-- `casic_parser.py` — Parse CASIC binary protocol captures
+- `cd tools && uv run gt --help` — the `gt` CLI: `gt uf2` (build the UF2 image), `gt findmy` (Find My keys/reports), `gt casic` (CASIC capture parser), `gt gps` (GPZ encode/decode)
 - `scripts/gen_tz_grid.py` — Generate timezone grid data from IANA tzdata
 - `scripts/gen_logo.py` — Generate embedded OLED logo bitmaps
-- `tools/build_uf2.py` — Build UF2 firmware images
-- `tools/findmy_query.py` — Find My location report query tool: key generation, Apple API fetch, GPX export

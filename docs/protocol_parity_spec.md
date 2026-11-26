@@ -1,8 +1,8 @@
 # Protocol Parity Spec (Legacy BLE UART)
 
-Scope: 1:1 behavior for the file transfer protocol implemented by
-`src/file_transfer_protocol.*` and BLE UART in `src/ble_handler.*`.
-Source of truth is the C++ code; docs are secondary.
+Scope: 1:1 behavior for the file transfer protocol originally implemented by
+`src/file_transfer_protocol.*` and BLE UART in `src/ble_handler.*`（C++ 源码已删除，
+以 git 历史为准）。当前实现的 source of truth 是 `firmware/src/protocol.rs`；docs are secondary.
 
 ## Transport and framing
 - Transport: byte stream over BLE UART (NUS). Device name: `MGT GPS Tracker`.

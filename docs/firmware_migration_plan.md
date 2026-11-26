@@ -1,5 +1,7 @@
 # Firmware Migration Plan (Arduino -> Rust/Embassy)
 
+> 历史文档：本文引用的 `src/`（Arduino C++ 固件）已从仓库删除，迁移已完成，保留仅供追溯。
+
 Purpose: Track work items to migrate legacy firmware in `src/` to the new
 Rust/Embassy firmware in `firmware/`, targeting nRF52840 with no LoRa support.
 
