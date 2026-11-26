@@ -1,7 +1,10 @@
 """
 UF2 firmware build tool.
 
-Builds firmware, converts to Intel HEX, merges with SoftDevice, and generates UF2.
+Builds the firmware, converts it to Intel HEX and wraps it in a UF2 image for the
+Adafruit nRF52 UF2 bootloader. The image contains the application only: the
+firmware uses nrf-sdc, so no SoftDevice is needed. Merging a SoftDevice hex is
+still possible for legacy builds via ``--softdevice``.
 """
 
 from __future__ import annotations
@@ -19,9 +22,8 @@ TARGET_DIR = FIRMWARE_DIR / "target" / TARGET / PROFILE
 
 DEFAULT_ELF = TARGET_DIR / "gps-tracker-firmware"
 DEFAULT_APP_HEX = TARGET_DIR / "gps-tracker-firmware.hex"
-DEFAULT_SD_HEX = ROOT / "s140_nrf52_7.3.0_softdevice.hex"
-DEFAULT_COMBINED_HEX = TARGET_DIR / "gps-tracker-combined.hex"
-DEFAULT_UF2 = TARGET_DIR / "gps-tracker-combined.uf2"
+DEFAULT_IMAGE_HEX = TARGET_DIR / "gps-tracker.hex"
+DEFAULT_UF2 = TARGET_DIR / "gps-tracker.uf2"
 UF2CONV = ROOT / "uf2conv.py"
 UF2_FAMILY_ID = "0xADA52840"
 
@@ -41,6 +43,10 @@ def build_firmware() -> None:
             "--release",
             "--target",
             TARGET,
+            # firmware/ has a second [[bin]] (the bare-board dual-advertising
+            # test), so name the release binary explicitly.
+            "--bin",
+            DEFAULT_ELF.name,
         ],
         cwd=FIRMWARE_DIR,
     )
@@ -48,58 +54,38 @@ def build_firmware() -> None:
 
 def objcopy_to_hex(elf: Path, out_hex: Path) -> None:
     out_hex.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        run(
-            [
-                "cargo",
-                "objcopy",
-                "--manifest-path",
-                str(FIRMWARE_DIR / "Cargo.toml"),
-                "--release",
-                "--target",
-                TARGET,
-                "--",
-                "-O",
-                "ihex",
-                str(out_hex),
-            ],
-            cwd=FIRMWARE_DIR,
-        )
-        return
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        pass
+    attempts = [
+        [
+            "cargo",
+            "objcopy",
+            "--manifest-path",
+            str(FIRMWARE_DIR / "Cargo.toml"),
+            "--release",
+            "--target",
+            TARGET,
+            "--bin",
+            elf.name,
+            "--",
+            "-O",
+            "ihex",
+            str(out_hex),
+        ],
+        ["rust-objcopy", "-O", "ihex", str(elf), str(out_hex)],
+        ["llvm-objcopy", "-O", "ihex", str(elf), str(out_hex)],
+        ["arm-none-eabi-objcopy", "-O", "ihex", str(elf), str(out_hex)],
+    ]
 
-    try:
-        run(
-            [
-                "llvm-objcopy",
-                "-O",
-                "ihex",
-                str(elf),
-                str(out_hex),
-            ],
-            cwd=FIRMWARE_DIR,
-        )
-        return
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        pass
+    for cmd in attempts:
+        try:
+            run(cmd, cwd=FIRMWARE_DIR)
+            return
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            continue
 
-    try:
-        run(
-            [
-                "arm-none-eabi-objcopy",
-                "-O",
-                "ihex",
-                str(elf),
-                str(out_hex),
-            ],
-            cwd=FIRMWARE_DIR,
-        )
-    except (subprocess.CalledProcessError, FileNotFoundError) as err:
-        raise RuntimeError(
-            "objcopy not found. Install cargo-binutils (cargo install cargo-binutils), "
-            "llvm-objcopy, or arm-none-eabi-objcopy."
-        ) from err
+    raise RuntimeError(
+        "objcopy not found. Install cargo-binutils (cargo install cargo-binutils), "
+        "llvm-objcopy, or arm-none-eabi-objcopy."
+    )
 
 
 def parse_ihex(path: Path) -> dict[int, int]:
@@ -255,7 +241,7 @@ def convert_to_uf2(in_hex: Path, out_uf2: Path) -> None:
 
 def cmd_build(args) -> int:
     app_hex = args.app_hex or DEFAULT_APP_HEX
-    combined_hex = DEFAULT_COMBINED_HEX
+    image_hex = DEFAULT_IMAGE_HEX
 
     if not args.no_build and args.app_hex is None:
         build_firmware()
@@ -266,14 +252,14 @@ def cmd_build(args) -> int:
             f"app hex not found: {app_hex}"
         )
 
-    sd_hex = None if args.no_softdevice else args.softdevice
+    sd_hex = args.softdevice
     if sd_hex is not None and not sd_hex.is_file():
         raise FileNotFoundError(
             f"SoftDevice hex not found: {sd_hex}"
         )
 
-    merge_hex(app_hex, sd_hex, combined_hex)
-    convert_to_uf2(combined_hex, args.out)
+    merge_hex(app_hex, sd_hex, image_hex)
+    convert_to_uf2(image_hex, args.out)
     print(f"UF2 ready: {args.out}")
     return 0
 
@@ -287,7 +273,7 @@ def add_subcommands(subparsers) -> None:
     """Register UF2 subcommands."""
     p = subparsers.add_parser(
         "build",
-        help="Build firmware + SoftDevice and generate a combined UF2",
+        help="Build the firmware and generate a UF2 image (app only)",
     )
     p.add_argument(
         "--no-build",
@@ -309,13 +295,8 @@ def add_subcommands(subparsers) -> None:
     p.add_argument(
         "--softdevice",
         type=Path,
-        default=DEFAULT_SD_HEX,
-        help="SoftDevice hex to merge.",
-    )
-    p.add_argument(
-        "--no-softdevice",
-        action="store_true",
-        help="Skip SoftDevice merge (app-only UF2).",
+        default=None,
+        help="Optional SoftDevice hex to merge (legacy SoftDevice builds only).",
     )
     p.add_argument(
         "--out",
@@ -328,7 +309,7 @@ def add_subcommands(subparsers) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Build firmware + SoftDevice and generate a combined UF2."
+        description="Build the firmware and generate a UF2 image (app only)."
     )
     sub = parser.add_subparsers(dest="command", required=True)
     add_subcommands(sub)

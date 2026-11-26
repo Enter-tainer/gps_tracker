@@ -25,6 +25,9 @@ pub struct Board {
     pub ppi_ch8: Peri<'static, peripherals::PPI_CH8>,
     pub ppi_ch9: Peri<'static, peripherals::PPI_CH9>,
     pub ppi_group1: Peri<'static, peripherals::PPI_GROUP1>,
+    pub rng: Peri<'static, peripherals::RNG>,
+    pub mpsl: nrf_mpsl::Peripherals<'static>,
+    pub sdc: nrf_sdc::Peripherals<'static>,
 }
 
 impl Board {
@@ -54,6 +57,29 @@ impl Board {
             ppi_ch8: p.PPI_CH8,
             ppi_ch9: p.PPI_CH9,
             ppi_group1: p.PPI_GROUP1,
+            rng: p.RNG,
+            mpsl: nrf_mpsl::Peripherals::new(
+                p.RTC0,
+                p.TIMER0,
+                p.TEMP,
+                p.PPI_CH19,
+                p.PPI_CH30,
+                p.PPI_CH31,
+            ),
+            sdc: nrf_sdc::Peripherals::new(
+                p.PPI_CH17,
+                p.PPI_CH18,
+                p.PPI_CH20,
+                p.PPI_CH21,
+                p.PPI_CH22,
+                p.PPI_CH23,
+                p.PPI_CH24,
+                p.PPI_CH25,
+                p.PPI_CH26,
+                p.PPI_CH27,
+                p.PPI_CH28,
+                p.PPI_CH29,
+            ),
         }
     }
 }

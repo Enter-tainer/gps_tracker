@@ -277,14 +277,14 @@ async fn configure_gps_uart(tx: &mut BufferedUarteTx<'static>, gps_en: &mut Outp
     gps_en.set_high();
     Timer::after_millis(100).await;
 
-    tx.set_baudrate(Baudrate::BAUD9600);
+    tx.set_baudrate(Baudrate::Baud9600);
     write_all(tx, b"$PCAS04,7*1E\r\n").await;
     write_all(tx, b"$PCAS03,1,0,0,0,1,0,0,0,0,0,,,0,0*02\r\n").await;
     Timer::after_millis(1500).await;
     write_all(tx, b"$PCAS01,5*19\r\n").await;
     Timer::after_millis(1500).await;
 
-    tx.set_baudrate(Baudrate::BAUD115200);
+    tx.set_baudrate(Baudrate::Baud115200);
     for _ in 0..4 {
         write_all(tx, b"$PCAS02,500*1A\r\n").await;
         Timer::after_millis(100).await;

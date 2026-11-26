@@ -3,20 +3,40 @@ name = "gps-tracker-firmware"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "gps-tracker-firmware"
+path = "src/main.rs"
+
+[[bin]]
+name = "ble-dual-adv-test"
+path = "src/bin/ble_dual_adv_test.rs"
+
 [dependencies]
 # --- Embassy 核心 ---
-embassy-executor = { version = "0.9.1", features = ["arch-cortex-m", "executor-thread", "defmt"] }
-embassy-time = { version = "0.5.0", features = ["defmt", "defmt-timestamp-uptime"] }
-# 注意：time-driver-rtc1 很重要，因为 SoftDevice 占用 RTC0
-embassy-nrf = { version = "0.9.0", default-features = false, features = ["rt", "defmt", "nrf52840", "time-driver-rtc1", "gpiote"] }
-embassy-sync = { version = "0.7.2", features = ["defmt"] }
-embassy-futures = { version = "0.1" }
-embassy-embedded-hal = "0.5.0"
+embassy-executor = { version = "0.10.0", features = ["platform-cortex-m", "executor-thread", "defmt"] }
+embassy-time = { version = "0.5.1", features = ["defmt", "defmt-timestamp-uptime"] }
+# 注意：time-driver-rtc1 很重要，因为 MPSL / SDC 占用 RTC0
+embassy-nrf = { version = "0.11.0", default-features = false, features = ["rt", "defmt", "nrf52840", "time", "time-driver-rtc1", "gpiote"] }
+embassy-sync = { version = "0.8.0", features = ["defmt"] }
+embassy-futures = "0.1.2"
+embassy-embedded-hal = "0.6.0"
 
-# --- 蓝牙 (SoftDevice) ---
-# s140 是 nRF52840 的蓝牙协议栈
-nrf-softdevice = { git = "https://github.com/embassy-rs/nrf-softdevice", rev = "5949a5b1445cc907745c6449a35577e4544cd255", features = ["defmt", "nrf52840", "s140", "ble-peripheral", "ble-central", "ble-gatt-server", "critical-section-impl"] }
-nrf-softdevice-s140 = { git = "https://github.com/embassy-rs/nrf-softdevice", rev = "5949a5b1445cc907745c6449a35577e4544cd255" }
+# --- 蓝牙 (Nordic SDC + TrouBLE Host) ---
+nrf-mpsl = { version = "0.4.0", features = ["defmt", "nrf52840", "critical-section-impl"] }
+nrf-sdc = { version = "0.4.0", features = ["defmt", "nrf52840", "multirole"] }
+trouble-host = { version = "0.8.0", default-features = false, features = [
+    "defmt",
+    "peripheral",
+    "gatt",
+    "derive",
+    "extended-advertising",
+    "default-packet-pool-mtu-251",
+    "default-packet-pool-size-8",
+    "connection-params-update",
+] }
+bt-hci = { version = "0.10", features = ["uuid", "defmt"] }
+rand_core = "0.9"
+critical-section = "1.2"
 
 # --- 常用嵌入式库 ---
 cortex-m = { version = "0.7", features = ["inline-asm"] }
@@ -27,19 +47,19 @@ panic-probe = { version = "1.0", features = ["print-defmt"] } # Panic 时通过�
 
 # --- 你的硬件驱动 ---
 embedded-graphics = "0.8"
-ssd1306 = "0.10" 
+ssd1306 = "0.10"
 embedded-hal-async = "1.0"
 embedded-hal = "1.0"
-heapless = "0.8"
+heapless = "0.9"
 libm = "0.2"
 # 注意：以下驱动版本可能随时间更新，建议去 crates.io 确认
-bmp280-rs = "0.1" 
+bmp280-rs = "0.1"
 lis3dh = "0.4.4"
 embedded-sdmmc = "0.9"
 usb-device = "0.3.2"
 nrf-usbd = "0.3.0"
-nrf-pac = { version = "0.2.0", features = ["nrf52840"] }
-nmea = { version = "0.7", default-features = false, features = ["GNSS", "defmt-03"]}
+nrf-pac = { version = "0.4.0", features = ["nrf52840"] }
+nmea = { version = "0.7", default-features = false, features = ["GNSS", "defmt-03"] }
 chrono = { version = "0.4", default-features = false }
 static_cell = "2.1"
 usbd-storage = { version = "2.0.0", default-features = false, features = ["bbb", "scsi"] }

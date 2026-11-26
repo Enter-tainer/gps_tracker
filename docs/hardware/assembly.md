@@ -53,17 +53,17 @@
 ### 方式 A：UF2（不需要调试器，推荐给第一次做的人）
 
 ```bash
-# 在仓库根目录：构建固件 + 合并 SoftDevice，生成单个 UF2
+# 在仓库根目录：构建应用固件并生成 UF2
 cd tools
 uv run gt uf2 build
-# 产物：firmware/target/thumbv7em-none-eabihf/release/gps-tracker-combined.uf2
+# 产物：firmware/target/thumbv7em-none-eabihf/release/gps-tracker.uf2
 ```
 
 把模块切到 bootloader 模式（通常是**双击复位键**，会出现一个 U 盘），
-把 `gps-tracker-combined.uf2` 拖进去，设备自动重启。
+把 `gps-tracker.uf2` 拖进去，设备自动重启。
 
-> 合并包里已经包含 S140 SoftDevice，**不需要单独刷协议栈**。
-> 仓库不附带 Nordic 的 SoftDevice 十六进制文件（许可证限制），构建脚本会自动下载。
+> 固件用 nrf-sdc，UF2 里只有应用（链接在 `0x27000`），不会覆盖 MBR / bootloader / 旧的 S140 区。
+> 如果芯片上应用区之外还是空的（全新裸片），先用下面方式 B 烧一次。
 
 ### 方式 B：probe-rs（需要 SWD 调试器）
 
@@ -102,7 +102,7 @@ DEFMT_LOG=info cargo run --release   # 顺便看日志
 | 现象 | 排查方向 |
 | --- | --- |
 | 屏幕不亮 | I2C 地址/接线、3V3 电压、OLED 模块是否 3.3V 版本 |
-| 扫不到 BLE | 是否已刷入含 SoftDevice 的合并包；天线区域是否被金属挡住 |
+| 扫不到 BLE | 天线区域是否被金属挡住；固件是否正常启动（RTT / 串口日志里应有 NUS MAC 那行） |
 | GPS 一直不定位 | `GPSEN` 是否拉高、模块是否焊好、天线净空、室内无法定位属正常 |
 | 电量显示异常 | `R5`/`R6` 是否装反（200k 在 BAT 侧）、ADC 虚焊 |
 | SD 卡挂载失败 | 卡是否 FAT32、卡座是否虚焊、卡是否被识别为 SDHC |
