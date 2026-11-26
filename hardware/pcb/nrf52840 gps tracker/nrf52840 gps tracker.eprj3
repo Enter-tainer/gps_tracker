@@ -40,8 +40,8 @@
         "name": "TraceveilV2",
         "board": "408d68e1e7b1c65e",
         "source": "",
-        "version": "1795716616473",
-        "updateTime": 1795716616473
+        "version": "1795716665324",
+        "updateTime": 1795716665324
       },
       "c66ffdfc2e464bbf810a7c026dc23547": {
         "uuid": "c66ffdfc2e464bbf810a7c026dc23547",
@@ -53,15 +53,6 @@
       }
     },
     "sheets": {
-      "3020d605fda2442a": {
-        "uuid": "3020d605fda2442a",
-        "title": "P8",
-        "schematic_uuid": "5d0cea22eca72c28",
-        "zIndex": 13,
-        "source": "",
-        "version": "1795709644786",
-        "updateTime": 1795709644786
-      },
       "44bcaf4846314388a9b7bb158bcb0d80": {
         "uuid": "44bcaf4846314388a9b7bb158bcb0d80",
         "title": "Sheet_1",
@@ -72,39 +63,39 @@
       },
       "f5e15c322dc27a58": {
         "uuid": "f5e15c322dc27a58",
-        "title": "P9",
+        "title": "PWR",
         "schematic_uuid": "5d0cea22eca72c28",
         "zIndex": 14,
         "source": "",
-        "version": "1795716616473",
-        "updateTime": 1795716616473
+        "version": "1795716653775",
+        "updateTime": 1795716653775
       },
       "c691791b117ccf97": {
         "uuid": "c691791b117ccf97",
-        "title": "P10",
+        "title": "AON",
         "schematic_uuid": "5d0cea22eca72c28",
         "zIndex": 15,
         "source": "",
-        "version": "1795715924731",
-        "updateTime": 1795715924731
+        "version": "1795716654444",
+        "updateTime": 1795716654444
       },
       "40322df74063937c": {
         "uuid": "40322df74063937c",
-        "title": "P11",
+        "title": "SW",
         "schematic_uuid": "5d0cea22eca72c28",
         "zIndex": 16,
         "source": "",
-        "version": "1795716129504",
-        "updateTime": 1795716129504
+        "version": "1795716655117",
+        "updateTime": 1795716655117
       },
       "523a331991e3182b": {
         "uuid": "523a331991e3182b",
-        "title": "P12",
+        "title": "MCU",
         "schematic_uuid": "5d0cea22eca72c28",
         "zIndex": 17,
         "source": "",
-        "version": "1795716231971",
-        "updateTime": 1795716231971
+        "version": "1795716655469",
+        "updateTime": 1795716655469
       }
     },
     "pcbs": {
