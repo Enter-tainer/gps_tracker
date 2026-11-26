@@ -25,7 +25,10 @@ permissions:
 
 jobs:
   build-uf2:
-    runs-on: ubuntu-latest
+    # Pinned: nrf-mpsl-sys generates its bindings with bindgen at build time, and
+    # the ubuntu-26.04 image's libclang resolves CMSIS's <stdint.h> to nothing
+    # ("unknown type name 'uint32_t'"), which breaks the firmware build.
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout
@@ -68,7 +71,7 @@ jobs:
           if-no-files-found: error
 
   ble-sim-tests:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout

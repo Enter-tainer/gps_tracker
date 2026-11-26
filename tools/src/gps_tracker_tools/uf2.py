@@ -43,6 +43,10 @@ def build_firmware() -> None:
             "--release",
             "--target",
             TARGET,
+            # firmware/ has a second [[bin]] (the bare-board dual-advertising
+            # test), so name the release binary explicitly.
+            "--bin",
+            DEFAULT_ELF.name,
         ],
         cwd=FIRMWARE_DIR,
     )
@@ -50,58 +54,38 @@ def build_firmware() -> None:
 
 def objcopy_to_hex(elf: Path, out_hex: Path) -> None:
     out_hex.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        run(
-            [
-                "cargo",
-                "objcopy",
-                "--manifest-path",
-                str(FIRMWARE_DIR / "Cargo.toml"),
-                "--release",
-                "--target",
-                TARGET,
-                "--",
-                "-O",
-                "ihex",
-                str(out_hex),
-            ],
-            cwd=FIRMWARE_DIR,
-        )
-        return
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        pass
+    attempts = [
+        [
+            "cargo",
+            "objcopy",
+            "--manifest-path",
+            str(FIRMWARE_DIR / "Cargo.toml"),
+            "--release",
+            "--target",
+            TARGET,
+            "--bin",
+            elf.name,
+            "--",
+            "-O",
+            "ihex",
+            str(out_hex),
+        ],
+        ["rust-objcopy", "-O", "ihex", str(elf), str(out_hex)],
+        ["llvm-objcopy", "-O", "ihex", str(elf), str(out_hex)],
+        ["arm-none-eabi-objcopy", "-O", "ihex", str(elf), str(out_hex)],
+    ]
 
-    try:
-        run(
-            [
-                "llvm-objcopy",
-                "-O",
-                "ihex",
-                str(elf),
-                str(out_hex),
-            ],
-            cwd=FIRMWARE_DIR,
-        )
-        return
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        pass
+    for cmd in attempts:
+        try:
+            run(cmd, cwd=FIRMWARE_DIR)
+            return
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            continue
 
-    try:
-        run(
-            [
-                "arm-none-eabi-objcopy",
-                "-O",
-                "ihex",
-                str(elf),
-                str(out_hex),
-            ],
-            cwd=FIRMWARE_DIR,
-        )
-    except (subprocess.CalledProcessError, FileNotFoundError) as err:
-        raise RuntimeError(
-            "objcopy not found. Install cargo-binutils (cargo install cargo-binutils), "
-            "llvm-objcopy, or arm-none-eabi-objcopy."
-        ) from err
+    raise RuntimeError(
+        "objcopy not found. Install cargo-binutils (cargo install cargo-binutils), "
+        "llvm-objcopy, or arm-none-eabi-objcopy."
+    )
 
 
 def parse_ihex(path: Path) -> dict[int, int]:
