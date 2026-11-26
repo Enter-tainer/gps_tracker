@@ -333,7 +333,7 @@ gps_tracker/
 ├── tools/                       # ★ uv 管理的 Python 工具包（gt CLI：uf2 / findmy / casic / gps）
 ├── docs/                        # ★ 协议规范、状态机、硬件引脚与装配、GPSL0 论文级报告、部署指南
 ├── scripts/                     # 时区表与 OLED 图标生成脚本
-└── src/ & platformio.ini        # ⚠ 早期废弃的 C++ Arduino 固件（仅存档，请勿使用）
+└── uf2conv.py / uf2families.json # Microsoft UF2 工具（tools 的 `gt uf2` 调用，勿删）
 ```
 
 ---
@@ -472,9 +472,9 @@ uv run gt casic --help    # CASIC 协议抓包解析
 </details>
 
 <details>
-<summary><strong>Q4. 仓库里的 <code>src/</code> 和 <code>platformio.ini</code> 还需要管吗？</strong></summary>
+<summary><strong>Q4. 早期那版 Arduino C++ 固件（<code>src/</code>）去哪了？</strong></summary>
 
-不需要。`src/` 与 `platformio.ini` 是早期 Arduino C++ 原型代码，现已全面废弃，仅作历史存档保留。全部新开发请只使用 `firmware/` 下的 Rust 工程。
+已经从仓库删除了 —— 它的功能被 `firmware/`（Rust + Embassy）完全覆盖，留着只会让人照着过时的代码开发（比如它的 `config.h` 里还写着 10 s 采样，实际固件是 1 Hz）。需要追溯请查 git 历史。固件只有 `firmware/` 这一条构建路径。
 
 </details>
 

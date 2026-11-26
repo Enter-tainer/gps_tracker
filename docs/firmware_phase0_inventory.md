@@ -1,5 +1,7 @@
 # Phase 0 Inventory (Legacy Firmware)
 
+> 历史文档：`src/`（Arduino C++ 固件）已从仓库删除，本文的模块/引脚映射仅供追溯。
+
 Purpose: capture a 1:1 map of legacy firmware modules, pins, and scope
 decisions to guide the Rust/Embassy port without changing behavior.
 
