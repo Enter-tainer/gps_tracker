@@ -92,14 +92,14 @@ git push origin master --tags
 
 Release 页面（`gh release create v0.1.0` 或网页操作）附加：
 
-- `gps-tracker-combined.uf2`（Actions 里下载，或本地 `cd tools && uv run gt uf2 build`）
+- `gps-tracker.uf2`（Actions 里下载，或本地 `cd tools && uv run gt uf2 build`）
 - `gps-tracker-nrf52840-v1.epro2` + `gps-tracker-nrf52840-v1.step`
 - `case-slim-v1.zip`（Slim 版 3MF + 3 个 STL）与 `case-21700-v1.zip`（21700 版 3MF + STL）
 - `gerber.zip`（① 导出的）
 - `schematic.pdf`
 - 源码 zip 由 GitHub 自动生成，不用管
 
-Release 说明里写清：**刷 UF2 不需要另装 SoftDevice**、电池规格、以及「轨迹含个人位置，注意分享风险」。
+Release 说明里写清：**UF2 只含应用镜像，不含 Nordic 二进制**、电池规格、以及「轨迹含个人位置，注意分享风险」。
 
 ### ④ 配好仓库的「门面」
 
@@ -128,8 +128,9 @@ Release 说明里写清：**刷 UF2 不需要另装 SoftDevice**、电池规格�
 
 需要留意的第三方：
 
-- **Nordic S140 SoftDevice**：仓库**不分发** `s140_*.hex`（`.gitignore` 已排除），CI 构建时从
-  embassy-rs / tinygo 的镜像下载。使用者需自行接受 Nordic 的许可。
+- **Nordic SoftDevice / MPSL / SDC**：固件已从 S140 SoftDevice 迁移到 nrf-sdc，仓库与 CI 都**不再下载或分发**
+  `s140_*.hex`（老版本用过的文件仍被 `.gitignore` 排除）。`nrf-mpsl-sys` / `nrf-sdc-sys` 通过 crates.io 链接 Nordic
+  预编译的 MPSL / SoftDevice Controller 库，使用者需自行接受 Nordic 的许可。
 - **`uf2conv.py` / `uf2families.json`**：来自 Microsoft 的 [UF2](https://github.com/microsoft/uf2) 工具（MIT），
   入仓库时没有版权头。建议在两个文件头补一段来源说明 + MIT 声明，避免被人当作本项目原创。
 - **`src/`、`platformio.ini`、`boards/`、`extra_script.py`**：早期 Arduino/PlatformIO 版本，保留为存档。

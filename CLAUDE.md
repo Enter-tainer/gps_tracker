@@ -66,8 +66,11 @@ Key modules:
 - **main.rs** — Peripheral init, interrupt binding, task spawning, USB boot mode detection
 
 Hardware constraints:
-- SoftDevice (BLE stack) reserves RTC0 → firmware uses RTC1 as Embassy time driver
-- SoftDevice reserves first 0x27000 of flash and 0x3000 of RAM (see `memory.x`)
+- MPSL / SoftDevice Controller (nrf-sdc) own RTC0 + TIMER0 → firmware uses RTC1 as Embassy time driver
+- Flash starts at 0x27000 and RAM at 0x20000400 (see `memory.x`): the low flash is left alone for the MBR /
+  Adafruit UF2 bootloader / legacy S140 image, the first 1 KB of RAM for the MBR forwarder
+- `main.rs` relocates VTOR to the app vector table in a `#[cortex_m_rt::pre_init]` hook, and keeps app IRQs at
+  P2/P3 so they never preempt MPSL high-prio (P0) or low-prio (P4)
 - DMA buffers must be in RAM (StaticCell), not flash
 - I2C bus shared between display, accelerometer, and barometer via `BlockingMutex`
 
@@ -111,7 +114,8 @@ Command-response over NUS (see `docs/uart_file_proto.md`):
 
 - `src/` directory contains **deprecated** C++ Arduino firmware — do not modify, use `firmware/` (Rust) for all development
 - `platformio.ini` is for the deprecated C++ build — Rust firmware uses Cargo
-- nrf-softdevice is pinned to a specific git revision — updating requires careful compatibility testing
+- BLE runs on nrf-sdc 0.4 + nrf-mpsl 0.4 + trouble-host 0.8 (no SoftDevice `sd_*` API anymore); the crates link Nordic's prebuilt MPSL / SDC binaries, so bumping them needs a flash-size and interrupt-priority re-check
+- `tools/ble_sim` is a host-side simulator (`cargo test --manifest-path tools/ble_sim/Cargo.toml`) covering concurrent connectable + Find My advertising; CI runs it
 - The `host-test` feature flag exists in Cargo.toml for potential host-side testing but hardware drivers make most code untestable without a device
 - The `findmy` feature flag enables Apple Find My offline finding (findmy.rs, protocol commands 0x0C-0x0E, SD card key storage). Requires `p224`, `sha2`, and `chrono` crates.
 

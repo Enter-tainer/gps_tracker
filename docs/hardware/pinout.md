@@ -67,7 +67,7 @@ PCB 网表中 `C2`（模块）的 26 个焊盘对应关系（1 脚位置以 PCB 
 | `TWISPI0` | I2C（OLED / BMP280 / LIS3DHTR） |
 | `SPI3` | microSD |
 | `SAADC` | 电池电压 |
-| `TIMER1` + `PPI_CH8/CH9` + `PPI_GROUP1` | Embassy 时间驱动（SoftDevice 占用了 RTC0，故用 RTC1 / TIMER1） |
+| `TIMER1` + `PPI_CH8/CH9` + `PPI_GROUP1` | Embassy 时间驱动（MPSL / SDC 占用了 RTC0、TIMER0，故用 RTC1 / TIMER1） |
 | `USBD` | USB MSC（直读 TF 卡）+ UF2 bootloader |
 
 ## 5. 自己核对的方法

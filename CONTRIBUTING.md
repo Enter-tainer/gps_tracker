@@ -32,12 +32,13 @@ cd frontend && npm install && npm run dev
 cd tools && uv sync && uv run gt --help
 ```
 
-CI 会做两件事：`cargo build --release`（含 UF2 合并）和前端构建，PR 必须绿。
+CI 会做两件事：固件 `cargo build --release` + 应用 UF2 打包，和 `tools/ble_sim` 的 host 侧双广播测试，PR 必须绿。
 
 ## 代码约定
 
 - **固件**：`no_std`、无堆。新代码优先用 `StaticCell` / 栈分配；DMA 缓冲区必须是 `'static`。
-  - 时间驱动用 RTC1 / TIMER1 —— **不要动 RTC0**（SoftDevice 占用了）。
+  - 时间驱动用 RTC1 / TIMER1 —— **不要动 RTC0 / TIMER0**（MPSL / SDC 占用了）。
+  - BLE 相关改动跑一下 `cargo test --manifest-path tools/ble_sim/Cargo.toml`（host 侧双广播模拟器）。
   - 引脚只从 `board::Board` 取，不要在驱动里硬编码 `P0_xx`，这样换板子只改一个文件。
   - 改协议要同步改前端 `bleService.ts` 和 `docs/uart_file_proto.md`。
   - `cargo fmt` + `cargo clippy` 请先跑一遍。
@@ -49,7 +50,7 @@ CI 会做两件事：`cargo build --release`（含 UF2 合并）和前端构建�
   - 任何密钥、令牌（`findmy-keys-*.json`、`auth.json`、`fmdn-eik-*.json`）—— `.gitignore` 已覆盖；
   - 未经脱敏的个人轨迹（`.gpz` / GPX 里是你的真实住址）；
   - `firmware/target/`、`node_modules/`、`.venv/` 等构建产物；
-  - Nordic S140 SoftDevice 的 `.hex`（许可证不允许分发，构建脚本会自动下载）。
+  - Nordic 的 SoftDevice `.hex`（现已不用；许可证也不允许分发，`.gitignore` 已排除）。
 
 ## 硬件改动的 PR
 

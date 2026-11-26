@@ -301,7 +301,7 @@ traceveil tracks analyze <track_id> --json
 固件默认开启 `findmy` feature（[`firmware/src/findmy.rs`](firmware/src/findmy.rs)），在无蜂窝网络的纯离线硬件上实现与 AirTag 同源的防丢回溯能力：
 
 - **滚动密钥与匿名性**：基于 P-224 曲线与 ANSI X9.63 KDF，根据 GPS 授时每 **15 分钟**轮换一次广播公钥，旁观者无法追踪，仅持有 68 字节主密钥的用户可解码历史报告。
-- **双广播调度**：SoftDevice S140 仅支持单广播句柄，[`adv_scheduler.rs`](firmware/src/adv_scheduler.rs) 实现可连接主 BLE 服务与不可连接 Find My 广播的优先级分时复用。
+- **双广播并发**：BLE 栈已从 S140 SoftDevice 迁移到 nrf-sdc + TrouBLE，两个扩展广播集让可连接主 BLE 服务（固定 FICR MAC）与不可连接 Find My 广播（每 15 分钟轮换 MAC）**同时**播发，GATT 连接期间 Find My 不中断。
 - **浏览器配对 & 工具查询**：在网页端一键生成并下发密钥至设备 SD 卡 `/FINDMY.KEY`（记得导出 JSON 备份），配合 `anisette-v3-server` 使用 `uv run gt findmy fetch` 或 `gt fetch` 拉取解密并导出 GPX。
 
 ---
@@ -321,7 +321,7 @@ gps_tracker/
 │       ├── case-slim-v1.3mf / part-*.stl   # Slim 轻薄版外壳（配软包薄电池）+ preview.png
 │       ├── case-21700-v1.3mf / .stl        # 21700 续航版外壳（配 21700 电池）+ preview-21700.png
 │       └── README.md                       # 双版本外壳尺寸、打印参数与装壳说明
-├── firmware/                    # ★ Rust no_std 异步固件（Embassy + SoftDevice S140）
+├── firmware/                    # ★ Rust no_std 异步固件（Embassy + nrf-sdc + TrouBLE）
 │   ├── src/                     # 状态机 / GPS / CASIC / GPZ 存储 / BLE / Find My / USB MSC / 时区
 │   └── data/                    # 预生成 IANA 离线时区栅格表
 ├── frontend/                    # ★ Traceveil PWA 上位机 + Cloudflare Worker/D1/R2 后端
@@ -350,24 +350,27 @@ gps_tracker/
 
 ### 2. 编译或刷入固件
 
-> **懒人方式**：仓库已配置 GitHub Actions 自动构建，可直接到 [Build Firmware UF2](https://github.com/Enter-tainer/gps_tracker/actions/workflows/build-firmware-uf2.yml) 下载最新 `gps-tracker-combined.uf2`，**双击设备复位键进入 UF2 U 盘模式拖入即可**（已合并 SoftDevice S140，无需单独刷协议栈）。
+> **懒人方式**：仓库已配置 GitHub Actions 自动构建，可直接到 [Build Firmware UF2](https://github.com/Enter-tainer/gps_tracker/actions/workflows/build-firmware-uf2.yml) 下载最新 `gps-tracker.uf2`，**双击设备复位键进入 UF2 U 盘模式拖入即可**（镜像只含 `0x27000` 起的应用区，不动 MBR / bootloader / 旧 S140 区）。
 
-本地构建合并 UF2 或通过 SWD 调试烧录：
+本地构建 UF2 或通过 SWD 调试烧录：
 
 ```bash
 # 一次性工具链准备
 rustup target add thumbv7em-none-eabihf
 cargo install flip-link probe-rs-tools
 
-# 方式 A：构建自带 S140 SoftDevice 的合并 UF2（SoftDevice hex 将自动下载）
+# 方式 A：构建应用 UF2（不再打包 SoftDevice）
 cd tools
 uv run gt uf2 build
-# 产物：firmware/target/thumbv7em-none-eabihf/release/gps-tracker-combined.uf2
+# 产物：firmware/target/thumbv7em-none-eabihf/release/gps-tracker.uf2
 
 # 方式 B：SWD 直接烧录并实时查看 defmt RTT 日志
 cd ../firmware
 DEFMT_LOG=info cargo run --release
 ```
+
+> BLE 栈已从 S140 SoftDevice 换成 nrf-sdc，镜像里不再需要 Nordic 协议栈二进制。
+> 应用链接在 `0x27000`，因此 UF2 只写应用区；还在用裸芯片（应用区之外还没有 MBR / bootloader / 旧 S140）时，先用方式 B 烧一次。
 
 ### 3. 启动 Traceveil 网页上位机 / 部署私有云
 
@@ -481,7 +484,7 @@ uv run gt casic --help    # CASIC 协议抓包解析
 <details>
 <summary><strong>Q5. 没有买 SWD 调试器能刷固件吗？</strong></summary>
 
-可以。直接下载 GitHub Actions 构建的 `gps-tracker-combined.uf2`（或本地运行 `uv run gt uf2 build`），双击 `URST` 复位键进入 UF2 Bootloader 虚拟 U 盘，把文件拖进去即完成烧录（内含 S140 协议栈）。
+可以。直接下载 GitHub Actions 构建的 `gps-tracker.uf2`（或本地运行 `uv run gt uf2 build`），双击 `URST` 复位键进入 UF2 Bootloader 虚拟 U 盘，把文件拖进去即完成烧录（新版固件用 nrf-sdc，镜像只含应用，不再需要 S140）。
 
 </details>
 
@@ -506,14 +509,14 @@ uv run gt casic --help    # CASIC 协议抓包解析
 **GPS Tracker · Traceveil** is a fully open, end-to-end personal GPS logging and spatial geo-archive platform built around **nRF52840 + Quectel L76K**:
 
 - **Open Hardware (`hardware/`)**: 2-layer `95 × 30 mm` PCB (EasyEDA Pro `.epro2`, AP214 full-color 3D `.step`, 13-item BOM) with **two printable enclosures** — **`case-slim-v1`** (`99.7 × 21.9 × 33.2 mm`, flat LiPo pouch cell via `CN2`, omit `U8`) and **`case-21700-v1`** (`97.2 × 37.8 × 33.2 mm`, single 21700 cell in onboard holder `U8`).
-- **Rust `no_std` Firmware (`firmware/`)**: Embassy async runtime + SoftDevice S140; 6-state motion-gated GPS power state machine (`S0–S5`) that hard-cuts power to L76K while stationary; CASIC A-GNSS injection; streaming delta-compressed `GPZ` logging to FAT32 microSD; USB Mass Storage mode; offline IANA timezone lookup; and optional **Apple Find My** P-224 15-minute rolling key offline finding.
+- **Rust `no_std` Firmware (`firmware/`)**: Embassy async runtime + nrf-sdc controller + TrouBLE host; 6-state motion-gated GPS power state machine (`S0–S5`) that hard-cuts power to L76K while stationary; CASIC A-GNSS injection; streaming delta-compressed `GPZ` logging to FAT32 microSD; USB Mass Storage mode; offline IANA timezone lookup; and optional **Apple Find My** P-224 15-minute rolling key offline finding.
 - **GPSL0 Archive Codec (`frontend/src/services/gpsl0/`)**: Time-normalized 2nd-order kinematics predictor + 6-regime context model + 11-bit binary range coder. Benchmarks across **123 real tracks / 2,022,295 points** shrink `257.50 MB` GPX XML (`10.28 MB` GPZ V2) down to **`1.17 MB` (`4.63 bits/pt`, `8.77×` vs GPZ V2)** with **123/123 bit-exact lat/lon reconstruction**.
 - **Traceveil Web App & Edge Cloud (`frontend/`)**: Offline-capable Web Bluetooth console (`/`) + lazy-loaded MapLibre workspace (`/map`) featuring Fog-of-War, heatmaps, spatial proximity search, 5-tier global administrative LOD (`Country → Province → City → District → Z15/Z21 street fog`), OpenRailwayMap & 3D terrain overlays (`@atlas-realm/map`), deployable to a single **Cloudflare Worker + D1 + R2** behind Cloudflare Access.
 - **AI Agent CLI & Skill (`cli/`, `skills/traceveil/`, `tools/`)**: `traceveil` CLI authenticates via **Cloudflare Access Managed OAuth** (PKCE, zero bypass rules) to query travel stats, visited regions, dwell stops, and WGS-84/GCJ-02 spatial proximity; `gt` (`uv`-managed Python CLI) handles UF2 image assembly, Find My report decryption, and CASIC/GPZ inspection.
 
 **Quick build**:
 ```bash
-cd tools && uv run gt uf2 build          # Build combined SoftDevice + Rust UF2 firmware
+cd tools && uv run gt uf2 build          # Build the app-only UF2 image
 cd ../frontend && npm install && npm run dev   # Start Traceveil Web Bluetooth console + local UI
 cd ../cli && npm install && npm run build      # Build traceveil AI Agent CLI
 ```
