@@ -60,7 +60,7 @@ GPS_RST (M1.P0.02) ──→ U4.pin9 RESET_N
 
 | 位号 | 型号 | 封装 | 数量 | 来源 | 备注 |
 | --- | --- | --- | --- | --- | --- |
-| M1 | nRF52840 ProMicro（nologo.tech） | 26 pad 方形焊盘 | 1 | 库存 #35 | 背面 **BOOST** 焊盘短接 → 充电 100→300mA（电池 1500mAh > 500mAh，可短接）。板载 LDO 输出 3.3V，P0.13 低电平关断 |
+| M1 | nRF52840 ProMicro（nologo.tech） | **26 pad 方形焊盘（2.54mm 间距）** | 1 | 库存 #35 | 背面 **BOOST** 焊盘短接 → 充电 100→300mA（电池 1500mAh > 500mAh，可短接）。板载 LDO 输出 3.3V，P0.13 低电平关断 |
 | U1 | **RT9080N-33GJ5** 或 **RT9080-33GJ5** | TSOT-23-5（2.9×1.6，pitch 0.95） | 1 | 需购（立创自营为非 N 版 C841192） | 600mA，Iq 2µA typ / 4µA max。**两种变体都可，pin4 一律接 VOUT**（见 §3.2） |
 | U2A | LIS2DW12TR | LGA-12（2.0×2.0×0.7，pitch 0.50） | 1 | 需购 | I²C 地址 **0x19**（SA0→3.3V_AON）。**与 U2B 二选一** |
 | U2B | LIS3DHTR | LGA-16（3.0×3.0×1.0，pitch 0.50） | 1 | 库存 #U11 | I²C 地址 **0x18**（SA0→GND）。**与 U2A 二选一** |
@@ -218,11 +218,11 @@ GPS_RST (M1.P0.02) ──→ U4.pin9 RESET_N
 | --- | --- | --- |
 | 1 /CS | SPI_CS | + R10 10k 上拉到 3.3V_AON |
 | 2 DO (IO1) | SPI_MISO | /CS 高时高阻 |
-| 3 IO2 | 3.3V_AON | 经 R11 10k（QE 固定=1，该脚是数据脚，不是 /WP） |
+| 3 IO2 | **FLASH_IO2** | 经 R11 10k 上拉到 3.3V_AON（QE 固定=1，该脚是数据脚，不是 /WP） |
 | 4 GND | GND | |
 | 5 DI (IO0) | SPI_MOSI | |
 | 6 CLK | SPI_SCK | |
-| 7 IO3 | 3.3V_AON | 经 R12 10k（同上） |
+| 7 IO3 | **FLASH_IO3** | 经 R12 10k 上拉到 3.3V_AON（同上） |
 | 8 VCC | **3.3V_AON** | C6 100nF + C13 1µF |
 
 ### 3.6 U4 — Quectel L76K（LCC-18）
@@ -277,7 +277,9 @@ GPS_RST (M1.P0.02) ──→ U4.pin9 RESET_N
 | GPS_RX | 数字 | U4.TXD, M1.脚24 |
 | GPS_EN | 数字 | M1.脚10, U4.WAKEUP |
 | GPS_RST | 数字 | M1.脚8, U4.RESET_N |
-| GPS_ANT | 射频 | U4.RF_IN ↔ 陶瓷天线 |
+| GPS_ANT | 射频 | U4.RF_IN ↔ **ANT1**（陶瓷贴片天线，1 脚） |
+| FLASH_IO2 | 数字 | U3.3, R11（10k 上拉到 3.3V_AON） |
+| FLASH_IO3 | 数字 | U3.7, R12（10k 上拉到 3.3V_AON） |
 | SPI_SCK / MOSI / MISO / CS | 数字 | M1 ↔ U3（CS 带 R10 上拉） |
 | ACC_SCL / ACC_SDA / ACC_INT1 | 数字 | M1 ↔ 加速度计（R2/R3 上拉） |
 | OLED_SCL / OLED_SDA | 数字 | M1 ↔ J2 |
@@ -382,3 +384,44 @@ GPS_RST (M1.P0.02) ──→ U4.pin9 RESET_N
    **pin4**：非 N 版为 NC（悬空或接 GND 均可），N 版为 SNS（**必须接 VOUT**，内部链路电流 550nA，SNS 电位 = 该料号标称 VOUT，接 VOUT 即分压比 1）。手册 DS9080-08 §15 Figure 1「Application with Sense Function」即无外部分压的固定输出图。**本设计统一接 VOUT，两种变体通用**。
 5. **L76K**：18 脚 LCC 10.1×9.7×2.0 pitch 1.10；VCC 2.7–3.4V、连续 29mA、standby 20µA、backup 8µA；`WAKEUP` 低有效进 standby；`RESET_N` 内部上拉到 3.3V、禁止外加上拉；`V_BCKP` 不得晚于 VCC 上电；官方推荐 V_BCKP 4.7µF + 100nF + 33pF；无源天线直连不需隔直电容；`RESERVED` 必须悬空；`SET` 是星座选择。
 6. **ProMicro（nologo）**：P0.13 低 → 关断 3.3V/VCC；BOOST 短接 → 充电 100→300mA（电池须 >500mAh）；板载 LDO 输出 3.3V；待机 ~20µA；电池接口 B+/B−。
+
+---
+
+## 9. 原理图实现状态与已知偏差
+
+### 9.1 已实现
+
+四页原理图：**PWR / AON / SW / MCU**。全工程 **39 个器件、28 个网络、零匿名网络**；
+悬空引脚全部为设计不接项（NC / INT2 / ADC1-3 / RESERVED / NFC / 排针固定脚）。
+电源域（VBAT / 3.3V_AON / 3.3V_SW / GPS_BCKP）端点与本文 §4 一致。
+
+### 9.2 已知偏差（打板前必须处理）
+
+| # | 项 | 现状 | 处理 |
+| --- | --- | --- | --- |
+| 1 | **M1 符号与封装** | 原理图用库件 `26PIN`（排针符号）代模块焊盘，其封装是 **FPC 26P/1.0mm**，与模块的 2.54mm 方形焊盘不符 | **必须在库中新建符号 + 2.54mm 26 pad 封装**后替换；引脚号 1–26 与本文 §3.1 一一对应，替换时保持焊盘号不变 |
+| 2 | **J1 电池座** | 当前库件 `KF2EDGV-3.81`（3.81mm 通孔端子） | 与 v1 外壳电池口不符。打板前改为 JST 1.25 2P 或 XH2.54 2P（库存 #40/#37） |
+| 3 | **J2 OLED 座** | 当前库件 `2.54-4P` 实为 XH-A 2.5mm 通孔 | 需改为 **2.54mm 4P 排母**（OLED 模块 2.54 排针插装） |
+| 4 | **SW2/SW3** | 当前 `TS1187AQCHT` 为 6×6×5.0mm、高 5mm | 与 v1 外壳按键位（约 2mm 高）不符；打板前换 4×4 / 5×5 低高度 SMD 键并复核装配高度 |
+| 5 | **DNP 未编码** | EDA 内所有器件 `Add into BOM = yes` | R8/R9 与 U2A/U2B 之一需在 BOM/SMT 中明确标 **DNP**；⚠ 两颗加速度计 INT1 均为推挽输出且并接同一网络，**不可同时贴装** |
+| 6 | **天线料号** | 原理图用 `CGIP.25.4.A.02`（Taoglas 25.4mm 系列，1 脚馈电） | 与 v1 的 25×25×4 陶瓷贴片同尺寸级别，打板前按实物料号核对焊盘 |
+
+### 9.3 固件需同步的硬件变更（相对 v1）
+
+| 项 | v1 | v2.1 |
+| --- | --- | --- |
+| GPS UART | P0.22 (RX) / P0.20 (TX) | **P0.08 (RX) / P0.06 (TX)** |
+| GPS 电源使能 | P0.24（ATGM 模块 ON/OFF） | **P1.13 → L76K.WAKEUP**（低=Standby） |
+| GPS 复位 | 无 | **P0.02 → L76K.RESET_N**（平时高阻，异常时拉低 ≥100ms） |
+| 用户按键 | P1.00 | **P1.11** |
+| 加速度计 | LIS3DHTR @0x18（单总线） | U2B = LIS3DHTR **0x18** / U2A = LIS2DW12 **0x19**，启动探测 |
+| I²C 总线 | **1 条**（OLED + 传感器共用，P1.04/P0.11） | **2 条**：ACC = P1.00/P0.24，OLED = P1.04/P0.11（需新增第二路 TWIM） |
+| 存储 | microSD（FAT，`storage.rs` + `usb_msc.rs`） | **W25Q128 SPI-NOR**（驱动需重写；`usb_msc` 失效） |
+| 气压计 | BMP280 | 取消（删任务） |
+| 电量采样 | 200k/300k，系数 1.667 | **200k/200k，系数 2.0**；EN 拉高后等 **≥90ms** 再采 |
+| 3.3V 门控 | P0.13 恒高 | 深睡时拉低；关断前 GPS_TX / GPS_RST / OLED SDA/SCL 置高阻 |
+
+### 9.4 低电量策略（补充约束）
+
+3.3V_AON 在电池 &lt; ~3.32V 时随电池跌落，而 **W25Q128 最低工作电压 2.7V**：
+电池低于 **2.75V** 时应禁止 flash 擦写并停止记录，避免半写损坏扇区。
