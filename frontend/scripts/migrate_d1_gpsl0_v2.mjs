@@ -20,7 +20,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -144,64 +144,99 @@ async function openBackend(opts) {
   }
 
   const modeFlag = opts.remote ? "--remote" : "--local";
-  let tmpSeq = 0;
 
-  function runWranglerFile(filePath, jsonOutput) {
-    const args = ["wrangler", "d1", "execute", opts.db, modeFlag, `--file=${filePath}`];
-    if (jsonOutput) args.push("--json");
-    const stdout = execFileSync(
-      "npx",
-      args,
-      {
-        cwd: FRONTEND_DIR,
-        shell: process.platform === "win32",
-        encoding: "utf8",
-        maxBuffer: 128 * 1024 * 1024,
-        stdio: ["ignore", "pipe", "inherit"],
-      }
+  function resolveNpxCli() {
+    const candidates = [];
+    if (process.env.npm_execpath) {
+      candidates.push(path.join(path.dirname(process.env.npm_execpath), "npx-cli.js"));
+    }
+    const execDir = path.dirname(process.execPath);
+    candidates.push(
+      path.join(execDir, "node_modules", "npm", "bin", "npx-cli.js"),
+      path.join(execDir, "nodejs", "node_modules", "npm", "bin", "npx-cli.js")
     );
-    return stdout;
+    for (const candidate of candidates) {
+      if (candidate && fs.existsSync(candidate)) return candidate;
+    }
+    return null;
+  }
+
+  function quoteWinCmdArg(arg) {
+    const s = String(arg);
+    if (s.length === 0) return '""';
+    if (!/[\s"&|<>()^%']/.test(s)) return s;
+    return `"${s.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, "$1$1")}"`;
+  }
+
+  const npxCli = resolveNpxCli();
+
+  function runWrangler(wranglerArgs, captureStdout) {
+    const fullArgs = ["--yes", "wrangler", ...wranglerArgs];
+    const ioOpts = {
+      cwd: FRONTEND_DIR,
+      encoding: "utf8",
+      maxBuffer: 128 * 1024 * 1024,
+      stdio: captureStdout ? ["ignore", "pipe", "inherit"] : "inherit",
+    };
+    if (npxCli) {
+      return execFileSync(process.execPath, [npxCli, ...fullArgs], ioOpts);
+    }
+    if (process.platform === "win32") {
+      const cmd = ["npx.cmd", ...fullArgs].map(quoteWinCmdArg).join(" ");
+      return execSync(cmd, ioOpts);
+    }
+    return execFileSync("npx", fullArgs, ioOpts);
   }
 
   return {
     label: `d1:${opts.db} (${modeFlag})`,
     query(sql) {
-      fs.mkdirSync(opts.backupDir, { recursive: true });
-      const tmpSql = path.join(opts.backupDir, `.tmp-query-${++tmpSeq}.sql`);
-      fs.writeFileSync(tmpSql, `${sql}\n`, "utf8");
-      try {
-        const raw = runWranglerFile(tmpSql, true);
-        const startArr = raw.indexOf("[");
-        const startObj = raw.indexOf("{");
-        let start = -1;
-        if (startArr !== -1 && startObj !== -1) start = Math.min(startArr, startObj);
-        else start = Math.max(startArr, startObj);
-        if (start === -1) {
-          throw new Error(`Unexpected wrangler D1 JSON output: ${raw.slice(0, 300)}`);
-        }
-        const parsed = JSON.parse(raw.slice(start));
-        if (Array.isArray(parsed)) {
-          const rows = [];
-          for (const stmtRes of parsed) {
-            if (stmtRes?.success === false) {
-              throw new Error(`D1 query failed: ${JSON.stringify(stmtRes)}`);
-            }
-            if (Array.isArray(stmtRes?.results)) rows.push(...stmtRes.results);
-          }
-          return rows;
-        }
-        if (parsed?.success === false) {
-          throw new Error(`D1 query failed: ${JSON.stringify(parsed)}`);
-        }
-        if (Array.isArray(parsed?.results)) return parsed.results;
-        if (Array.isArray(parsed?.result?.[0]?.results)) return parsed.result[0].results;
-        return [];
-      } finally {
-        fs.rmSync(tmpSql, { force: true });
+      // Wrangler 4 `--remote --file` uploads via D1's import API and returns query stats
+      // instead of SELECT result rows; `--command` returns actual JSON rows in both modes.
+      const raw = runWrangler(
+        ["d1", "execute", opts.db, modeFlag, "--yes", "--command", sql, "--json"],
+        true
+      );
+      const startArr = raw.indexOf("[");
+      const startObj = raw.indexOf("{");
+      let start = -1;
+      if (startArr !== -1 && startObj !== -1) start = Math.min(startArr, startObj);
+      else start = Math.max(startArr, startObj);
+      if (start === -1) {
+        throw new Error(`Unexpected wrangler D1 JSON output: ${raw.slice(0, 300)}`);
       }
+      const parsed = JSON.parse(raw.slice(start));
+      let rows;
+      if (Array.isArray(parsed)) {
+        rows = [];
+        for (const stmtRes of parsed) {
+          if (stmtRes?.success === false) {
+            throw new Error(`D1 query failed: ${JSON.stringify(stmtRes)}`);
+          }
+          if (Array.isArray(stmtRes?.results)) rows.push(...stmtRes.results);
+        }
+      } else if (parsed?.success === false) {
+        throw new Error(`D1 query failed: ${JSON.stringify(parsed)}`);
+      } else if (Array.isArray(parsed?.results)) {
+        rows = parsed.results;
+      } else if (Array.isArray(parsed?.result?.[0]?.results)) {
+        rows = parsed.result[0].results;
+      } else {
+        rows = [];
+      }
+      if (
+        rows.some(
+          (r) => r && typeof r === "object" && "Total queries executed" in r && !("track_id" in r)
+        )
+      ) {
+        throw new Error(
+          `Wrangler returned upload summary instead of SELECT rows: ${JSON.stringify(rows[0])}`
+        );
+      }
+      return rows;
     },
     executeFile(filePath) {
-      runWranglerFile(filePath, false);
+      runWrangler(["d1", "execute", opts.db, modeFlag, "--yes", `--file=${filePath}`], false);
     },
     close() {},
   };
@@ -276,8 +311,8 @@ async function main() {
     const blobsDir = path.join(opts.backupDir, "blobs");
     fs.mkdirSync(blobsDir, { recursive: true });
 
-    const maxFetchBytes = 256 * 1024;
-    const maxFetchRows = 25;
+    const maxFetchBytes = 128 * 1024;
+    const maxFetchRows = 15;
     const fetchGroups = [];
     let curGroup = [];
     let curEstBytes = 0;
