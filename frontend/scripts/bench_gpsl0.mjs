@@ -32,13 +32,14 @@ import { bitsPerPoint, formatBytes, markdownTable } from "./lib/metrics.mjs";
 
 function parseArgs(argv) {
   const opts = {
+    version: undefined,
     quantum: "auto",
     altQuantum: 10,
     modelId: DEFAULT_MODEL_ID,
-    blockPoints: 16384,
+    blockPoints: undefined,
     syncBlocks: 0,
-    altMode: 1,
-    predictor: "tn-clamped",
+    altMode: undefined,
+    predictor: undefined,
     packed: false,
     verify: false,
     json: null,
@@ -58,6 +59,7 @@ function parseArgs(argv) {
       const v = arg.slice(13);
       opts.altQuantum = v === "auto" ? "auto" : Number(v);
     } else if (arg.startsWith("--model=")) opts.modelId = Number(arg.slice(8));
+    else if (arg.startsWith("--version=")) opts.version = Number(arg.slice(10));
     else if (arg.startsWith("--blockPoints=")) opts.blockPoints = Number(arg.slice(14));
     else if (arg.startsWith("--syncBlocks=")) opts.syncBlocks = Number(arg.slice(13));
     else if (arg.startsWith("--altMode=")) opts.altMode = Number(arg.slice(10));
@@ -86,6 +88,7 @@ const opts = parseArgs(process.argv);
 const encodeOpts = {
   quantum: opts.quantum,
   altQuantum: opts.altQuantum,
+  version: opts.version,
   modelId: opts.modelId,
   blockPoints: opts.blockPoints,
   syncBlocks: opts.syncBlocks,
@@ -211,9 +214,9 @@ const worst5 = sorted.slice(0, 5);
 const best5 = sorted.slice(-5).reverse();
 
 console.log(
-  `\nGPSL0 bench | model_id=${opts.modelId} ctx=${layout.nCtx} slots=${layout.nSlot} | ` +
-    `quantum=${opts.quantum} altQ=${opts.altQuantum} block=${opts.blockPoints}` +
-    ` sync=${opts.syncBlocks} altMode=${opts.altMode} pred=${opts.predictor}`
+  `\nGPSL0 bench | v=${opts.version ?? (opts.modelId <= 10 ? 1 : 2)} model_id=${opts.modelId} ctx=${layout.nCtx} slots=${layout.nSlot} | ` +
+    `quantum=${opts.quantum} altQ=${opts.altQuantum} block=${opts.blockPoints ?? "auto"}` +
+    ` sync=${opts.syncBlocks} altMode=${opts.altMode ?? "auto"} pred=${opts.predictor ?? "auto"}`
 );
 console.log(
   `tracks=${totals.tracks} points=${totals.points.toLocaleString()} | ` +

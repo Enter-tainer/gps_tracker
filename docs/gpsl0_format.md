@@ -4,6 +4,11 @@
 > 必须逐位一致，任何偏差都视为 bug。设计动机见 `docs/gpsl0_design.md`，实测与消融见
 > `docs/gpsl0_impl_report.md`。
 >
+> **v3 升级说明（2026-11-27）**：面向更高压缩率、紧凑容器与 Rust/WASM/`#![no_std]` 统一实现的 **GPSL0 v3**
+> （`version = 2`, `model_id = 22`）已在 [`docs/gpsl0_v3_format.md`](./gpsl0_v3_format.md)
+> 冻结发布（实测与消融见 [`docs/gpsl0_v3_report.md`](./gpsl0_v3_report.md)）。
+> 编解码器已全量切换写入 v3，并保留向后兼容解码 v1 全系（`model_id = 1..10`）码流；下方 v1 冻结契约正文保持不变。
+>
 > 参考实现：`frontend/src/services/gpsl0/`（`container.ts` 容器、`rangecoder.ts` 算术编码、
 > `model.ts` 预测器/上下文/二值化、`index.ts` 公开 API）。
 >

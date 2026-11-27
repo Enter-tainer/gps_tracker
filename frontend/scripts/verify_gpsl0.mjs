@@ -389,12 +389,16 @@ function runTierSuite(checks, tracks, codec, tier, args) {
     }
     if (meta && headerChecks.length < 3) {
       const nPointsMeta = meta?.n_points ?? meta?.nPoints ?? null;
+      const expectedVersion = codec.api.DEFAULT_VERSION ?? 2;
+      const expectedModelId = codec.api.DEFAULT_MODEL_ID ?? 22;
       headerChecks.push({
         id: tr.id,
         tier,
+        versionOk: (meta?.version ?? null) === expectedVersion,
         nPointsOk: nPointsMeta === tr.n,
-        modelIdOk: (meta?.model_id ?? meta?.modelId ?? null) === 7,
+        modelIdOk: (meta?.model_id ?? meta?.modelId ?? null) === expectedModelId,
         meta: {
+          version: meta?.version ?? null,
           n_points: nPointsMeta,
           coordQuantum: meta?.coord_quantum ?? meta?.coordQuantum ?? null,
           altQuantum: meta?.alt_quantum ?? meta?.altQuantum ?? null,
@@ -612,10 +616,10 @@ function runTierSuite(checks, tracks, codec, tier, args) {
     }
   }
   if (codec.api.inspectHeader) {
-    const bad = headerChecks.filter((c) => c.error || !c.nPointsOk || !c.modelIdOk);
+    const bad = headerChecks.filter((c) => c.error || !c.versionOk || !c.nPointsOk || !c.modelIdOk);
     checks.assert(
       `HDR-${prefix}`,
-      `${tierName}: inspectGpsl0Header 与 encode 输入一致（n_points / model_id=7）`,
+      `${tierName}: inspectGpsl0Header 与 encode 输入一致（version / n_points / model_id）`,
       headerChecks.length > 0 && bad.length === 0,
       bad.length
         ? JSON.stringify(bad.slice(0, 3))
@@ -849,11 +853,12 @@ function runVariantsSuite(checks, tracks, codec, args) {
   const big = byN.find((t) => t.n >= 30000) ?? byN[0];
   const out = { coordModes: [], altModes: [], altQuantums: [], syncWindows: [], models: [], edges: [] };
 
-  // ---- 1. 三种坐标预测器（doc §3.2：0=tn, 1=naive, 2=tn-clamped） ----
+  // ---- 1. 四种坐标预测器（v2: 0=tn, 1=naive, 2=tn-clamped, 3=d1） ----
   for (const [name, expectedMode] of [
     ["tn", 0],
     ["naive", 1],
     ["tn-clamped", 2],
+    ["d1", 3],
   ]) {
     try {
       const b = codec.api.encode(med, { coordPredictor: name });
@@ -878,7 +883,7 @@ function runVariantsSuite(checks, tracks, codec, args) {
   );
   checks.assert(
     "VAR-COORD-MODES",
-    "变体：三种坐标预测器（tn / naive / tn-clamped）均可编码+解码，且坐标无损、meta.coordMode 正确",
+    "变体：四种坐标预测器（tn / naive / tn-clamped / d1）均可编码+解码，且坐标无损、meta.coordMode 正确",
     coordModesOk,
     out.coordModes
       .map((r) => r.error ?? `${r.name}:mode=${r.actualMode}(want ${r.expectedMode}),latDiff=${r.latDiff},lonDiff=${r.lonDiff}`)
@@ -1010,8 +1015,8 @@ function runVariantsSuite(checks, tracks, codec, args) {
     );
   }
 
-  // ---- 5. model_id 变体（doc §7：解码器必须支持 1..9 中列出的档位） ----
-  for (const id of [1, 2, 3, 4, 5, 6, 7, 8, 9]) {
+  // ---- 5. model_id 变体（v1: 1..9，v3: 22） ----
+  for (const id of [1, 2, 3, 4, 5, 6, 7, 8, 9, 22]) {
     try {
       const b = codec.api.encode(med, { modelId: id });
       const meta = codec.api.inspectHeader?.(b) ?? null;
@@ -1029,7 +1034,9 @@ function runVariantsSuite(checks, tracks, codec, args) {
     }
   }
   const supported = out.models.filter((r) => !r.error);
-  const modelsOk = supported.length > 0 && supported.every((r) => r.latDiff === 0 && r.lonDiff === 0 && r.altMax <= 5);
+  const modelsOk =
+    supported.length === 10 &&
+    supported.every((r) => r.latDiff === 0 && r.lonDiff === 0 && r.altMax <= 5 && (r.actual == null || r.actual === r.modelId));
   checks.assert(
     "VAR-MODELS",
     `变体：model_id 已支持档位（${supported.map((r) => r.modelId).join(",") || "none"}）roundtrip 正确`,
@@ -1223,76 +1230,180 @@ function runRobustnessSuite(checks, tracks, codec, args) {
     return copy;
   };
 
+  const crc32Table = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) {
+    let c = i;
+    for (let k = 0; k < 8; k++) c = (c & 1) !== 0 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    crc32Table[i] = c >>> 0;
+  }
+  const crc32Buf = (u8, lo = 0, hi = u8.length) => {
+    let c = 0xffffffff;
+    for (let i = lo; i < hi; i++) c = crc32Table[(c ^ u8[i]) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  };
+
   try {
-    for (const tr of [small, medium]) {
-      const enc = U.timedSync(() => codec.api.encode(tr));
+    const fixtures = [
+      [small, undefined, ""],
+      [medium, undefined, ""],
+      [small, { version: 1, modelId: 7 }, "-v1"],
+    ];
+    for (const [tr, encOpts, suffix] of fixtures) {
+      const enc = U.timedSync(() => codec.api.encode(tr, encOpts));
       const bytes = Buffer.from(enc.result);
-      const tag = `${tr.id}(n=${tr.n})`;
+      const tag = `${tr.id}${suffix}(n=${tr.n})`;
       let meta = null;
       try {
         meta = codec.api.inspectHeader?.(bytes) ?? null;
       } catch {
         /* 用默认布局 */
       }
+      const ver = Number(meta?.version ?? bytes.readUInt16LE(8));
       const nb = Number(meta?.nBlocks ?? meta?.n_blocks ?? Math.ceil(tr.n / 4096));
       const bp = Number(meta?.blockPoints ?? meta?.block_points ?? 4096);
-      const headerLen = 48;
-      const indexLen = nb * 24;
-      const payloadStart = headerLen + indexLen;
-      fixtureMeta.push({ id: tr.id, n: tr.n, bytes: bytes.length, sha256: sha256(bytes), nBlocks: nb, blockPoints: bp });
-      fs.writeFileSync(path.join(ROBUST_DIR, `base-${tr.id}.gpsl0`), bytes);
+      const headerLen = ver === 2 ? 36 : 48;
+      const payloadStart =
+        ver === 2
+          ? nb > 0
+            ? Number(meta?.blockIndex?.[0]?.byteOffset ?? headerLen)
+            : headerLen
+          : headerLen + nb * 24;
+      const indexLen = Math.max(0, payloadStart - headerLen);
+      fixtureMeta.push({
+        id: `${tr.id}${suffix}`,
+        version: ver,
+        n: tr.n,
+        bytes: bytes.length,
+        sha256: sha256(bytes),
+        nBlocks: nb,
+        blockPoints: bp,
+      });
+      fs.writeFileSync(path.join(ROBUST_DIR, `base-${tr.id}${suffix}.gpsl0`), bytes);
 
       const setU32 = (off, v) => mutate(bytes, (b) => b.writeUInt32LE(v >>> 0, off));
       const setU16 = (off, v) => mutate(bytes, (b) => b.writeUInt16LE(v & 0xffff, off));
-      const idx = (blk, field) => headerLen + blk * 24 + field;
-      const lastBlk = Math.max(0, nb - 1);
+      const setU8 = (off, v) => mutate(bytes, (b) => (b[off] = v & 0xff));
 
       // --- 1. magic / version / flags ---
       runCase(`${tag} 坏 magic[0]`, "magic", mutate(bytes, (b) => (b[0] ^= 0xff)));
       runCase(`${tag} 坏 magic[7]`, "magic", mutate(bytes, (b) => (b[7] ^= 0x01)));
-      runCase(`${tag} version=2`, "magic", setU16(8, 2));
-      runCase(`${tag} flags coord_mode=3（保留）`, "header-field", setU16(10, (bytes.readUInt16LE(10) | 0x18) & 0xffff));
-      runCase(`${tag} flags 未定义位 bit5`, "header-field", setU16(10, (bytes.readUInt16LE(10) | 0x20) & 0xffff));
+      runCase(`${tag} version=99`, "magic", setU16(8, 99));
 
-      // --- 2. 截断：头 / 索引 / 载荷边界 ---
-      const cuts = new Set([1, 4, 8, 12, 16, 24, 32, 40, 44, 47, 48]);
-      cuts.add(headerLen + Math.floor(indexLen / 2));
-      cuts.add(headerLen + indexLen);
-      cuts.add(payloadStart + 1);
-      cuts.add(payloadStart + Math.floor((bytes.length - payloadStart) / 2));
-      cuts.add(bytes.length - 1);
-      cuts.add(bytes.length - 5);
-      for (const c of [...cuts].filter((v) => v > 0 && v < bytes.length).sort((a, b) => a - b)) {
-        runCase(`${tag} 截断 @${c}/${bytes.length}B`, "truncate", bytes.subarray(0, c));
+      if (ver === 2) {
+        const withV2HdrCrc = (fn) =>
+          mutate(bytes, (b) => {
+            fn(b);
+            b.writeUInt32LE(crc32Buf(b, 0, 28), 28);
+          });
+        const withV2IdxCrc = (fn) =>
+          mutate(bytes, (b) => {
+            fn(b);
+            b.writeUInt32LE(crc32Buf(b, headerLen, payloadStart), 32);
+          });
+
+        runCase(`${tag} flags 未定义位 bit5`, "header-field", setU16(10, (bytes.readUInt16LE(10) | 0x20) & 0xffff));
+        runCase(
+          `${tag} flags 未定义位 bit5 (valid crc)`,
+          "header-field",
+          withV2HdrCrc((b) => b.writeUInt16LE((b.readUInt16LE(10) | 0x20) & 0xffff, 10))
+        );
+
+        // --- 2. 截断：v2 头 / 索引 / 载荷边界 ---
+        const cuts = new Set([1, 4, 8, 12, 16, 24, 28, 32, 35, 36]);
+        cuts.add(headerLen + Math.floor(indexLen / 2));
+        cuts.add(payloadStart);
+        cuts.add(payloadStart + 1);
+        cuts.add(payloadStart + Math.floor((bytes.length - payloadStart) / 2));
+        cuts.add(bytes.length - 1);
+        cuts.add(bytes.length - 5);
+        for (const c of [...cuts].filter((v) => v > 0 && v < bytes.length).sort((a, b) => a - b)) {
+          runCase(`${tag} 截断 @${c}/${bytes.length}B`, "truncate", bytes.subarray(0, c));
+        }
+
+        // --- 3. v2 header 字段精确篡改（36B header：raw CRC 与 valid-CRC 双重校验） ---
+        runCase(`${tag} coord_quantum=0 @12 (valid crc)`, "header-field", withV2HdrCrc((b) => b.writeUInt32LE(0, 12)));
+        runCase(`${tag} coord_quantum=3 @12 (valid crc)`, "header-field", withV2HdrCrc((b) => b.writeUInt32LE(3, 12)));
+        runCase(`${tag} coord_quantum=10000001 @12 (valid crc)`, "header-field", withV2HdrCrc((b) => b.writeUInt32LE(10000001, 12)));
+        runCase(`${tag} alt_quantum=3 @26 (valid crc)`, "header-field", withV2HdrCrc((b) => (b[26] = 3)));
+        runCase(`${tag} n_points=n+1 @16 (raw)`, "header-field", setU32(16, (tr.n + 1) >>> 0));
+        runCase(`${tag} n_points=n+bp @16 (valid crc)`, "header-field", withV2HdrCrc((b) => b.writeUInt32LE((tr.n + bp) >>> 0, 16)));
+        runCase(`${tag} n_points=0x7FFFFFFF @16 (valid crc)`, "header-field", withV2HdrCrc((b) => b.writeUInt32LE(0x7fffffff, 16)));
+        runCase(`${tag} block_points=0 @20 (valid crc)`, "header-field", withV2HdrCrc((b) => b.writeUInt32LE(0, 20)));
+        runCase(`${tag} block_points=1 @20 (valid crc)`, "header-field", withV2HdrCrc((b) => b.writeUInt32LE(1, 20)));
+        runCase(`${tag} block_points=0x200001 @20 (valid crc)`, "header-field", withV2HdrCrc((b) => b.writeUInt32LE(0x200001, 20)));
+        runCase(`${tag} sync_blocks=n_blocks+1 @24 (valid crc)`, "header-field", withV2HdrCrc((b) => b.writeUInt16LE((nb + 1) & 0xffff, 24)));
+        runCase(`${tag} model_id=99 @27 (valid crc)`, "header-field", withV2HdrCrc((b) => (b[27] = 99)));
+        runCase(`${tag} coord_quantum=0 @12 (raw)`, "header-field", setU32(12, 0));
+        runCase(`${tag} alt_quantum=3 @26 (raw)`, "header-field", setU8(26, 3));
+        runCase(`${tag} crc32_header 翻 bit @28`, "header-field", mutate(bytes, (b) => (b[28] ^= 0x01)));
+        runCase(`${tag} crc32_index 翻 bit @32`, "header-field", mutate(bytes, (b) => (b[32] ^= 0x01)));
+
+        // --- 4. v2 delta-varint 索引字段篡改 ---
+        if (indexLen >= 10) {
+          runCase(`${tag} v2 index[0] raw flip`, "index-field", mutate(bytes, (b) => (b[headerLen] ^= 0x01)));
+          runCase(
+            `${tag} v2 index[last].crc32_payload 翻 bit (valid index crc)`,
+            "index-field",
+            withV2IdxCrc((b) => (b[payloadStart - 1] ^= 0x01))
+          );
+          runCase(
+            `${tag} v2 index[last].byte_length varint 破坏 (valid index crc)`,
+            "index-field",
+            withV2IdxCrc((b) => (b[payloadStart - 5] |= 0x80))
+          );
+          runCase(
+            `${tag} v2 index[last].byte_length +/-1 (valid index crc)`,
+            "index-field",
+            withV2IdxCrc((b) => (b[payloadStart - 5] ^= 0x01))
+          );
+        }
+      } else {
+        const idx = (blk, field) => headerLen + blk * 24 + field;
+        const lastBlk = Math.max(0, nb - 1);
+
+        runCase(`${tag} flags coord_mode=3（v1 保留）`, "header-field", setU16(10, (bytes.readUInt16LE(10) | 0x18) & 0xffff));
+        runCase(`${tag} flags 未定义位 bit5`, "header-field", setU16(10, (bytes.readUInt16LE(10) | 0x20) & 0xffff));
+
+        // --- 2. 截断：v1 头 / 索引 / 载荷边界 ---
+        const cuts = new Set([1, 4, 8, 12, 16, 24, 32, 40, 44, 47, 48]);
+        cuts.add(headerLen + Math.floor(indexLen / 2));
+        cuts.add(headerLen + indexLen);
+        cuts.add(payloadStart + 1);
+        cuts.add(payloadStart + Math.floor((bytes.length - payloadStart) / 2));
+        cuts.add(bytes.length - 1);
+        cuts.add(bytes.length - 5);
+        for (const c of [...cuts].filter((v) => v > 0 && v < bytes.length).sort((a, b) => a - b)) {
+          runCase(`${tag} 截断 @${c}/${bytes.length}B`, "truncate", bytes.subarray(0, c));
+        }
+
+        // --- 3. v1 header 字段精确篡改（docs/gpsl0_format.md §1.1 / §8） ---
+        runCase(`${tag} coord_quantum=0 @12`, "header-field", setU32(12, 0));
+        runCase(`${tag} coord_quantum=3 @12`, "header-field", setU32(12, 3));
+        runCase(`${tag} coord_quantum=10000001 @12`, "header-field", setU32(12, 10000001));
+        runCase(`${tag} alt_quantum=3 @16`, "header-field", setU32(16, 3));
+        runCase(`${tag} n_points=n+1 @20`, "header-field", setU32(20, tr.n + 1));
+        runCase(`${tag} n_points=0x7FFFFFFF @20`, "header-field", setU32(20, 0x7fffffff));
+        runCase(`${tag} block_points=0 @24`, "header-field", setU32(24, 0));
+        runCase(`${tag} block_points=1 @24`, "header-field", setU32(24, 1));
+        runCase(`${tag} block_points=0x200001 @24`, "header-field", setU32(24, 0x200001));
+        runCase(`${tag} sync_blocks=n_blocks+1 @28`, "header-field", setU32(28, nb + 1));
+        runCase(`${tag} n_blocks=n_blocks+1 @32`, "header-field", setU32(32, nb + 1));
+        runCase(`${tag} model_id=99 @36`, "header-field", setU32(36, 99));
+        runCase(`${tag} crc32_header 翻 bit @40`, "header-field", mutate(bytes, (b) => (b[40] ^= 0x01)));
+
+        // --- 4. v1 索引字段精确篡改（§1.2 / §8） ---
+        runCase(`${tag} index[0].point_count=0`, "index-field", setU32(idx(0, 8), 0));
+        runCase(`${tag} index[0].point_count=block_points+1`, "index-field", setU32(idx(0, 8), bp + 1));
+        runCase(`${tag} index[0].byte_offset=0xFFFFFFFF`, "index-field", setU32(idx(0, 12), 0xffffffff));
+        runCase(`${tag} index[0].byte_length=0xFFFFFFFF`, "index-field", setU32(idx(0, 16), 0xffffffff));
+        runCase(`${tag} index[0].crc32_payload 翻 bit`, "index-field", mutate(bytes, (b) => (b[idx(0, 20)] ^= 0x01)));
+        runCase(`${tag} index[last].end_ts=0（<start_ts）`, "index-field", setU32(idx(lastBlk, 4), 0));
+        if (nb > 1) {
+          const off0 = bytes.readUInt32LE(idx(0, 12));
+          runCase(`${tag} index[1].byte_offset=index[0].offset（重叠）`, "index-field", setU32(idx(1, 12), off0));
+        }
+        runCase(`${tag} index 点数之和=n_points+1`, "index-field", setU32(idx(lastBlk, 8), bytes.readUInt32LE(idx(lastBlk, 8)) + 1));
       }
-
-      // --- 3. header 字段精确篡改（docs/gpsl0_format.md §1.1 / §8） ---
-      runCase(`${tag} coord_quantum=0 @12`, "header-field", setU32(12, 0));
-      runCase(`${tag} coord_quantum=3 @12`, "header-field", setU32(12, 3));
-      runCase(`${tag} coord_quantum=10000001 @12`, "header-field", setU32(12, 10000001));
-      runCase(`${tag} alt_quantum=3 @16`, "header-field", setU32(16, 3));
-      runCase(`${tag} n_points=n+1 @20`, "header-field", setU32(20, tr.n + 1));
-      runCase(`${tag} n_points=0x7FFFFFFF @20`, "header-field", setU32(20, 0x7fffffff));
-      runCase(`${tag} block_points=0 @24`, "header-field", setU32(24, 0));
-      runCase(`${tag} block_points=1 @24`, "header-field", setU32(24, 1));
-      runCase(`${tag} block_points=0x200001 @24`, "header-field", setU32(24, 0x200001));
-      runCase(`${tag} sync_blocks=n_blocks+1 @28`, "header-field", setU32(28, nb + 1));
-      runCase(`${tag} n_blocks=n_blocks+1 @32`, "header-field", setU32(32, nb + 1));
-      runCase(`${tag} model_id=99 @36`, "header-field", setU32(36, 99));
-      runCase(`${tag} crc32_header 翻 bit @40`, "header-field", mutate(bytes, (b) => (b[40] ^= 0x01)));
-
-      // --- 4. 索引字段精确篡改（§1.2 / §8） ---
-      runCase(`${tag} index[0].point_count=0`, "index-field", setU32(idx(0, 8), 0));
-      runCase(`${tag} index[0].point_count=block_points+1`, "index-field", setU32(idx(0, 8), bp + 1));
-      runCase(`${tag} index[0].byte_offset=0xFFFFFFFF`, "index-field", setU32(idx(0, 12), 0xffffffff));
-      runCase(`${tag} index[0].byte_length=0xFFFFFFFF`, "index-field", setU32(idx(0, 16), 0xffffffff));
-      runCase(`${tag} index[0].crc32_payload 翻 bit`, "index-field", mutate(bytes, (b) => (b[idx(0, 20)] ^= 0x01)));
-      runCase(`${tag} index[last].end_ts=0（<start_ts）`, "index-field", setU32(idx(lastBlk, 4), 0));
-      if (nb > 1) {
-        const off0 = bytes.readUInt32LE(idx(0, 12));
-        runCase(`${tag} index[1].byte_offset=index[0].offset（重叠）`, "index-field", setU32(idx(1, 12), off0));
-      }
-      runCase(`${tag} index 点数之和=n_points+1`, "index-field", setU32(idx(lastBlk, 8), bytes.readUInt32LE(idx(lastBlk, 8)) + 1));
 
       // --- 5. 随机翻 bit（header / 索引 / 载荷三区，按精确布局） ---
       const regions = [
@@ -1415,7 +1526,7 @@ function runRobustnessSuite(checks, tracks, codec, args) {
   );
   checks.info(
     "ROB-INDEX-FLIP",
-    "健壮性：索引区随机翻 bit 的可发现性（索引无独立 CRC，靠越界/点数之和/CRC 检查兜底）",
+    "健壮性：索引区随机翻 bit 的可发现性（v2 有 crc32_index 校验；v1 靠越界/点数之和/CRC 检查兜底）",
     `indexFlips=${indexFlips.length}, detected=${indexFlips.filter((c) => c.status === "threw").length}, silent=${indexFlips.filter((c) => c.status === "ok").length}` +
       (indexFlips.some((c) => c.status === "ok")
         ? `; silentExamples=${indexFlips.filter((c) => c.status === "ok").slice(0, 3).map((c) => c.label).join("; ")}`
@@ -1423,7 +1534,7 @@ function runRobustnessSuite(checks, tracks, codec, args) {
   );
   checks.info(
     "ROB-HEADER-FLIP",
-    "健壮性：header 区随机翻 bit 的可发现性（header 有 crc32 覆盖 0..39，40..47 除外）",
+    "健壮性：header 区随机翻 bit 的可发现性（v2 crc32 覆盖 0..27 且 28..35 为 header/index crc32；v1 覆盖 0..39）",
     `headerFlips=${headerFlips.length}, detected=${headerFlips.filter((c) => c.status === "threw").length}, silent=${headerFlips.filter((c) => c.status === "ok").length}` +
       (headerFlips.some((c) => c.status === "ok")
         ? `; silentExamples=${headerFlips.filter((c) => c.status === "ok").slice(0, 3).map((c) => c.label).join("; ")}`
@@ -1502,11 +1613,11 @@ async function runRefdecSuite(checks, tracks, codec, args) {
   let totalMismatch = 0;
   let firstFailure = null;
   let skipped = 0;
-  // 三档：默认（auto 坐标无损）/ Tier-1 quantum=10 / Tier-0 完全无损（altQuantum=1，对原始值严格相等）
+  // 跨实现验证：verify_gpsl0_refdec.mjs 为 v1 独立参考解码器，三档显式以 v1/modelId=7 编码比对
   const configs = [
-    { label: "default", opts: {}, strictOriginal: false },
-    { label: "q10", opts: { quantum: 10 }, strictOriginal: false },
-    { label: "lossless", opts: { quantum: "auto", altQuantum: 1 }, strictOriginal: true },
+    { label: "default", opts: { version: 1, modelId: 7 }, strictOriginal: false },
+    { label: "q10", opts: { version: 1, modelId: 7, quantum: 10 }, strictOriginal: false },
+    { label: "lossless", opts: { version: 1, modelId: 7, quantum: "auto", altQuantum: 1 }, strictOriginal: true },
   ];
   for (const tr of sample) {
     for (const cfg of configs) {

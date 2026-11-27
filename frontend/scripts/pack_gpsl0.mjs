@@ -12,7 +12,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { loadDataset, loadGpzSizes, listTrackFiles } from "./lib/dataset.mjs";
-import { encodeGpsl0, decodeGpsl0, DEFAULT_MODEL_ID, getLayout } from "../src/services/gpsl0/index.ts";
+import { encodeGpsl0, decodeGpsl0, DEFAULT_VERSION, DEFAULT_MODEL_ID, getLayout } from "../src/services/gpsl0/index.ts";
 import { FRONTEND_ROOT, REPO_ROOT } from "./lib/dataset.mjs";
 import { bitsPerPoint, formatBytes } from "./lib/metrics.mjs";
 
@@ -103,7 +103,7 @@ const index = {
   generatedAt: new Date().toISOString(),
   codec: {
     format: "GPSL0",
-    version: 1,
+    version: DEFAULT_VERSION,
     modelId: DEFAULT_MODEL_ID,
     nCtx: layout.nCtx,
     nSlot: layout.nSlot,

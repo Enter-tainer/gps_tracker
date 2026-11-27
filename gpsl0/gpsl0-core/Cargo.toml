@@ -1,0 +1,20 @@
+[package]
+name = "gpsl0-core"
+version = "0.2.0"
+edition = "2021"
+
+[features]
+default = ["std", "v1", "decode"]
+std = ["alloc"]
+alloc = []
+v1 = ["alloc"]
+decode = ["alloc"]
+
+[lib]
+name = "gpsl0_core"
+path = "src/lib.rs"
+
+[[bin]]
+name = "gpsl0_bench"
+path = "src/bin/gpsl0_bench.rs"
+required-features = ["std", "v1", "decode"]

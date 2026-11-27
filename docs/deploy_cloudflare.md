@@ -45,10 +45,11 @@ npm run sync:cf     # migrations + seed.sql into D1, fog bitmap into R2 (--remot
 npm run sync:cf -- --local   # same, against the local miniflare state
 ```
 
-`npm run ingest` also packs every track into GPSL0 (`local-data/r2/tracks-gpsl0/*.gpsl0`,
-123 files / 1,171,096 B for this corpus) and stores the blobs inline in `track_blobs`,
-so no per-track R2 objects are needed. `seed.sql` is ~4.4 MB and currently seeds in a
-single `wrangler d1 execute --file` call (~10 s, 530 statements, largest 44 KB — under
+`npm run ingest` also packs every track into GPSL0 v3 (`version = 2, model_id = 22` by default,
+`local-data/r2/tracks-gpsl0/*.gpsl0`, 123 files / 1,079,995 B for this corpus; legacy `v1` was
+1,171,096 B, remaining decodable for migration) and stores the blobs
+inline in `track_blobs`, so no per-track R2 objects are needed. `seed.sql` (~4 MB scale, 530
+statements, largest ~44 KB) seeds in a single `wrangler d1 execute --file` call (~10 s — under
 D1's per-statement limit). If the corpus grows past ~100 MB, split it first.
 
 ## 3. Deploy
@@ -110,7 +111,36 @@ protects all track data.
 > read-only tracks via `/api/agent/*` behind Cloudflare Access Managed OAuth, follow
 > [docs/agent_cli_setup.md](agent_cli_setup.md).
 
-## 6. Teardown
+## 6. Upgrading Existing Remote D1 Blobs (`v1` -> `v3 m22`)
+
+Because the Worker passes raw `track_blobs` bytes through unchanged and decoding happens in the
+browser WASM / CLI, **always deploy the v3-capable (`model_id = 22`) Worker & WASM frontend
+(`npm run deploy:cf`) before upgrading stored D1 rows**. Legacy `v1` blobs keep working after the
+frontend update; conversely, older clients cannot decode `model_id = 22` blobs.
+
+1. Inspect and verify a full decode -> re-encode -> verify pass without writing to remote D1:
+
+```bash
+cd frontend
+npm run gpsl0:migrate-d1 -- --remote --dry-run
+```
+
+2. Once the updated frontend is live, apply the chunked migration (`version=2, model_id=22` and `--alt-quantum=10` = 1 m altitude quantization by default):
+
+```bash
+cd frontend
+npm run gpsl0:migrate-d1 -- --remote --apply --confirm-frontend-deployed
+```
+
+(Any row already at `version=2` with `model_id=22` is skipped idempotently; legacy `v1` rows are upgraded in place.)
+
+Every run backs up the original blobs under `blobs/*.gpsl0`, writes `manifest.json`, chunked
+`migrate-chunk-*.sql` files, and `rollback.sql` under
+`frontend/scripts/.cache/d1-v1-backup-<timestamp>/` (override with `--backup-dir=<DIR>`), and
+post-verifies that migrated rows carry `version=2, model_id=22` headers. If anything needs to be
+reverted, execute the generated `rollback.sql` against D1 (`npx wrangler d1 execute gps_tracks --remote --file=<backup-dir>/rollback.sql`).
+
+## 7. Teardown
 
 ```bash
 cd frontend

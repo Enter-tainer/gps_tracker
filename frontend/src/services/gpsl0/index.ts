@@ -1,54 +1,14 @@
-// GPSL0 v1 container + codec public API.
+// GPSL0 v3 / v1 WASM codec public API.
 //
-// A GPSL0 file holds exactly one track (point sequence):
-//
-//   header        48 B   (see container.ts)
-//   block index   nBlocks * 24 B
-//   block payloads (variable length, range-coded)
-//
-// Sync windows: block 0 and every `syncBlocks`-th block start a fresh
-// probability table and carry an absolute 32 B seed; blocks in between are
-// continuations (warm start) holding only the range-coded stream.
-// `syncBlocks = 0` means "one sync window per file" (best compression, random
-// access replays from the start).
-//
-// Quantization: the encoder stores integers at a `quantum` of 1e-7 degree
-// (coord) and 0.1 m (alt). `quantum = "auto"` (default) picks the coarsest
-// quantum that still reproduces every input value exactly, which is
-// **lossless at the data's natural grid** — the GPZ V1 tracks in this corpus
-// are all multiples of 100 units (1.1 m), so they round-trip bit-exactly while
-// coding 1/100 the dynamic range. Decoded values are always returned in
-// GPZ units (lat/lon *1e-7 deg, alt *0.1 m).
-//
-// Spec: docs/gpsl0_format.md
+// Backed by Rust `gpsl0-core` compiled to `gpsl0_wasm.wasm`.
+// Default writes GPSL0 v3 (version = 2, model_id = 22) and decodes both
+// v1 (`version = 1`) and v3 (`version = 2, model_id = 22`) streams.
+// Passing `version: 1` (or `modelId` in 1..10) encodes the frozen v1 bitstream.
 
-import {
-  crc32,
-  HEADER_SIZE,
-  INDEX_ENTRY_SIZE,
-  readBlockIndex,
-  readHeader,
-  writeHeader,
-  type Gpsl0BlockEntry,
-  type Gpsl0Header,
-} from "./container.ts";
-import {
-  createProbTable,
-  decodeBlock,
-  DEFAULT_MODEL_ID,
-  encodeBlock,
-  getLayout,
-  MODEL_STATS,
-  readSeed,
-  SEED_BYTES,
-  type BlockState,
-  type ModelLayout,
-} from "./model.ts";
-import { RangeDecoder, RangeEncoder } from "./rangecoder.ts";
-import { COORD_NAIVE, COORD_TN, COORD_TN_CLAMPED } from "./model.ts";
+import { getGpsl0WasmSync, initGpsl0Wasm, type Gpsl0WasmExports } from "./wasmLoader.ts";
 
-/** Structural equivalent of the frontend `GpsPoint` (kept local so the codec
- *  has no dependency on app-level type modules). */
+export { initGpsl0Wasm };
+
 export type GpsPointLike = {
   timestamp: number;
   latitude_scaled_1e7: number;
@@ -64,33 +24,24 @@ export type Gpsl0Track = {
 };
 
 export type Gpsl0EncodeOptions = {
-  /**
-   * Coordinate quantum in units of 1e-7 degree (stored = round(value / quantum)).
-   * `"auto"` (default) = gcd of all lat/lon values => always lossless.
-   * Common explicit values: 1 (1e7 lossless), 10 (1e6 = 11 cm), 100 (1e5 = 1.1 m).
-   */
+  version?: 1 | 2;
   quantum?: "auto" | number;
-  /**
-   * Altitude quantum in units of 0.1 m. `"auto"` (default) = gcd of altitudes
-   * capped at 10 (1 m). Common explicit values: 1 (0.1 m), 10 (1 m).
-   */
   altQuantum?: "auto" | number;
-  /** Points per seek block (default 4096). */
   blockPoints?: number;
-  /** Reset probability tables every N blocks; 0 = never (default). */
   syncBlocks?: number;
-  /** Altitude predictor: 1 = first difference (default), 2 = damped second difference. */
   altMode?: 1 | 2;
-  /**
-   * Coordinate predictor: "tn" = time-normalized d2, "naive" = 2x[i-1]-x[i-2],
-   * "tn-clamped" = time-normalized with the extrapolation ratio capped at 2x.
-   * Default is "tn-clamped" (measured best on the real corpus).
-   */
-  coordPredictor?: "naive" | "tn" | "tn-clamped";
-  /** Model variant to encode with (default = DEFAULT_MODEL_ID). */
+  coordPredictor?: "naive" | "tn" | "tn-clamped" | "d1";
   modelId?: number;
-  /** Collect per-channel self-information into MODEL_STATS (bench only). */
   stats?: boolean;
+};
+
+export type Gpsl0BlockEntry = {
+  startTs: number;
+  endTs: number;
+  pointCount: number;
+  byteOffset: number;
+  byteLength: number;
+  crc32: number;
 };
 
 export type Gpsl0Meta = {
@@ -107,51 +58,102 @@ export type Gpsl0Meta = {
   nBlocks: number;
   modelId: number;
   headerCrc32: number;
-  /** CRC-32 over the whole block index (in header bytes 44..47). */
   indexCrc32: number;
   blockIndex: Gpsl0BlockEntry[];
-  /** Derived: total file size in bytes. */
   byteLength: number;
-  /** Derived: stored coordinate precision in degrees (coordQuantum / 1e7). */
   precisionDeg: number;
 };
 
 export type DecodedGpsl0 = {
-  /** Timestamps, exact. */
   t: Int32Array;
-  /** Latitude in 1e-7 degree units (exact w.r.t. the source when quantum="auto"). */
   lat: Int32Array;
   lon: Int32Array;
-  /** Altitude in 0.1 m units. */
   alt: Int32Array;
   meta: Gpsl0Meta;
 };
 
-function metaFromHeader(
-  header: Gpsl0Header,
-  blockIndex: Gpsl0BlockEntry[],
-  byteLength: number
-): Gpsl0Meta {
-  return {
-    version: header.version,
-    tier0: header.flags.tier0,
-    hasAlt: header.flags.hasAlt,
-    altDamped: header.flags.altDamped,
-    coordMode: header.flags.coordMode,
-    coordQuantum: header.coordQuantum,
-    altQuantum: header.altQuantum,
-    nPoints: header.nPoints,
-    blockPoints: header.blockPoints,
-    syncBlocks: header.syncBlocks,
-    nBlocks: header.nBlocks,
-    modelId: header.modelId,
-    headerCrc32: header.headerCrc32,
-    indexCrc32: header.indexCrc32,
-    blockIndex,
-    byteLength,
-    precisionDeg: header.coordQuantum / 1e7,
-  };
+export const DEFAULT_VERSION = 2;
+export const DEFAULT_MODEL_ID = 22;
+
+export type ModelSpec = {
+  id: number;
+  unarySlots: number;
+  mantTreeBits: number;
+  speedThresholds: number[];
+  qLevels: number;
+  altLevels: number;
+  lonUsesLatResidual: boolean;
+  dtLevels: number;
+  coordDtChanged?: boolean;
+};
+
+export type ModelLayout = {
+  spec: ModelSpec;
+  nSlot: number;
+  nCtx: number;
+};
+
+export const MODELS: Record<number, ModelSpec> = {
+  1: { id: 1, unarySlots: 24, mantTreeBits: 0, speedThresholds: [300, 2200, 5500, 12000, 30000], qLevels: 8, altLevels: 4, lonUsesLatResidual: false, dtLevels: 5 },
+  2: { id: 2, unarySlots: 24, mantTreeBits: 3, speedThresholds: [300, 2200], qLevels: 8, altLevels: 4, lonUsesLatResidual: false, dtLevels: 5 },
+  3: { id: 3, unarySlots: 24, mantTreeBits: 4, speedThresholds: [300, 2200], qLevels: 8, altLevels: 4, lonUsesLatResidual: false, dtLevels: 5 },
+  4: { id: 4, unarySlots: 24, mantTreeBits: 5, speedThresholds: [300, 2200], qLevels: 8, altLevels: 4, lonUsesLatResidual: false, dtLevels: 5 },
+  5: { id: 5, unarySlots: 24, mantTreeBits: 4, speedThresholds: [300, 2200, 5500, 12000, 30000], qLevels: 8, altLevels: 4, lonUsesLatResidual: false, dtLevels: 5 },
+  6: { id: 6, unarySlots: 24, mantTreeBits: 4, speedThresholds: [], qLevels: 8, altLevels: 4, lonUsesLatResidual: false, dtLevels: 5, coordDtChanged: false },
+  7: { id: 7, unarySlots: 24, mantTreeBits: 4, speedThresholds: [], qLevels: 8, altLevels: 4, lonUsesLatResidual: false, dtLevels: 5, coordDtChanged: true },
+  8: { id: 8, unarySlots: 24, mantTreeBits: 4, speedThresholds: [300, 2200], qLevels: 8, altLevels: 4, lonUsesLatResidual: false, dtLevels: 5, coordDtChanged: true },
+  9: { id: 9, unarySlots: 24, mantTreeBits: 4, speedThresholds: [], qLevels: 8, altLevels: 4, lonUsesLatResidual: false, dtLevels: 6, coordDtChanged: true },
+  10: { id: 10, unarySlots: 24, mantTreeBits: 0, speedThresholds: [], qLevels: 8, altLevels: 4, lonUsesLatResidual: false, dtLevels: 5, coordDtChanged: true },
+  22: { id: 22, unarySlots: 24, mantTreeBits: 4, speedThresholds: [], qLevels: 6, altLevels: 3, lonUsesLatResidual: true, dtLevels: 5, coordDtChanged: true },
+};
+
+export function getLayout(modelId: number): ModelLayout {
+  const spec = MODELS[modelId];
+  if (!spec) {
+    throw new Error(
+      `GPSL0: unsupported model_id ${modelId} (known: ${Object.keys(MODELS).join(", ")})`
+    );
+  }
+  if (modelId === 22) {
+    // v3 grid layout (coord_quantum > 10): 16 allZero3 + 988 zero + 496*59 mag + 537 sign = 30,805 slots
+    // (tracks with coord_quantum <= 10 automatically use the 3,219-slot layout)
+    return { spec, nSlot: 59, nCtx: 496 };
+  }
+  const treeNodes = spec.mantTreeBits === 0 ? 0 : (1 << spec.mantTreeBits) - 1;
+  const flatSlots = Math.max(0, spec.unarySlots - 1 - spec.mantTreeBits);
+  const nSlot = 1 + spec.unarySlots + treeNodes + flatSlots;
+  const nQ1 = 2 * spec.qLevels + 1;
+  const nAltQ = 2 * spec.altLevels + 1;
+  const nSpeed = spec.speedThresholds.length + 1;
+  const dchg = spec.coordDtChanged ? 2 : 1;
+  const nCtx =
+    spec.dtLevels * 2 +
+    nSpeed * nQ1 * dchg +
+    (spec.lonUsesLatResidual ? nSpeed * nQ1 * dchg * nQ1 : nSpeed * nQ1 * dchg) +
+    nSpeed * nAltQ;
+  return { spec, nSlot, nCtx };
 }
+
+export type ChannelStats = { bits: number; points: number };
+function mkStats(): ChannelStats {
+  return { bits: 0, points: 0 };
+}
+export const MODEL_STATS = {
+  enabled: false,
+  total: mkStats(),
+  dt: mkStats(),
+  lat: mkStats(),
+  lon: mkStats(),
+  alt: mkStats(),
+  overheadBytes: 0,
+  reset(): void {
+    for (const key of ["total", "dt", "lat", "lon", "alt"] as const) {
+      this[key].bits = 0;
+      this[key].points = 0;
+    }
+    this.overheadBytes = 0;
+  },
+};
 
 function gcd(a: number, b: number): number {
   let x = Math.abs(a);
@@ -164,10 +166,6 @@ function gcd(a: number, b: number): number {
   return x;
 }
 
-/**
- * Largest quantum (dividing `cap`) that is a divisor of every value.
- * Values of 0 contribute nothing, so an all-zero array returns `cap`.
- */
 export function inferQuantum(
   values: ArrayLike<number>,
   cap: number,
@@ -182,55 +180,106 @@ export function inferQuantum(
   return gcd(g, cap) || 1;
 }
 
-function quantizeExact(
-  src: ArrayLike<number>,
-  length: number,
-  quantum: number
-): Int32Array {
-  const out = new Int32Array(length);
-  if (quantum === 1) {
-    for (let i = 0; i < length; i++) out[i] = src[i] | 0;
-    return out;
-  }
-  for (let i = 0; i < length; i++) {
-    const q = src[i] / quantum;
-    const r = Math.round(q);
-    if (r * quantum !== src[i]) {
-      throw new Error(
-        `GPSL0: value ${src[i]} is not a multiple of quantum ${quantum}`
-      );
-    }
-    out[i] = r | 0;
-  }
-  return out;
+const textDecoder = new TextDecoder();
+
+function readResultError(wasm: Gpsl0WasmExports, resPtr: number): Error {
+  const view = new DataView(wasm.memory.buffer);
+  const msgLen = view.getUint32(resPtr + 8, true);
+  const msgBytes = new Uint8Array(wasm.memory.buffer, resPtr + 12, msgLen);
+  return new Error(textDecoder.decode(msgBytes));
 }
 
-function quantizeLossy(
-  src: ArrayLike<number>,
-  length: number,
-  quantum: number
-): Int32Array {
-  const out = new Int32Array(length);
-  if (quantum === 1) {
-    for (let i = 0; i < length; i++) out[i] = src[i] | 0;
-    return out;
+function parseMetaAndArrays(
+  wasm: Gpsl0WasmExports,
+  resPtr: number,
+  withArrays: boolean
+): { meta: Gpsl0Meta; t: Int32Array; lat: Int32Array; lon: Int32Array; alt: Int32Array } {
+  const buf = wasm.memory.buffer;
+  const view = new DataView(buf);
+  const status = view.getUint32(resPtr + 4, true);
+  if (status !== 0) {
+    throw readResultError(wasm, resPtr);
   }
-  for (let i = 0; i < length; i++) out[i] = Math.round(src[i] / quantum) | 0;
-  return out;
+  const version = view.getUint32(resPtr + 8, true);
+  const flagsMode = view.getUint32(resPtr + 12, true);
+  const coordQuantum = view.getUint32(resPtr + 16, true);
+  const altQuantum = view.getUint32(resPtr + 20, true);
+  const nPoints = view.getUint32(resPtr + 24, true);
+  const blockPoints = view.getUint32(resPtr + 28, true);
+  const syncBlocks = view.getUint32(resPtr + 32, true);
+  const nBlocks = view.getUint32(resPtr + 36, true);
+  const modelId = view.getUint32(resPtr + 40, true);
+  const headerCrc32 = view.getUint32(resPtr + 44, true);
+  const indexCrc32 = view.getUint32(resPtr + 48, true);
+  const byteLength = view.getUint32(resPtr + 52, true);
+  const outPoints = view.getUint32(resPtr + 56, true);
+
+  const blockIndex: Gpsl0BlockEntry[] = new Array(nBlocks);
+  let off = resPtr + 60;
+  for (let i = 0; i < nBlocks; i++) {
+    blockIndex[i] = {
+      startTs: view.getUint32(off, true),
+      endTs: view.getUint32(off + 4, true),
+      pointCount: view.getUint32(off + 8, true),
+      byteOffset: view.getUint32(off + 12, true),
+      byteLength: view.getUint32(off + 16, true),
+      crc32: view.getUint32(off + 20, true),
+    };
+    off += 24;
+  }
+
+  let t: Int32Array;
+  let lat: Int32Array;
+  let lon: Int32Array;
+  let alt: Int32Array;
+  if (withArrays && outPoints > 0) {
+    t = new Int32Array(buf, off, outPoints).slice();
+    off += outPoints * 4;
+    lat = new Int32Array(buf, off, outPoints).slice();
+    off += outPoints * 4;
+    lon = new Int32Array(buf, off, outPoints).slice();
+    off += outPoints * 4;
+    alt = new Int32Array(buf, off, outPoints).slice();
+  } else {
+    t = new Int32Array(0);
+    lat = new Int32Array(0);
+    lon = new Int32Array(0);
+    alt = new Int32Array(0);
+  }
+
+  const meta: Gpsl0Meta = {
+    version,
+    tier0: (flagsMode & 1) !== 0,
+    hasAlt: (flagsMode & 2) !== 0,
+    altDamped: (flagsMode & 4) !== 0,
+    coordMode: (flagsMode >>> 8) & 0xff,
+    coordQuantum,
+    altQuantum,
+    nPoints,
+    blockPoints,
+    syncBlocks,
+    nBlocks,
+    modelId,
+    headerCrc32,
+    indexCrc32,
+    blockIndex,
+    byteLength,
+    precisionDeg: coordQuantum / 1e7,
+  };
+  return { meta, t, lat, lon, alt };
 }
 
-export function isSyncBlock(b: number, syncBlocks: number): boolean {
-  return b === 0 || (syncBlocks > 0 && b % syncBlocks === 0);
-}
-
-function resolveCoordMode(mode: string): number {
+function resolveCoordModeCode(mode: string | undefined): number {
+  if (mode === undefined) return 255;
   switch (mode) {
-    case "naive":
-      return COORD_NAIVE;
     case "tn":
-      return COORD_TN;
+      return 0;
+    case "naive":
+      return 1;
     case "tn-clamped":
-      return COORD_TN_CLAMPED;
+      return 2;
+    case "d1":
+      return 3;
     default:
       throw new Error(`GPSL0: unknown coordPredictor ${mode}`);
   }
@@ -241,11 +290,7 @@ export function encodeGpsl0(
   opts: Gpsl0EncodeOptions = {}
 ): Uint8Array {
   const n = track.t.length;
-  if (
-    track.lat.length !== n ||
-    track.lon.length !== n ||
-    track.alt.length !== n
-  ) {
+  if (track.lat.length !== n || track.lon.length !== n || track.alt.length !== n) {
     throw new Error("GPSL0: t/lat/lon/alt arrays must have equal length");
   }
   for (let i = 0; i < n; i++) {
@@ -255,393 +300,182 @@ export function encodeGpsl0(
     }
   }
 
-  // ---- quantization -----------------------------------------------------
-  // Coordinates: `"auto"` is exact (gcd divides every value, so it is
-  // lossless). An explicit quantum means "store at this precision" and rounds.
-  const autoQuant = opts.quantum === undefined || opts.quantum === "auto";
-  let coordQuantum: number;
-  if (autoQuant) {
-    coordQuantum = Math.max(
-      1,
-      gcd(inferQuantum(track.lat, 1e7), inferQuantum(track.lon, 1e7))
-    );
-  } else {
-    coordQuantum = opts.quantum as number;
+  let version = opts.version ?? 0;
+  if (version === 0 && opts.modelId !== undefined && opts.modelId >= 1 && opts.modelId <= 10) {
+    version = 1;
   }
-  if (
-    !Number.isInteger(coordQuantum) ||
-    coordQuantum < 1 ||
-    coordQuantum > 1e7 ||
-    1e7 % coordQuantum !== 0
-  ) {
-    throw new Error(`GPSL0: bad coord quantum ${coordQuantum}`);
+  if (version !== 0 && version !== 1 && version !== 2) {
+    throw new Error(`GPSL0: unsupported version ${version}`);
   }
-  // Altitude defaults to a 1 m grid: GNSS vertical error is metres, so this is
-  // far below the noise floor and saves ~1.8 bits/pt over 0.1 m. Pass
-  // `altQuantum: "auto"` (or 1) for an exact round-trip.
-  const autoAlt = opts.altQuantum === "auto";
-  let altQuantum: number;
-  if (autoAlt) {
-    altQuantum = Math.max(1, inferQuantum(track.alt, 10));
-  } else {
-    altQuantum = (opts.altQuantum as number | undefined) ?? 10;
-  }
-  if (!Number.isInteger(altQuantum) || altQuantum < 1 || 10 % altQuantum !== 0) {
-    throw new Error(`GPSL0: bad alt quantum ${altQuantum}`);
+  const modelId = opts.modelId ?? 0;
+  if (!Number.isInteger(modelId) || modelId < 0) {
+    throw new Error(`GPSL0: bad modelId ${opts.modelId}`);
   }
 
-  const blockPoints = opts.blockPoints ?? 16384;
-  if (
-    !Number.isInteger(blockPoints) ||
-    blockPoints < 2 ||
-    blockPoints > 1 << 20
-  ) {
-    throw new Error(`GPSL0: bad blockPoints ${blockPoints}`);
+  let coordQuantum = 0;
+  if (opts.quantum !== undefined && opts.quantum !== "auto") {
+    coordQuantum = opts.quantum;
+    if (
+      !Number.isInteger(coordQuantum) ||
+      coordQuantum < 1 ||
+      coordQuantum > 1e7 ||
+      1e7 % coordQuantum !== 0
+    ) {
+      throw new Error(`GPSL0: bad coord quantum ${coordQuantum}`);
+    }
   }
-  const altMode = opts.altMode ?? 1;
-  const coordMode = resolveCoordMode(opts.coordPredictor ?? "tn-clamped");
-  const layout = getLayout(opts.modelId ?? DEFAULT_MODEL_ID);
 
-  const latQ = autoQuant
-    ? quantizeExact(track.lat, n, coordQuantum)
-    : quantizeLossy(track.lat, n, coordQuantum);
-  const lonQ = autoQuant
-    ? quantizeExact(track.lon, n, coordQuantum)
-    : quantizeLossy(track.lon, n, coordQuantum);
-  const altQ = autoAlt
-    ? quantizeExact(track.alt, n, altQuantum)
-    : quantizeLossy(track.alt, n, altQuantum);
-  const tQ = quantizeExact(track.t, n, 1);
+  let altQuantum = 10;
+  if (opts.altQuantum === "auto") {
+    altQuantum = 0;
+  } else if (opts.altQuantum !== undefined) {
+    altQuantum = opts.altQuantum;
+    if (!Number.isInteger(altQuantum) || altQuantum < 1 || 10 % altQuantum !== 0) {
+      throw new Error(`GPSL0: bad alt quantum ${altQuantum}`);
+    }
+  }
 
-  const nBlocks = n === 0 ? 0 : Math.ceil(n / blockPoints);
-  let syncBlocks = opts.syncBlocks ?? 0;
+  let blockPoints = 0;
+  if (opts.blockPoints !== undefined) {
+    blockPoints = opts.blockPoints;
+    if (!Number.isInteger(blockPoints) || blockPoints < 2 || blockPoints > 1 << 20) {
+      throw new Error(`GPSL0: bad blockPoints ${blockPoints}`);
+    }
+  }
+
+  const syncBlocks = opts.syncBlocks ?? 0;
   if (!Number.isInteger(syncBlocks) || syncBlocks < 0) {
     throw new Error(`GPSL0: bad syncBlocks ${syncBlocks}`);
   }
-  if (syncBlocks > 0 && nBlocks > 0 && syncBlocks > nBlocks) {
-    syncBlocks = nBlocks; // one sync window per file: identical bytes, honest header
-  }
 
-  const payloads: Uint8Array[] = [];
-  const entries: Gpsl0BlockEntry[] = [];
-  let probs = createProbTable(layout);
-  let state: BlockState | null = null;
-  if (opts.stats) {
-    MODEL_STATS.enabled = true;
-    MODEL_STATS.total.points += n;
-  }
-
-  for (let b = 0; b < nBlocks; b++) {
-    const start = b * blockPoints;
-    const count = Math.min(blockPoints, n - start);
-    const sync = isSyncBlock(b, syncBlocks);
-    if (sync) {
-      if (b > 0) probs = createProbTable(layout);
-      state = null;
+  let altMode = 0;
+  if (opts.altMode !== undefined) {
+    if (opts.altMode !== 1 && opts.altMode !== 2) {
+      throw new Error(`GPSL0: bad altMode ${opts.altMode}`);
     }
-    const seed = sync ? new Uint8Array(SEED_BYTES) : null;
-    const enc = new RangeEncoder();
-    state = encodeBlock(
-      enc,
-      probs,
-      {
-        t: tQ,
-        lat: latQ,
-        lon: lonQ,
-        alt: altQ,
-        start,
-        count,
-        altMode,
-        coordMode,
-        layout,
-        seedOut: seed,
-        carried: state,
-        stats: opts.stats === true,
-      },
-      layout
+    altMode = opts.altMode;
+  }
+  const coordMode = resolveCoordModeCode(opts.coordPredictor);
+
+  const wasm = getGpsl0WasmSync();
+  const inputByteLen = n * 16;
+  const inPtr = inputByteLen > 0 ? wasm.gpsl0_alloc(inputByteLen) : 0;
+  let resPtr = 0;
+  try {
+    if (n > 0) {
+      const mem = wasm.memory.buffer;
+      const tBuf = new Int32Array(mem, inPtr, n);
+      const latBuf = new Int32Array(mem, inPtr + n * 4, n);
+      const lonBuf = new Int32Array(mem, inPtr + n * 8, n);
+      const altBuf = new Int32Array(mem, inPtr + n * 12, n);
+      if (track.t instanceof Int32Array) {
+        tBuf.set(track.t);
+      } else {
+        for (let i = 0; i < n; i++) tBuf[i] = track.t[i] | 0;
+      }
+      if (track.lat instanceof Int32Array) {
+        latBuf.set(track.lat);
+      } else {
+        for (let i = 0; i < n; i++) latBuf[i] = track.lat[i] | 0;
+      }
+      if (track.lon instanceof Int32Array) {
+        lonBuf.set(track.lon);
+      } else {
+        for (let i = 0; i < n; i++) lonBuf[i] = track.lon[i] | 0;
+      }
+      if (track.alt instanceof Int32Array) {
+        altBuf.set(track.alt);
+      } else {
+        for (let i = 0; i < n; i++) altBuf[i] = track.alt[i] | 0;
+      }
+    }
+
+    resPtr = wasm.gpsl0_encode(
+      inPtr,
+      inPtr + n * 4,
+      inPtr + n * 8,
+      inPtr + n * 12,
+      n >>> 0,
+      version >>> 0,
+      modelId >>> 0,
+      coordQuantum >>> 0,
+      altQuantum >>> 0,
+      blockPoints >>> 0,
+      syncBlocks >>> 0,
+      altMode >>> 0,
+      coordMode >>> 0
     );
-    const coded = enc.finish();
-    const seedLen = seed === null ? 0 : SEED_BYTES;
-    const payload = new Uint8Array(seedLen + coded.length);
-    if (seed !== null) payload.set(seed, 0);
-    payload.set(coded, seedLen);
-    payloads.push(payload);
-    entries.push({
-      startTs: tQ[start],
-      endTs: tQ[start + count - 1],
-      pointCount: count,
-      byteOffset: 0,
-      byteLength: payload.length,
-      crc32: crc32(payload),
-    });
-  }
-
-  let size = HEADER_SIZE + entries.length * INDEX_ENTRY_SIZE;
-  for (const p of payloads) size += p.length;
-  const out = new Uint8Array(size);
-  const view = new DataView(out.buffer, out.byteOffset, out.byteLength);
-
-  let off = HEADER_SIZE + entries.length * INDEX_ENTRY_SIZE;
-  for (let i = 0; i < entries.length; i++) {
-    entries[i].byteOffset = off;
-    off += payloads[i].length;
-  }
-
-  writeHeader(out, {
-    version: 1,
-    flags: {
-      tier0: coordQuantum === 1,
-      hasAlt: true,
-      altDamped: altMode === 2,
-      coordMode,
-    },
-    coordQuantum,
-    altQuantum,
-    nPoints: n,
-    blockPoints,
-    syncBlocks,
-    nBlocks,
-    modelId: layout.spec.id,
-    headerCrc32: 0,
-    indexCrc32: 0,
-  });
-
-  let indexOff = HEADER_SIZE;
-  for (const e of entries) {
-    view.setUint32(indexOff, e.startTs >>> 0, true);
-    view.setUint32(indexOff + 4, e.endTs >>> 0, true);
-    view.setUint32(indexOff + 8, e.pointCount, true);
-    view.setUint32(indexOff + 12, e.byteOffset, true);
-    view.setUint32(indexOff + 16, e.byteLength, true);
-    view.setUint32(indexOff + 20, e.crc32, true);
-    indexOff += INDEX_ENTRY_SIZE;
-  }
-  for (let i = 0; i < payloads.length; i++) {
-    out.set(payloads[i], entries[i].byteOffset);
-  }
-  // The block index gets its own CRC (stored in header bytes 44..47) so that
-  // tampering with start_ts/end_ts/offsets is detected instead of silently
-  // yielding wrong data.
-  view.setUint32(
-    44,
-    crc32(out, HEADER_SIZE, HEADER_SIZE + entries.length * INDEX_ENTRY_SIZE),
-    true
-  );
-  if (opts.stats) {
-    MODEL_STATS.overheadBytes += HEADER_SIZE + entries.length * INDEX_ENTRY_SIZE;
-  }
-  return out;
-}
-
-type DecodeTarget = {
-  t: Int32Array;
-  lat: Int32Array;
-  lon: Int32Array;
-  alt: Int32Array;
-  offset: number;
-};
-
-function decodeOneBlock(
-  payload: Uint8Array,
-  pointCount: number,
-  altMode: number,
-  coordMode: number,
-  layout: ModelLayout,
-  probs: Uint16Array,
-  out: DecodeTarget,
-  sync: boolean,
-  carried: BlockState | null
-): BlockState {
-  let seed = null;
-  let rcOff = 0;
-  if (sync) {
-    if (payload.length < SEED_BYTES + 5) {
-      throw new Error(`GPSL0: sync block payload too short (${payload.length} B)`);
+    const view = new DataView(wasm.memory.buffer);
+    const status = view.getUint32(resPtr + 4, true);
+    if (status !== 0) {
+      throw readResultError(wasm, resPtr);
     }
-    seed = readSeed(payload, 0);
-    rcOff = SEED_BYTES;
-  } else if (payload.length < 5) {
-    throw new Error(`GPSL0: block payload too short (${payload.length} B)`);
+    const outLen = view.getUint32(resPtr + 8, true);
+    return new Uint8Array(wasm.memory.buffer, resPtr + 12, outLen).slice();
+  } finally {
+    if (resPtr !== 0) wasm.gpsl0_free_result(resPtr);
+    if (inPtr !== 0) wasm.gpsl0_dealloc(inPtr, inputByteLen);
   }
-  const dec = new RangeDecoder(payload.subarray(rcOff));
-  return decodeBlock({
-    dec,
-    seed,
-    carried,
-    count: pointCount,
-    altMode,
-    coordMode,
-    layout,
-    probs,
-    outT: out.t,
-    outLat: out.lat,
-    outLon: out.lon,
-    outAlt: out.alt,
-    outOffset: out.offset,
-  });
 }
 
-function dequantizeInPlace(arr: Int32Array, quantum: number): void {
-  if (quantum === 1) return;
-  for (let i = 0; i < arr.length; i++) arr[i] *= quantum;
-}
-
-/** Decode an entire GPSL0 file. */
 export function decodeGpsl0(bytes: Uint8Array): DecodedGpsl0 {
-  const header = readHeader(bytes);
-  const layout = getLayout(header.modelId);
-  const blockIndex = readBlockIndex(bytes, header);
-  const n = header.nPoints;
-  const t = new Int32Array(n);
-  const lat = new Int32Array(n);
-  const lon = new Int32Array(n);
-  const alt = new Int32Array(n);
-  const meta = metaFromHeader(header, blockIndex, bytes.length);
-  if (n === 0) {
-    return { t, lat, lon, alt, meta };
-  }
-  const altMode = header.flags.altDamped ? 2 : 1;
-  const coordMode = header.flags.coordMode;
-  let probs = createProbTable(layout);
-  let state: BlockState | null = null;
-  let pointOff = 0;
-  for (let b = 0; b < blockIndex.length; b++) {
-    const entry = blockIndex[b];
-    const sync = isSyncBlock(b, header.syncBlocks);
-    if (sync) {
-      if (b > 0) probs = createProbTable(layout);
-      state = null;
+  const wasm = getGpsl0WasmSync();
+  const len = bytes.length;
+  const inPtr = len > 0 ? wasm.gpsl0_alloc(len) : 0;
+  let resPtr = 0;
+  try {
+    if (len > 0) {
+      new Uint8Array(wasm.memory.buffer, inPtr, len).set(bytes);
     }
-    const payload = bytes.subarray(
-      entry.byteOffset,
-      entry.byteOffset + entry.byteLength
-    );
-    if (crc32(payload) !== entry.crc32) {
-      throw new Error(`GPSL0: block ${b} payload crc mismatch`);
-    }
-    state = decodeOneBlock(
-      payload,
-      entry.pointCount,
-      altMode,
-      coordMode,
-      layout,
-      probs,
-      { t, lat, lon, alt, offset: pointOff },
-      sync,
-      state
-    );
-    pointOff += entry.pointCount;
+    resPtr = wasm.gpsl0_decode(inPtr, len >>> 0);
+    return parseMetaAndArrays(wasm, resPtr, true);
+  } finally {
+    if (resPtr !== 0) wasm.gpsl0_free_result(resPtr);
+    if (inPtr !== 0) wasm.gpsl0_dealloc(inPtr, len);
   }
-
-  dequantizeInPlace(lat, header.coordQuantum);
-  dequantizeInPlace(lon, header.coordQuantum);
-  dequantizeInPlace(alt, header.altQuantum);
-  return { t, lat, lon, alt, meta };
 }
 
-/**
- * Decode only `[startPoint, startPoint + len)` points of a file.
- * The stream is replayed from the nearest sync block (with `syncBlocks = 0`,
- * the whole file is one sync window).
- */
 export function decodeGpsl0Window(
   bytes: Uint8Array,
   startPoint: number,
   len: number
 ): DecodedGpsl0 {
-  const header = readHeader(bytes);
-  const layout = getLayout(header.modelId);
-  const blockIndex = readBlockIndex(bytes, header);
-  if (!Number.isInteger(startPoint) || !Number.isInteger(len) || len < 1) {
+  if (!Number.isInteger(startPoint) || !Number.isInteger(len) || startPoint < 0 || len < 1) {
     throw new Error("GPSL0: bad window arguments");
   }
-  if (startPoint < 0 || startPoint + len > header.nPoints) {
-    throw new Error(
-      `GPSL0: window [${startPoint}, ${startPoint + len}) outside 0..${header.nPoints}`
-    );
-  }
-  const n = header.nPoints;
-  const tAll = new Int32Array(n);
-  const latAll = new Int32Array(n);
-  const lonAll = new Int32Array(n);
-  const altAll = new Int32Array(n);
-  const altMode = header.flags.altDamped ? 2 : 1;
-  const coordMode = header.flags.coordMode;
-
-  let firstBlock = 0;
-  let acc = 0;
-  while (
-    firstBlock < blockIndex.length &&
-    acc + blockIndex[firstBlock].pointCount <= startPoint
-  ) {
-    acc += blockIndex[firstBlock].pointCount;
-    firstBlock++;
-  }
-  const syncStartBlock =
-    header.syncBlocks > 0
-      ? Math.floor(firstBlock / header.syncBlocks) * header.syncBlocks
-      : 0;
-
-  let probs = createProbTable(layout);
-  let state: BlockState | null = null;
-  let pointOff = 0;
-  for (let b = 0; b < blockIndex.length; b++) {
-    const entry = blockIndex[b];
-    if (b < syncStartBlock) {
-      pointOff += entry.pointCount;
-      continue;
+  const wasm = getGpsl0WasmSync();
+  const byteLen = bytes.length;
+  const inPtr = byteLen > 0 ? wasm.gpsl0_alloc(byteLen) : 0;
+  let resPtr = 0;
+  try {
+    if (byteLen > 0) {
+      new Uint8Array(wasm.memory.buffer, inPtr, byteLen).set(bytes);
     }
-    const sync = isSyncBlock(b, header.syncBlocks);
-    if (sync) {
-      // Replay origin or a later sync boundary: both restart the model.
-      probs = createProbTable(layout);
-      state = null;
-    }
-    const payload = bytes.subarray(
-      entry.byteOffset,
-      entry.byteOffset + entry.byteLength
-    );
-    if (crc32(payload) !== entry.crc32) {
-      throw new Error(`GPSL0: block ${b} payload crc mismatch`);
-    }
-    state = decodeOneBlock(
-      payload,
-      entry.pointCount,
-      altMode,
-      coordMode,
-      layout,
-      probs,
-      { t: tAll, lat: latAll, lon: lonAll, alt: altAll, offset: pointOff },
-      sync,
-      state
-    );
-    pointOff += entry.pointCount;
+    resPtr = wasm.gpsl0_decode_window(inPtr, byteLen >>> 0, startPoint >>> 0, len >>> 0);
+    return parseMetaAndArrays(wasm, resPtr, true);
+  } finally {
+    if (resPtr !== 0) wasm.gpsl0_free_result(resPtr);
+    if (inPtr !== 0) wasm.gpsl0_dealloc(inPtr, byteLen);
   }
-
-  const t = tAll.slice(startPoint, startPoint + len);
-  const lat = latAll.slice(startPoint, startPoint + len);
-  const lon = lonAll.slice(startPoint, startPoint + len);
-  const alt = altAll.slice(startPoint, startPoint + len);
-  dequantizeInPlace(lat, header.coordQuantum);
-  dequantizeInPlace(lon, header.coordQuantum);
-  dequantizeInPlace(alt, header.altQuantum);
-  return {
-    t,
-    lat,
-    lon,
-    alt,
-    meta: metaFromHeader(header, blockIndex, bytes.length),
-  };
 }
 
-/** Header/index only, no payload decoding. */
 export function inspectGpsl0Header(bytes: Uint8Array): Gpsl0Meta {
-  const header = readHeader(bytes);
-  getLayout(header.modelId); // validate model_id
-  return metaFromHeader(header, readBlockIndex(bytes, header), bytes.length);
+  const wasm = getGpsl0WasmSync();
+  const len = bytes.length;
+  const inPtr = len > 0 ? wasm.gpsl0_alloc(len) : 0;
+  let resPtr = 0;
+  try {
+    if (len > 0) {
+      new Uint8Array(wasm.memory.buffer, inPtr, len).set(bytes);
+    }
+    resPtr = wasm.gpsl0_inspect_header(inPtr, len >>> 0);
+    return parseMetaAndArrays(wasm, resPtr, false).meta;
+  } finally {
+    if (resPtr !== 0) wasm.gpsl0_free_result(resPtr);
+    if (inPtr !== 0) wasm.gpsl0_dealloc(inPtr, len);
+  }
 }
 
-/** Convenience wrapper: encode `GpsPoint[]` (as used across the frontend). */
 export function encodeGpsl0Points(
   points: GpsPointLike[],
   opts: Gpsl0EncodeOptions = {}
@@ -653,6 +487,9 @@ export function encodeGpsl0Points(
   const alt = new Int32Array(n);
   for (let i = 0; i < n; i++) {
     const p = points[i];
+    if (!Number.isFinite(p.timestamp) || p.timestamp < 0 || p.timestamp > 0xffffffff) {
+      throw new Error(`GPSL0: timestamp out of u32 range at point ${i}`);
+    }
     t[i] = p.timestamp | 0;
     lat[i] = p.latitude_scaled_1e7;
     lon[i] = p.longitude_scaled_1e7;
@@ -661,7 +498,6 @@ export function encodeGpsl0Points(
   return encodeGpsl0({ t, lat, lon, alt }, opts);
 }
 
-/** Convenience wrapper: decode into `GpsPoint[]`. */
 export function decodeGpsl0ToPoints(bytes: Uint8Array): GpsPointLike[] {
   const d = decodeGpsl0(bytes);
   const out: GpsPointLike[] = new Array(d.t.length);
@@ -675,6 +511,3 @@ export function decodeGpsl0ToPoints(bytes: Uint8Array): GpsPointLike[] {
   }
   return out;
 }
-
-export { DEFAULT_MODEL_ID, MODEL_STATS };
-export { MODELS, getLayout } from "./model.ts";

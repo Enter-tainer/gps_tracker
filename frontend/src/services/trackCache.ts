@@ -5,7 +5,7 @@ import type {
 } from "../types/track.ts";
 import { pointToSegmentDistanceMeters, haversineMeters } from "../utils/coordTransform.ts";
 import { decodeFogPack } from "./fogEngine.ts";
-import { decodeGpsl0ToPoints } from "./gpsl0/index.ts";
+import { decodeGpsl0ToPoints, initGpsl0Wasm } from "./gpsl0/index.ts";
 
 const trackPointsCache = new Map<string, GpsPoint[]>();
 const inflightRequests = new Map<string, Promise<GpsPoint[]>>();
@@ -30,7 +30,10 @@ export async function fetchAndDecodeTrack(trackId: string): Promise<GpsPoint[]> 
   if (inflight) return inflight;
 
   const req = (async () => {
-    const resp = await fetch(`/api/tracks/${encodeURIComponent(trackId)}/gpsl0`);
+    const [, resp] = await Promise.all([
+      initGpsl0Wasm(),
+      fetch(`/api/tracks/${encodeURIComponent(trackId)}/gpsl0`),
+    ]);
     if (!resp.ok) {
       throw new Error(`Failed to fetch track ${trackId}: HTTP ${resp.status}`);
     }
