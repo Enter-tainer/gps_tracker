@@ -387,7 +387,13 @@ GPS_RST (M1.P0.02) ──→ U4.pin9 RESET_N
 16. **LFCLK 用外部晶振**：模块板上有 32.768kHz 晶振（Y2），当前固件用内部 RC（500ppm）→ 改 XTAL 后 MPSL 精度可降到 ~40–50ppm，广播窗口缩短。
 17. **BLE 广播间隔**：100ms ≈ 60µA、500ms ≈ 15µA、1s ≈ 9µA、2s ≈ 6µA。建议 ≥1s。
 18. **System OFF 入口清单**：停 UARTE0/TWIM/SPIM/SAADC/TIMER/RTC/NFCT，关 USBD 与 VBUS 检测，等 EasyDMA 完成，`RAM[n].POWER=0`（放弃 RAM 保留）；唤醒源只用 **GPIOTE PORT/DETECT**（绝不用 IN event：17.37µA vs 2.36µA）；只给 `P1.15` 和 `P1.11` 开 sense；实测须断开调试器（否则 System OFF 被模拟）。
-19. **唤醒后的引脚态**：CPU 唤醒 = 复位，但 `PIN_CNF` 是 retained register（需实测确认）。**无论哪种结果，启动最早期必须显式建立全部引脚安全态，不得依赖复位默认值。**
+19. **System OFF 必须有唤醒源**：System OFF 只关 CPU 与大部分外设，仍能唤醒它的只有 **RESET 引脚**、**GPIO DETECT**（`PIN_CNF.SENSE`）、NFC 场检测、LPCOMP，以及 SWD 的 CTRL-AP。
+    - **产品固件不得无条件进 System OFF**——否则插拔电池都救不回来，只能按复位键；
+    - 本设计配 **ACC_INT1(P1.15)** + **USER_BTN(P1.11)** 两个 DETECT 源；
+    - **SW3 复位键是最后的恢复手段**（模块自身也有一颗）。Adafruit UF2 引导程序的"双击复位"能强行停在 DFU 模式，不会被"上电即睡"的固件挡住；
+    - 测 System OFF 电流时，烧完固件会立刻睡着、SWD 掉线属正常，重烧用 `probe-rs run --connect-under-reset`。
+
+20. **唤醒后的引脚态**：CPU 唤醒 = 复位，但 `PIN_CNF` 是 retained register（需实测确认）。**无论哪种结果，启动最早期必须显式建立全部引脚安全态，不得依赖复位默认值。**
 
 ---
 
