@@ -137,8 +137,7 @@ hardware/pcb/nrf52840 gps tracker/
 | SW | U3 W25Q128 + R10-R12、U4 L76K + R1/C3/C4/C6-C8/C11-C13、ANT1 | ✅ 已画并网表验证 |
 | MCU | M1（26 脚代焊盘）、J2 OLED、SW2/SW3、R8/R9 | ✅ 已画并网表验证 |
 
-全工程 39 器件 / 28 网络 / 零匿名网络。**打板前需处理 `docs/design-v2.1-final.md` §9.2 的 6 项已知偏差**
-（M1 符号与封装、J1/J2/SW 机械件、DNP 编码、天线料号）。
+全工程 **38 器件 / 27 网络 / 零匿名网络**。已知取舍与首板实测清单见 `docs/design-v2.1-final.md` §9。
 
 画图用 [`scripts/eda-step.js`](scripts/eda-step.js) 单步驱动（见该目录 README），
 每画完一块跑一次网表自检（无匿名网络、无单脚网络）。
