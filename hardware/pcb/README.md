@@ -132,9 +132,9 @@ hardware/pcb/nrf52840 gps tracker/
 
 | 页 | 内容 | 状态 |
 | --- | --- | --- |
-| PWR | J1、U1 RT9080N（SNS→VOUT）、C1/C2/C9、Q1/Q2 采样、R4-R7、R14 | ✅ 已画并网表验证 |
-| AON | U2A LIS2DW12 + U2B LIS3DHTR 双焊盘、R2/R3、C5/C10 | ✅ 已画并网表验证 |
-| SW | U3 W25Q128 + R10-R12、U4 L76K + R1/R13/C3/C4/C6-C8/C11-C13、ANT1 | ✅ 已画并网表验证 |
+| PWR | J1、U1 RT9080N（SNS→VOUT）、C1/C2/C9、Q1/Q2 采样、R4-R7 | ✅ 已画并网表验证 |
+| AON | U2A LIS2DW12 + U2B LIS3DHTR 双焊盘、R2/R3、C5/C10/C13 | ✅ 已画并网表验证 |
+| SW | U3 W25Q128 + R10-R12、U4 L76K + R1/C3/C4/C6-C8/C11-C13、ANT1 | ✅ 已画并网表验证 |
 | MCU | M1（26 脚代焊盘）、J2 OLED、SW2/SW3、R8/R9 | ✅ 已画并网表验证 |
 
 全工程 39 器件 / 28 网络 / 零匿名网络。**打板前需处理 `docs/design-v2.1-final.md` §9.2 的 6 项已知偏差**
