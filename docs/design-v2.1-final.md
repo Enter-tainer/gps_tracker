@@ -62,7 +62,7 @@ GPS_RST (M1.P0.02) ──→ U4.pin9 RESET_N
 | M1 | nRF52840 ProMicro（nologo.tech） | **26 pad 方形焊盘（2.54mm 间距）** | 1 | 库存 #35 | 原理图以 `26PIN` 排针符号占位，**引脚号 1–26 ≡ 焊盘号**。<br>**封装直接复用 v1 的 `PROMICRO NRF52840 方形焊盘-BBB`**（v1 已打样验证、26 pad 2.54mm），PCB 阶段从 v1 工程调用即可，**无需新建** | 背面 **BOOST** 焊盘短接 → 充电 100→300mA（电池 1500mAh > 500mAh，可短接）。板载 LDO 输出 3.3V，P0.13 低电平关断 |
 | U1 | **RT9080N-33GJ5** 或 **RT9080-33GJ5** | TSOT-23-5（2.9×1.6，pitch 0.95） | 1 | 需购（立创自营为非 N 版 C841192） | 600mA，Iq 2µA typ / 4µA max。**两种变体都可，pin4 一律接 VOUT**（见 §3.2） |
 | U2A | LIS2DW12TR | LGA-12（2.0×2.0×0.7，pitch 0.50） | 1 | 需购 | I²C 地址 **0x19**（SA0→3.3V_AON）。**与 U2B 二选一** |
-| U2B | LIS3DHTR | LGA-16（3.0×3.0×1.0，pitch 0.50） | 1 | 库存 #U11 | I²C 地址 **0x18**（SA0→GND）。**与 U2A 二选一** |
+| U2B | LIS3DHTR | LGA-16（3.0×3.0×1.0，pitch 0.50） | 1 | 库存 #U11 | I²C 地址 **0x19**（SA0→3.3V_AON；内部上拉不可关，接 GND 会漏 ~150µA）。**与 U2A 二选一** |
 | U3 | W25Q128JVSIQ | SOP-8 / SOIC-8 **208mil**（5.3×5.3，pitch 1.27，跨距 7.9） | 1 | 库存 #45 | 防混：`JVFIQ`(SOIC-16)、`JVPIQ`/`JVEIQ`(WSON-8)、`JVSIM`(QE=0)。`TR` 只是卷带包装 |
 | U4 | Quectel L76K | LCC-18（10.1×9.7×2.0，pitch 1.10） | 1 | 沿用 | 18 脚 |
 | Q1 | AO3401（P-MOS） | SOT-23 | 1 | 库存 #23 | 电量采样高边开关 |
@@ -101,7 +101,7 @@ GPS_RST (M1.P0.02) ──→ U4.pin9 RESET_N
 
 | 位号 | 容值 | 耐压/材质/封装 | 连接 |
 | --- | --- | --- | --- |
-| C1 | 1µF | 50V X7R 0805 | VBAT–GND（U1 输入） |
+| C1 | **2.2µF** | 25V X5R 0805（`CL21A225KAFNNNE`）；4.2V 偏置后有效仍 >2µF | VBAT–GND（U1 输入，手册要求"有效 ≥1µF"） |
 | C2 | 10µF | 16V X7R **1206** | 3.3V_AON–GND（U1 输出） |
 | C3 | 10µF | 16V X7R **1206** | GPS_BCKP–GND |
 | C4 | 100nF | 100V X7R 0805 | GPS_BCKP–GND |
@@ -300,7 +300,7 @@ GPS_RST (M1.P0.02) ──→ U4.pin9 RESET_N
    - 上电/复位后默认待机 10µA，且 **DPD 状态跨 MCU 复位存活** → 驱动初始化第一步无条件发 `0xAB`；
    - 只用 Standard/Dual SPI，**禁止四线指令（`0x6B`/`0xEB`/`0x32`/`0x34`）**。
 5. **进 System OFF 前**：SPI 引脚置高阻（R10 已保证 /CS 为高）。flash 在 AON 上，拉低 P0.13 不影响它，但擦写中途断电会损坏扇区，写完再睡。
-6. **加速度计**：地址 U2A=0x19 / U2B=0x18，启动探测自适应。LIS2DW12 **禁用 single-data-conversion-on-demand 与 SLP_MODE_SEL=0**（该模式下 INT2 变时钟输入，而 INT2 悬空）；INT1/INT2 默认推挽输出，**不得加上拉**；I²C 上限 **400kHz**（4.7k 上拉只对 400kHz 成立）。
+6. **加速度计**：两颗地址**都是 0x19**，用 WHO_AM_I（LIS2DW12=0x44 / LIS3DH=0x33）区分。LIS2DW12 **禁用 single-data-conversion-on-demand 与 SLP_MODE_SEL=0**（该模式下 INT2 变时钟输入，而 INT2 悬空）；INT1/INT2 默认推挽输出，**不得加上拉**；I²C 上限 **400kHz**（4.7k 上拉只对 400kHz 成立）。
 7. **GPS 软件复位**：`GPS_RST`(P0.02) 平时高阻输入；GPS 无响应时拉低 **≥100ms** 再释放。
 8. **P0.13 拉低 = 3.3V_SW 断电**。深睡顺序：停 GPS → 关 OLED → P1.13 高阻 → 拉低 P0.13 → System OFF。
 9. **WAKEUP 内部上拉漏电需实测**：手册未给阻值，姊妹型号同脚位标称「拉低到地 standby 约 600µA」，亮屏待机可能在 0.1~0.6mA 量级。
@@ -374,7 +374,7 @@ GPS_RST (M1.P0.02) ──→ U4.pin9 RESET_N
 
 | 位号 | 状态 | 条件 |
 | --- | --- | --- |
-| **U2A / U2B** | **二选一** | LIS2DW12（0x19）或 LIS3DHTR（0x18），另一个 DNP |
+| **U2A / U2B** | **二选一** | LIS2DW12（0x19）或 LIS3DHTR（**0x19**），另一个 DNP；两者同址，用 WHO_AM_I 区分 |
 | R8 / R9 | DNP 默认 | OLED 模块自带 I²C 上拉时不焊；裸屏才焊 |
 | C13 | 建议焊 | Flash 擦除峰值 25mA |
 
@@ -383,7 +383,7 @@ GPS_RST (M1.P0.02) ──→ U4.pin9 RESET_N
 ## 8. 手册依据（关键条目）
 
 1. **LIS2DW12**：SDO/SA0 内部上拉**不可关闭**（3.3V 时约 23kΩ），接 GND 会持续漏 ~140µA，而掉电电流仅 50nA → 接 3.3V_AON；退耦 **100nF + 10µF 紧贴 pin9**；`RES(pin7) 必须接 GND`；INT1/INT2 默认推挽输出，不可加上拉；LGA-12 2×2×0.7，pitch 0.5。
-2. **LIS3DHTR**：LGA-16 3×3×1.0；SA0 接 GND = 0x18；VDD 与 VDD_IO 均接 3.3V_AON。
+2. **LIS3DHTR**：LGA-16 3×3×1.0；**SA0 接 3.3V_AON = 0x19**（内部上拉不可关，接 GND 会持续漏 ~150µA）；VDD 与 VDD_IO 均接 3.3V_AON。
 3. **W25Q128JV**：DPD **1µA typ / 20µA max**、待机 10µA typ；`/CS` 上电期须跟随 VCC（手册建议加上拉）；**DPD 退出必须先发 `0xAB`**；上电默认待机且 DPD 跨 MCU 复位存活；`Q` 后缀 **QE 固定=1** → pin3/pin7 为 IO2/IO3；JV 系列无 QPI 指令；料号 `S` = SOIC-8 **208mil**。
 4. **RT9080 / RT9080N**：`EN 不可悬空，可直连 VIN`；输出电容"有效 ≥1µF"，无最大限制；Iq 2µA typ / 4µA max；TSOT-23-5；dropout 0.31V@600mA。
    **pin4**：非 N 版为 NC（悬空或接 GND 均可），N 版为 SNS（**必须接 VOUT**，内部链路电流 550nA，SNS 电位 = 该料号标称 VOUT，接 VOUT 即分压比 1）。手册 DS9080-08 §15 Figure 1「Application with Sense Function」即无外部分压的固定输出图。**本设计统一接 VOUT，两种变体通用**。
@@ -422,7 +422,7 @@ GPS_RST (M1.P0.02) ──→ U4.pin9 RESET_N
 | GPS 电源使能 | P0.24（ATGM 模块 ON/OFF） | **P1.13 → L76K.WAKEUP**（低=Standby） |
 | GPS 复位 | 无 | **P0.02 → L76K.RESET_N**（平时高阻，异常时拉低 ≥100ms） |
 | 用户按键 | P1.00 | **P1.11** |
-| 加速度计 | LIS3DHTR @0x18（单总线） | U2B = LIS3DHTR **0x18** / U2A = LIS2DW12 **0x19**，启动探测 |
+| 加速度计 | LIS3DHTR @0x18（单总线） | U2B = LIS3DHTR **0x19** / U2A = LIS2DW12 **0x19**，用 WHO_AM_I 区分 |
 | I²C 总线 | **1 条**（OLED + 传感器共用，P1.04/P0.11） | **2 条**：ACC = P1.00/P0.24，OLED = P1.04/P0.11（需新增第二路 TWIM） |
 | 存储 | microSD（FAT，`storage.rs` + `usb_msc.rs`） | **W25Q128 SPI-NOR**（驱动需重写；`usb_msc` 失效） |
 | 气压计 | BMP280 | 取消（删任务） |
@@ -441,3 +441,6 @@ GPS_RST (M1.P0.02) ──→ U4.pin9 RESET_N
 | **GPS_TX 倒灌电流** | R13 1k 时限流 `(3.3−0.7)/1k ≈ 2.6mA`，足以把断开的 3.3V_SW 抬到 ~2.5V | 固件五脚高阻化是主防线（§5.2）；可选把 **R13 改 10k**（注入降到 0.26mA，115200 无信号完整性问题，τ≈66ns ≪ 位宽 8.7µs） |
 | **RF 通路无 π 匹配焊盘** | 与手册 Fig.16 无源参考等价（R1=0Ω、C1/C2 不装），但失去调谐手段 | 可选：留 C1/C2 两个 NM 焊盘（0 成本、不进 BOM）；首板 VNA 扫 1559–1609MHz |
 | **无泄放电阻后的断电时间** | 3.3V_SW 上 ~11µF，断开后靠器件漏电放电；深睡场景（分钟级）足够 | 固件保证断轨后 ≥1s 再上电；若实测短周期开关导致 GPS 复位不干净，补 100k 泄放 |
+| **L76K 断电下降速率不达标** | 手册 §3.5 要求 VCC 断电后 **<50ms** 降到 100mV；无泄放时 3.3→2.7V 就要 200ms 以上，欠压区停留数秒 | **已知偏差**：靠"深睡后再上电"规避（上电时早已放净）。首板示波器量下降沿，验证断电重上电后能稳定冷启动 |
+| **J1 无反接保护** | JST 1.25 有防呆槽，但电芯引线极性取决于压接/焊接的人；保护板不防反接。接反则 U1 VIN 承受 −0.3V 以下，U1 与模块一起报废 | 首板用万用表核极性、线材标红黑；如需根治可用 P-MOS 反接阻断（不要用肖特基，0.3V 压降会吃掉电池末端余量） |
+| **C1 有效容值** | 原用 50V 1µF 0805，4.2V 偏置下只剩 0.85–0.95µF，低于手册"有效 ≥1µF" | **已改为 2.2µF 25V 0805（`CL21A225KAFNNNE`）**，偏置后仍 >2µF |
