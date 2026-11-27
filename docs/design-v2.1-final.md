@@ -104,18 +104,18 @@ GPS_RST (M1.P0.02) ──→ U4.pin9 RESET_N
 | 位号 | 容值 | 耐压/材质/封装 | 连接 |
 | --- | --- | --- | --- |
 | C1 | **2.2µF** | 25V X5R 0805（`CL21A225KAFNNNE`）；4.2V 偏置后有效仍 >2µF | VBAT–GND（U1 输入，手册要求"有效 ≥1µF"） |
-| C2 | 10µF | 16V X7R **1206** | 3.3V_AON–GND（U1 输出） |
-| C3 | 10µF | 16V X7R **1206** | GPS_BCKP–GND |
-| C4 | 100nF | 100V X7R 0805 | GPS_BCKP–GND |
-| C5 | 100nF | 100V X7R 0805 | 3.3V_AON–GND（紧贴 U2A pin9） |
-| C6 | 100nF | 100V X7R 0805 | 3.3V_AON–GND（紧贴 U3 pin8） |
-| C7 | 10µF | 16V X7R **1206** | 3.3V_SW–GND（紧贴 U4 VCC） |
-| C8 | 100nF | 100V X7R 0805 | 3.3V_SW–GND |
-| C9 | 100nF | 100V X7R 0805 | BAT_ADC–GND |
-| C10 | 10µF | 16V X7R **1206** | 3.3V_AON–GND（紧贴 U2A pin9，与 C5 并联） |
+| C2 | 10µF | **25V X5R 1206**（`CL31A106KBHNNNE`） | 3.3V_AON–GND（U1 输出） |
+| C3 | 10µF | **25V X5R 1206**（`CL31A106KBHNNNE`） | GPS_BCKP–GND |
+| C4 | 100nF | **50V X7R 0805**（`CL21B104KBCNNNC`） | GPS_BCKP–GND |
+| C5 | 100nF | **50V X7R 0805**（`CL21B104KBCNNNC`） | 3.3V_AON–GND（紧贴 U2A pin9；装 U2B 时兼顾 pin14） |
+| C6 | 100nF | **50V X7R 0805**（`CL21B104KBCNNNC`） | 3.3V_AON–GND（紧贴 U3 pin8） |
+| C7 | 10µF | **25V X5R 1206**（`CL31A106KBHNNNE`） | 3.3V_SW–GND（紧贴 U4 VCC） |
+| C8 | 100nF | **50V X7R 0805**（`CL21B104KBCNNNC`） | 3.3V_SW–GND |
+| C9 | 100nF | **50V X7R 0805**（`CL21B104KBCNNNC`） | BAT_ADC–GND |
+| C10 | 10µF | **25V X5R 1206**（`CL31A106KBHNNNE`） | 3.3V_AON–GND（紧贴 U2A pin9，与 C5 并联） |
 | C11 | 33pF | 50V C0G **0603**（`0603N330J101CT`） | 3.3V_SW–GND（紧贴 U4 VCC） |
 | C12 | 33pF | 50V C0G **0603**（`0603N330J101CT`） | GPS_BCKP–GND |
-| C13 | 1µF | 50V X7R 0805 | 3.3V_AON–GND（紧贴 U3 VCC） |
+| C13 | 1µF | **25V X7R 0805**（`CL21B105KBFNNNE`） | 3.3V_AON–GND（紧贴 U3 VCC） |
 
 ---
 
@@ -313,7 +313,8 @@ GPS_RST (M1.P0.02) ──→ U4.pin9 RESET_N
      注意 **QE 固定=1 意味着器件侧接受这些指令**（不是"被拒绝"），而 IO2/IO3 未接 MCU 且被 10k 拉高 → 发 `32h` 会把一半数据位写成 1、发 `6Bh/EBh` 读出伪数据，属**静默坏数据**。
    - **JEDEC ID = `EF 40 18`**（`JVSIQ`/JQ）；`JVSIM/JM` 是 `EF 70 18`——驱动别按"JV=70 18"硬校验。
 5. **进 System OFF 前**：SPI 引脚置高阻（R10 已保证 /CS 为高）。flash 在 AON 上，拉低 P0.13 不影响它，但擦写中途断电会损坏扇区，写完再睡。
-6. **加速度计**：两颗地址**都是 0x19**，用 WHO_AM_I（LIS2DW12=0x44 / LIS3DH=0x33）区分。LIS2DW12 **禁用 single-data-conversion-on-demand 与 SLP_MODE_SEL=0**（该模式下 INT2 变时钟输入，而 INT2 悬空）；INT1/INT2 默认推挽输出，**不得加上拉**；I²C 上限 **400kHz**（4.7k 上拉只对 400kHz 成立）。
+6. **加速度计**：两颗地址**都是 0x19**，用 WHO_AM_I（LIS2DW12=0x44 / LIS3DH=0x33）区分（⚠ `0x33` 同时也是 SA0=1 的读地址字节，别在示波器上混淆）。
+   **INT 引脚约束**：`P1.15`(INT1) **禁止开内部上拉**（传感器 INT1 是推挽输出，开 ≈13k 上拉会灌 ~250µA）；latched 中断**睡前必须清 latch**（读 INT1_SRC 或写 INT1_APP），否则 DETECT 常有效 → 唤醒风暴；睡前关掉其它脚的 sense（PORT/DETECT 是整端口 OR）。LIS2DW12 **禁用 single-data-conversion-on-demand 与 SLP_MODE_SEL=0**（该模式下 INT2 变时钟输入，而 INT2 悬空）；INT1/INT2 默认推挽输出，**不得加上拉**；I²C 上限 **400kHz**（4.7k 上拉只对 400kHz 成立）。
 7. **GPS 软件复位**：`GPS_RST`(P0.02) 平时高阻输入；GPS 无响应时拉低 **≥100ms** 再释放。
 8. **P0.13 拉低 = 3.3V_SW 断电**。深睡顺序：停 GPS → 关 OLED → P1.13 高阻 → 拉低 P0.13 → System OFF。
 9. **WAKEUP 内部上拉漏电需实测**：手册未给阻值，姊妹型号同脚位标称「拉低到地 standby 约 600µA」，亮屏待机可能在 0.1~0.6mA 量级。
@@ -403,7 +404,7 @@ GPS_RST (M1.P0.02) ──→ U4.pin9 RESET_N
 
 ## 8. 手册依据（关键条目）
 
-1. **LIS2DW12**：SDO/SA0 内部上拉**不可关闭**（3.3V 时约 23kΩ），接 GND 会持续漏 ~140µA，而掉电电流仅 50nA → 接 3.3V_AON；退耦 **100nF + 10µF 紧贴 pin9**；`RES(pin7) 必须接 GND`；INT1/INT2 默认推挽输出，不可加上拉；LGA-12 2×2×0.7，pitch 0.5。
+1. **LIS2DW12**：SDO/SA0 内部上拉**不可关闭**（手册未给阻值；按 3.6V/2.5V 的 20.4k/30.4k 插值，3.3V 约 22kΩ），接 GND 会持续漏 ~140µA，而掉电电流仅 50nA → 接 3.3V_AON；退耦 **100nF + 10µF 紧贴 pin9**；`RES(pin7) 必须接 GND`；INT1/INT2 默认推挽输出，不可加上拉；LGA-12 2×2×0.7，pitch 0.5。
 2. **LIS3DHTR**：LGA-16 3×3×1.0；**SA0 接 3.3V_AON = 0x19**（内部上拉不可关、手册未给阻值，接 GND 估计持续漏 ~150µA）；VDD 与 VDD_IO 均接 3.3V_AON。
 3. **W25Q128JV**：DPD **1µA typ / 20µA max**、待机 10µA typ；`/CS` 上电期须跟随 VCC（手册建议加上拉）；**DPD 退出必须先发 `0xAB`**；上电默认待机且 DPD 跨 MCU 复位存活；`Q` 后缀 **QE 固定=1** → pin3/pin7 为 IO2/IO3；JV 系列无 QPI 指令；料号 `S` = SOIC-8 **208mil**。
 4. **RT9080 / RT9080N**：`EN 不可悬空，可直连 VIN`；输出电容"有效 ≥1µF"，无最大限制；Iq 2µA typ / 4µA max；TSOT-23-5；dropout 0.31V@600mA。
@@ -471,4 +472,6 @@ GPS_RST (M1.P0.02) ──→ U4.pin9 RESET_N
 | **电量精度** | 未标定时误差约 ±4.5%（0.6V 内参 ±3% ⊕ SAADC 增益 ±3% ⊕ 1% 电阻），4.2V 时 ±190mV，比 12bit LSB 大 100 倍 | 固件做一次两点标定（万用表 VBAT vs 码值），或只用分档阈值（>3.6 / 3.3 / 3.0 / <2.75V）
 | **B+/RAW 短接（M1.1–M1.2）** | 官方引脚图上 pad2 丝印写 `RAW`、外注却写 `BATTERY+`，两种说法矛盾；v1 同样短接且长期正常（经验旁证） | 保留短接（电池经 B+/充电器供电所需），但**首板按序实测**：① 断电通断档量 pad1↔pad2 应 <1Ω；② **只插 USB 不接电池**，量 pad2——若 ≈4.6~5.0V 则**立即拆掉短接**（否则 5V 直加压电芯）；③ 电池+USB 同时，pad2 必须 ≤4.25V |
 | **P0.13 门控语义未实测** | 厂商只写"P0.13 低关闭 3.3V/VCC 引脚"，未给拓扑；同页参数「待机 ~20µA」与简介「关闭时 1mA」自相矛盾（差 50 倍） | 首板实测四项：① 拉低后焊盘 5 是否真到 0V/高阻；② MCU 是否仍活（SWD/BLE）；③ 整模块静态电流；④ 复位默认态下 3.3V_SW 是通是断 |
-| **模块静态电流批次差异** | 社区实测好批 4µA、坏批（肖特基换成硅管）可达 60µA | 首板逐批测；§1.1 的 12–31µA 预算以实测为准 |
+| **模块静态电流批次差异** | 社区实测好批 4µA、坏批（肖特基换成硅管）可达 60µA | 首板逐批测；§1.1 的 12–31µA 预算以实测为准 || **LGA-12/LGA-16 封装 pin1 朝向** | 立创 LGA-12 封装 pad1 在左下角，而 DS11811 顶视图 pin1 标记在左上角（p56 Fig.18）、p4 Fig.2 是 bottom view —— 两套编号基准可能差 90° | **唯一能毁板的项**：首板前做 1:1 打印或 3D 比对，确认 U2A 的 pad1/9/12 与封装一致；立创是量产件大概率对，但不能只凭"大概率" |
+| **U2A 的 VDD_IO 退耦** | DS11811 Fig.6 在 VDD_IO(pin10) 上另有 100nF，本设计只有一只 C5 兼顾 pin9/pin10 | 可接受（同网络、0.5mm pitch）；若要严格照手册，可在 pin10 旁再补一只 100nF（成本≈0）；布局时让 C5 的 pad 同时贴近 pin9/pin10 |
+| **INT2 抗误入保护** | INT2 默认推挽强制低，悬空安全；但固件误进 single-data-conversion（CTRL1.MODE=10 且 CTRL3.SLP_MODE_SEL=0）时 INT2 变时钟输入，浮空会自激 | 可选：INT2 加 100k 下拉（零电流代价）；固件侧严格禁用该模式 |
