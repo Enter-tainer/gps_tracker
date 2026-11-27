@@ -67,7 +67,7 @@ export default defineConfig({
         dir: 'ltr'
       },
       workbox: {
-        globPatterns: ['**/*.{js,css,ico,png,svg,mjs}'],
+        globPatterns: ['**/*.{js,css,ico,png,svg,mjs,wasm}'],
         navigateFallback: null,
         cleanupOutdatedCaches: true,
         runtimeCaching: [

@@ -12,11 +12,13 @@
     "regions:ingest": "node scripts/ingest_regions.mjs",
     "sync:cf": "node scripts/sync_cloudflare.mjs",
     "deploy:cf": "npm run build && npx wrangler deploy",
+    "gpsl0:build-wasm": "node scripts/build_gpsl0_wasm.mjs",
     "gpsl0:selftest": "node scripts/selftest_gpsl0.mjs",
     "gpsl0:bench": "node scripts/bench_gpsl0.mjs --verify --stats",
     "gpsl0:ablate": "node scripts/ablation_codec.mjs --matrix=core",
     "gpsl0:verify": "node scripts/verify_gpsl0.mjs --all",
-    "gpsl0:pack": "node scripts/pack_gpsl0.mjs --verify"
+    "gpsl0:pack": "node scripts/pack_gpsl0.mjs --verify",
+    "gpsl0:migrate-d1": "node scripts/migrate_d1_gpsl0_v2.mjs"
   },
   "dependencies": {
     "@atlas-realm/map": "git+https://github.com/Enter-tainer/atlas-realm.git#e79076cf88bdc6e932062f5030e91214b91c2c85",

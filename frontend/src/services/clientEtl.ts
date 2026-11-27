@@ -20,7 +20,11 @@ import {
   decodeGpsPoints,
   parseGpxXmlToPoints
 } from "./gpsCodec.ts";
-import { decodeGpsl0ToPoints, encodeGpsl0Points } from "./gpsl0/index.ts";
+import {
+  decodeGpsl0ToPoints,
+  encodeGpsl0Points,
+  initGpsl0Wasm,
+} from "./gpsl0/index.ts";
 import {
   classifyUploadedTrackRegions,
   rebuildVisitedRegionsInBrowser
@@ -159,6 +163,7 @@ export async function runBrowserTrackEtl(
   }
 
   onStage?.("浏览器压缩 GPSL0 & 计算统计...");
+  await initGpsl0Wasm();
   const inferred = inferTrackIdentity(fileName, points, customTitle, customDate);
   const trackId =
     customId && customId.trim() ? sanitizeTrackId(customId) : inferred.id;
@@ -293,7 +298,10 @@ export async function rebuildGlobalFogInBrowser(
   trackDatesById?: Map<string, string>
 ): Promise<FogPackData> {
   onProgress?.("拉取全量 GPSL0 轨迹真源...");
-  const resp = await fetch("/api/tracks/all-gpsl0");
+  const [, resp] = await Promise.all([
+    initGpsl0Wasm(),
+    fetch("/api/tracks/all-gpsl0"),
+  ]);
   if (!resp.ok) {
     throw new Error(`HTTP ${resp.status}`);
   }
