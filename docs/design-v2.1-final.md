@@ -70,14 +70,20 @@ GPS_RST (M1.P0.02) ──→ U4.pin9 RESET_N
 | | **AON 小计** | **13.6µA** | **34.8µA** | |
 | VBAT | 采样链（EN 低，25℃） | 0.15µA | 2.0µA | AO3401/3400 IDSS |
 | | 采样链（55℃ 上限） | 0.15µA | **10µA** | Q1 的 IDSS 5µA + Q2 的 IDSS 5µA（手册 55℃ 测试点）；R4=10k 使 Q2 漏电只把 Q1 栅压抬 50mV，Q1 不会开启 |
-| 模块 | 自身静态（好批 / 标称 / 坏批） | 4µA | 60µA | 社区实测 + 厂商 |
+| 模块 | System OFF（P0.13 驱动低）+ 板级 | **5~8µA** | **15~25µA**（25℃）/ 30~80µA（45~55℃） | nRF HV 0.95 + TP4054 睡眠 3 + R4 0.37 + LDO 关断 0.1 + D1/USBLC6 ~0.5 |
 | | 内部电池分压（P0.24，电阻 NC） | 0 | 0（若贴了 ~210µA） | 来料核对 |
-| **整机 S_deep** | | **≈18µA** | **≈110~130µA** | |
+| **整机 S_deep** | | **≈20µA** | **≈40~50µA** | ⚠ 但裸模块实测到 **50µA**（无法用手册解释，见 §9.3 归因项）；归因前按 **50µA** 保守算 = 整机 **≈64µA** |
 
 > **电芯账本**还要再加：保护板 3µA + 自放电等效 21~42µA（在 J1 之内、电流表之外）。
 > 对外标称写「AON 支路 13.6µA typ + 模块自身 ~4µA」，不要写「深睡 12µA」。
 
-> **两种"深睡"必须分开算**（这是模块功耗差 10 倍的地方）：
+> **关于 System OFF / System ON 的取舍（已定：用 System ON + WFI）：**
+>
+> **关键事实：模块的 3.3V LDO 只喂载板的 GPS/OLED，nRF 自己始终由 VDDH 供电。** 所以「P0.13 低（关外设）+ nRF 继续跑 BLE 广播」可以同时做到。
+> nRF 自身两态只差 ~2µA（System OFF 0.4~0.95 vs System ON idle 1.5~3µA），而 System OFF 要付：RAM 丢失、定时器停、唤醒=复位。**结论：用 System ON + WFI + RTC**，保广播、保状态、固件更简单。
+> 预算算式：**AON 13.6µA + 模块 ~8µA + 广播 9µA(1s) ≈ 30µA**（P0.13 保持低，GPS/OLED 断电）。
+>
+> 原先把这两种状态分开记（供参考）：
 > - **System OFF**（GPIO DETECT 唤醒，RAM 不保留，唤醒=复位）：nRF52840 高压模式 **0.95µA**，加上模块板级（充电 IC 反灌 ≤2 + LDO 关断 0.1 + 10M 上拉 0.42 + 肖特基漏 ~0.4）≈ **4µA**。上表的 4µA 指这一档。
 > - **System ON + WFI + RTC**（保留 RAM、定时唤醒、**可继续 BLE 广播**）：**整模块实测 ≈50µA**（`bench/power-off` 实测：LDO 已关、引脚全高阻、HFCLK/LFCLK 已停，仍是 50µA）。若产品要在睡眠期保持 FindMy/周期广播，**不能进 System OFF**，预算按这一档：整机 ≈ **65~75µA**。
 >   ⚠ 注意 `bench/power-off` 用的是 `wfi()` 死循环 = **System ON**；要测真 System OFF 必须换成 `POWER.systemoff()` 并拔掉 SWD（否则调试器本身吃电、且芯片进不去）。**4µA 这一档目前仍是手册推算、未经实测。**
@@ -379,6 +385,7 @@ GPS_RST (M1.P0.02) ──→ U4.pin9 RESET_N
     - 唤醒后**先释放这些脚再让 P0.13 起来**，并在 I²C 初始化前做 9 时钟 bus-clear。
 13. **外设实例互斥**：本设计需 2×TWIM + 1×SPI。`SPIM0/TWIM0`、`SPIM1/TWIM1` 是同一实例 → W25Q128 只能用 **SPIM2（推荐，8MHz ≈ 1MB/s）** 或 SPIM3（32MHz ≈ 4MB/s，但需 Errata 198 workaround，且 Errata 195 与深睡预算冲突）。**QSPI 物理不可用**（模块未引出 P0.19/21/23）。v1 的 `SPI3` 不能照搬。
 14. **睡前把相关引脚设成高阻**（`nrf_gpio_cfg_default()`：输入、无上下拉）。System OFF 期间 PIN_CNF 保持：
+    - ⚠ **例外：`P0.13` 必须是「输出低」，绝不能高阻、绝不能对它调 `nrf_gpio_cfg_default()`**——模块的 EN 上有 10M 上拉到 VDDH，放高阻 = LDO 被打开 = **多 100~135µA**（单项代价超过其它所有优化之和）
     - `P1.06`(SPI_CS) 输出低 → 330µA；内部下拉 → 143µA
     - `P1.00/P0.24`(ACC I²C) 输出低 → 702µA/根；内部下拉 → 186µA/根
     - `P1.15` 例外：输入 + 无上下拉 + `SENSE=High`
@@ -475,7 +482,8 @@ GPS_RST (M1.P0.02) ──→ U4.pin9 RESET_N
 3. **W25Q128JV**：DPD 1µA typ / 20µA max、待机 10µA typ / 60µA max；/CS 上电期须跟随 VCC；DPD 退出必须先发 `0xAB`；`Q` 后缀 QE 固定=1 → pin3/pin7 为 IO2/IO3；JV 无 QPI 指令；`S` = SOIC-8 208mil。
 4. **RT9080 / RT9080N**：EN 不可悬空、可直连 VIN；输出电容「有效 ≥1µF」无上限；Iq 2µA typ / 4µA max；dropout 0.31V@600mA。**pin4**：非 N 版为 NC，N 版为 SNS（必须接 VOUT，内部链路 550nA，SNS 电位 = 该料号标称 VOUT）。
 5. **L76K**：VCC 2.7–3.4V、连续 29mA、standby 20µA、backup 8µA；WAKEUP 低有效进 standby；RESET_N 内部上拉、禁止外加上拉；**V_BCKP 不得晚于 VCC 上电**；推荐 V_BCKP 4.7µF + 100nF + 33pF；无源天线直连不需隔直电容；RESERVED 必须悬空；SET 是星座选择。
-6. **ProMicro（nologo）**：P0.13 低 → 关断 3.3V/VCC；BOOST 短接 → 充电 100→300mA（电池须 >500mAh）；待机 ~20µA；电池接口 B+/B−。
+6. **ME6217 / TP4054 / BAT60B**：ME6217 Iq **100µA typ / 130µA max**（关断 0.1/1.0µA，CE 禁止悬空），**无主动输出放电**（仅内部几百 kΩ 被动泄放）；TP4054 无 VBUS 时 BAT 睡眠电流 **3µA typ / 5µA max**；BAT60B 反漏在 VBUS 浮空时被自限到 nA~亚µA，**但给 VBUS 加下拉会变成 5~15µA（高温数百 µA）**。
+7. **ProMicro（nologo）**：P0.13 低 → 关断 3.3V/VCC；BOOST 短接 → 充电 100→300mA（电池须 >500mAh）；待机 ~20µA；电池接口 B+/B−。
 
 ---
 
@@ -506,7 +514,7 @@ GPS_RST (M1.P0.02) ──→ U4.pin9 RESET_N
 | 3 | **3.3V_SW 关断** | P0.13 拉低后 <100mV 且保持 ≥100ms；量下降沿时间 |
 | 4 | **P0.13 门控语义** | ① 焊盘 5 是否真到 0V/高阻 ② MCU 是否仍活（SWD/BLE）③ 整模块静电流 ④ 复位默认态轨道通断 |
 | 5 | **模块 LDO Iq** | 100µA 还是 1µA（两种说法差 100 倍，直接改 S_on 结论） |
-| 6 | **模块 System OFF 电流** | 用 `POWER.systemoff()`（不是 `wfi`）+ 拔 SWD 测；手册推算 ≈4µA，**尚未实测**。参考：`bench/power-off` 的 System ON+WFI 实测为 50µA |
+| 6 | **模块 50µA 归因（优先）** | 手册推算 LDO 关时应 5~8µA，实测 50µA，差 40µA。**A/B 测试**：P0.13 拉低 vs 拉高看差值 —— 差 ~100µA ⇒ LDO 是 ME6217（需另查那 40µA）；差 ~50µA ⇒ LDO 不是 ME6217（读丝印）。再按序隔离：① 抬充电 IC 的 BAT 脚 ② 拆 BAT60B ③ 断 Q1/Q2 栅极网络 ④ 测 LED 回路 |
 | 6b | **50µA 的构成** | System ON+WFI 下 50µA：逐项排查 ① SWD 是否真拔掉 ② 充电 IC 无 VBUS 静态 ③ 片内 REG0 buck 静态（HV 模式） ④ 上拉/LED |
 | 7 | **B+/RAW 短接** | ① 断电量 pad1↔pad2 <1Ω ② **只插 USB** 量 pad2：若 ≈4.6~5.0V 立即拆短接 ③ 电池+USB 时 pad2 ≤4.25V |
 | 8 | **模块内部电池分压** | 量 P0.24（=ACC_SCL）对地阻抗；若分了压会漏 210µA 且拉低 I²C 高电平 |
