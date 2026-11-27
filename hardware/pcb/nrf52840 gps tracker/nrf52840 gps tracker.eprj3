@@ -40,8 +40,8 @@
         "name": "TraceveilV2",
         "board": "408d68e1e7b1c65e",
         "source": "",
-        "version": "1795788442296",
-        "updateTime": 1795788442296
+        "version": "1795797326840",
+        "updateTime": 1795797326840
       },
       "c66ffdfc2e464bbf810a7c026dc23547": {
         "uuid": "c66ffdfc2e464bbf810a7c026dc23547",
@@ -68,8 +68,8 @@
         "schematic_uuid": "5d0cea22eca72c28",
         "zIndex": 17,
         "source": "",
-        "version": "1795788442296",
-        "updateTime": 1795788442296
+        "version": "1795797326840",
+        "updateTime": 1795797326840
       },
       "f5e15c322dc27a58": {
         "uuid": "f5e15c322dc27a58",
