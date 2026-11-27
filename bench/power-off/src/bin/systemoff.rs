@@ -78,3 +78,10 @@ fn main() -> ! {
         cortex_m::asm::wfi();
     }
 }
+
+#[panic_handler]
+fn panic(_: &core::panic::PanicInfo) -> ! {
+    loop {
+        cortex_m::asm::wfi();
+    }
+}

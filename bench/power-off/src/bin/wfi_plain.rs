@@ -38,7 +38,10 @@ fn main() -> ! {
     }
 
     // 2. P0.13 → 输出低
-    P0.outclr().write(|w| w.set_pin(13, true));
+    for &n in PIN_LOW_P0 {
+        P0.outclr().write(|w| w.set_pin(n, true));
+        P0.dirset().write(|w| w.set_pin(n, true));
+    }
     P0.dirset().write(|w| w.set_pin(13, true));
 
     // 3. 直接睡。不动 CLOCK，也不清 NVIC —— 看 WFI 自己能压到多少。
