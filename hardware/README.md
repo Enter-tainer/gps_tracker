@@ -32,7 +32,7 @@ nRF52840 GPS 轨迹记录器的完整硬件资料：PCB（EasyEDA Pro 源工程�
 ```
 hardware/
 ├── pcb/
-│   ├── gps-tracker-nrf52840-v1.epro2   # EasyEDA Pro 源工程（可编辑，含原理图 + PCB + 库）
+│   ├── nrf52840 gps tracker/        # EasyEDA Pro 源工程（.eprj3 文件夹格式，含 v1/v2.1 原理图 + PCB + 库）
 │   ├── gps-tracker-nrf52840-v1.step    # 3D PCB STEP 模型（用于 CAD 外壳设计与干涉检查）
 │   ├── BOM.csv                         # 物料清单（13 项）
 │   ├── preview.webp                    # PCB 2D 布局预览图
@@ -90,7 +90,7 @@ hardware/
 
 ## 制造说明
 
-- **PCB 源工程**：`pcb/gps-tracker-nrf52840-v1.epro2`，用 EasyEDA Pro（嘉立创 EDA 专业版，≥ 4.1.100）打开即可编辑。工程内嵌了用到的符号 / 封装 / 器件，不依赖外部库。
+- **PCB 源工程**：pcb/nrf52840 gps tracker/nrf52840 gps tracker.eprj3，用 EasyEDA Pro（嘉立创 EDA 专业版，≥ 4.1.100）打开即可编辑。工程内嵌了用到的符号 / 封装 / 器件，不依赖外部库。
 - **Gerber / 坐标文件 / 原理图 PDF 未随仓库发布**：导出方法见 [pcb/README.md](pcb/README.md)。欢迎提 PR 把这些制造文件补进来。
 - **物料**：见 [pcb/BOM.csv](pcb/BOM.csv)。只有 4 项能确定立创商城编号（`C15134`、`C9900040040`），其余请按型号检索同规格件，允许替换。
 

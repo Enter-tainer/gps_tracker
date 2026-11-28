@@ -57,7 +57,7 @@
       <ul>
         <li><strong>95 × 30 mm 双层板</strong>：ProMicro nRF52840 + Quectel L76K + 25 mm 陶瓷天线 + LIS3DHTR + BMP280 + 0.96" OLED + microSD，共 13 项精选 BOM。</li>
         <li><strong>两种可打印外壳</strong>：<strong>Slim 轻薄版</strong>配背面软包薄锂电（接 <code>CN2</code>），<strong>21700 续航版</strong>配板载 <code>U8</code> 电池座装单节 21700 大电芯。</li>
-        <li><strong>工程源文件全公开</strong>：立创 EDA Pro 可编辑源工程（<code>.epro2</code>）、AP214 彩色 3D STEP 模型与两套外壳 <code>.3mf</code> / <code>.stl</code>。</li>
+        <li><strong>工程源文件全公开</strong>：立创 EDA Pro 可编辑源工程（<code>.eprj3</code> 文件夹格式）、AP214 彩色 3D STEP 模型与两套外壳 <code>.3mf</code> / <code>.stl</code>。</li>
       </ul>
     </td>
     <td width="50%" valign="top">
@@ -140,7 +140,8 @@
 | **传感器** | `LIS3DHTR` 三轴加速度计（I2C `0x18`，运动检测）· `BMP280` 气压/温度（I2C `0x76`） | [hardware/pcb/BOM.csv](hardware/pcb/BOM.csv) |
 | **显示与存储** | 0.96" 128×64 OLED（I2C `0x3C`）· microSD / TF 卡座（SPI3，FAT32 存储 `.gpz`） | [assembly.md](docs/hardware/assembly.md) |
 | **电量检测** | `200 kΩ` / `300 kΩ` 精密分压接 12-bit SAADC（`Vbat = Vadc × 5/3`） | [firmware/src/battery.rs](firmware/src/battery.rs) |
-| **设计源工程** | EasyEDA Pro [`gps-tracker-nrf52840-v1.epro2`](hardware/pcb/gps-tracker-nrf52840-v1.epro2) · 3D 模型 [`gps-tracker-nrf52840-v1.step`](hardware/pcb/gps-tracker-nrf52840-v1.step) | [hardware/README.md](hardware/README.md) |
+| **设计源工程** | EasyEDA Pro [
+rf52840 gps tracker.eprj3](hardware/pcb/nrf52840 gps tracker/nrf52840 gps tracker.eprj3) · 3D 模型 [`gps-tracker-nrf52840-v1.step`](hardware/pcb/gps-tracker-nrf52840-v1.step) | [hardware/README.md](hardware/README.md) |
 
 ---
 
@@ -312,7 +313,7 @@ traceveil tracks analyze <track_id> --json
 gps_tracker/
 ├── hardware/                    # ★ 开源硬件设计（CERN-OHL-S-2.0 / CC BY 4.0）
 │   ├── pcb/
-│   │   ├── gps-tracker-nrf52840-v1.epro2   # EasyEDA Pro 源工程（含原理图 + PCB + 器件库）
+│   │   ├── nrf52840 gps tracker/        # EasyEDA Pro 源工程（.eprj3 文件夹格式，含 v1/v2.1 原理图 + PCB + 器件库）
 │   │   ├── gps-tracker-nrf52840-v1.step    # AP214 彩色 3D PCB STEP 模型
 │   │   ├── BOM.csv                         # 13 项物料清单
 │   │   ├── preview.webp / preview-3d.png   # 2D 布局图 & 3D STEP 渲染图
@@ -342,7 +343,7 @@ gps_tracker/
 
 ### 1. 硬件打样与打印
 
-1. **PCB 打样**：用 [嘉立创 EDA 专业版](https://pro.lceda.cn/) 打开 [`hardware/pcb/gps-tracker-nrf52840-v1.epro2`](hardware/pcb/gps-tracker-nrf52840-v1.epro2) 导出 Gerber（板厚 1.6 mm，2 层 `95 × 30 mm`，**勿勾阻抗控制**，确认陶瓷天线下方净空无铺铜），按 [`BOM.csv`](hardware/pcb/BOM.csv) 备齐 13 项物料。
+1. **PCB 打样**：用 [嘉立创 EDA 专业版](https://pro.lceda.cn/) 打开 [hardware/pcb/nrf52840 gps tracker](hardware/pcb/nrf52840 gps tracker/nrf52840 gps tracker.eprj3) 导出 Gerber（板厚 1.6 mm，2 层 `95 × 30 mm`，**勿勾阻抗控制**，确认陶瓷天线下方净空无铺铜），按 [`BOM.csv`](hardware/pcb/BOM.csv) 备齐 13 项物料。
 2. **二选一外壳打印**：
    - 要极简轻薄 → 打印 [`case-slim-v1.3mf`](hardware/enclosure/case-slim-v1.3mf)，PCB 上**不焊 `U8`**，软包薄电池接 `CN2`；
    - 要周级超长续航 → 打印 [`case-21700-v1.3mf`](hardware/enclosure/case-21700-v1.3mf)，PCB 上**焊接 `U8`** 装 21700 电芯。
@@ -508,7 +509,7 @@ uv run gt casic --help    # CASIC 协议抓包解析
 
 **GPS Tracker · Traceveil** is a fully open, end-to-end personal GPS logging and spatial geo-archive platform built around **nRF52840 + Quectel L76K**:
 
-- **Open Hardware (`hardware/`)**: 2-layer `95 × 30 mm` PCB (EasyEDA Pro `.epro2`, AP214 full-color 3D `.step`, 13-item BOM) with **two printable enclosures** — **`case-slim-v1`** (`99.7 × 21.9 × 33.2 mm`, flat LiPo pouch cell via `CN2`, omit `U8`) and **`case-21700-v1`** (`97.2 × 37.8 × 33.2 mm`, single 21700 cell in onboard holder `U8`).
+- **Open Hardware (`hardware/`)**: 2-layer `95 × 30 mm` PCB (EasyEDA Pro `.eprj3`, AP214 full-color 3D `.step`, 13-item BOM) with **two printable enclosures** — **`case-slim-v1`** (`99.7 × 21.9 × 33.2 mm`, flat LiPo pouch cell via `CN2`, omit `U8`) and **`case-21700-v1`** (`97.2 × 37.8 × 33.2 mm`, single 21700 cell in onboard holder `U8`).
 - **Rust `no_std` Firmware (`firmware/`)**: Embassy async runtime + nrf-sdc controller + TrouBLE host; 6-state motion-gated GPS power state machine (`S0–S5`) that hard-cuts power to L76K while stationary; CASIC A-GNSS injection; streaming delta-compressed `GPZ` logging to FAT32 microSD; USB Mass Storage mode; offline IANA timezone lookup; and optional **Apple Find My** P-224 15-minute rolling key offline finding.
 - **GPSL0 Archive Codec (`frontend/src/services/gpsl0/`)**: Time-normalized 2nd-order kinematics predictor + 6-regime context model + 11-bit binary range coder. Benchmarks across **123 real tracks / 2,022,295 points** shrink `257.50 MB` GPX XML (`10.28 MB` GPZ V2) down to **`1.17 MB` (`4.63 bits/pt`, `8.77×` vs GPZ V2)** with **123/123 bit-exact lat/lon reconstruction**.
 - **Traceveil Web App & Edge Cloud (`frontend/`)**: Offline-capable Web Bluetooth console (`/`) + lazy-loaded MapLibre workspace (`/map`) featuring Fog-of-War, heatmaps, spatial proximity search, 5-tier global administrative LOD (`Country → Province → City → District → Z15/Z21 street fog`), OpenRailwayMap & 3D terrain overlays (`@atlas-realm/map`), deployable to a single **Cloudflare Worker + D1 + R2** behind Cloudflare Access.

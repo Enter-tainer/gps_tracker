@@ -15,7 +15,7 @@
 | `.gitignore` 覆盖 | ⚠️ 原先没有覆盖密钥、`.venv/`、SoftDevice hex —— **已补** |
 | README 与实现是否一致 | ✅ 已对齐全栈实现（硬件双壳 + Rust 固件 + GPSL0 + Traceveil + AI Agent CLI） |
 | LICENSE | ✅ 代码 Apache-2.0 · 硬件 CERN-OHL-S-2.0 · 文档 CC BY 4.0 |
-| 硬件资料 | ✅ `hardware/` 已补齐：`.epro2` + 3D `.step` + BOM + Slim & 21700 双形态外壳（3MF + STL + 渲染图） |
+| 硬件资料 | ✅ `hardware/` 已补齐：`.eprj3` + 3D `.step` + BOM + Slim & 21700 双形态外壳（3MF + STL + 渲染图） |
 | Gerber / 坐标 / 原理图 PDF | ⚠️ 仍待 EasyEDA Pro 一键导出（`hardware/pcb/fabrication/`，见 §3 ①） |
 | 实拍照片 / 实机界面图 | ⚠️ Traceveil 世界迷雾演示截图已补充（`docs/images/traceveil-fog-*.png`）；仍待补充硬件实物实拍（目前已有 3D CAD 渲染图，见 §3 ②） |
 
@@ -25,7 +25,7 @@
 hardware/
 ├── README.md                        # 硬件总览：规格、框图、制造、许可
 ├── pcb/
-│   ├── gps-tracker-nrf52840-v1.epro2   # EasyEDA Pro 源工程（~428 KB）
+│   ├── nrf52840 gps tracker/        # EasyEDA Pro 源工程（.eprj3 文件夹格式）
 │   ├── gps-tracker-nrf52840-v1.step    # 3D PCB STEP 模型（9.1 MB，AP214 彩色）
 │   ├── BOM.csv                         # 从工程网表 + 原理图整理的 13 项物料
 │   ├── preview.webp                    # PCB 2D 布局预览图
@@ -57,7 +57,7 @@ CONTRIBUTING.md  SECURITY.md         # 贡献指南 / 安全策略
 
 ### ① 导出制造文件（最重要，决定别人能不能打样）
 
-用 EasyEDA Pro 打开 `hardware/pcb/gps-tracker-nrf52840-v1.epro2`，导出到 `hardware/pcb/fabrication/`：
+用 EasyEDA Pro 打开 `hardware/pcb/nrf52840 gps tracker/nrf52840 gps tracker.eprj3`，导出到 `hardware/pcb/fabrication/`：
 
 | 文件 | 用途 |
 | --- | --- |
@@ -93,7 +93,7 @@ git push origin master --tags
 Release 页面（`gh release create v0.1.0` 或网页操作）附加：
 
 - `gps-tracker.uf2`（Actions 里下载，或本地 `cd tools && uv run gt uf2 build`）
-- `gps-tracker-nrf52840-v1.epro2` + `gps-tracker-nrf52840-v1.step`
+- `nrf52840 gps tracker/nrf52840 gps tracker.eprj3` + `gps-tracker-nrf52840-v1.step`
 - `case-slim-v1.zip`（Slim 版 3MF + 3 个 STL）与 `case-21700-v1.zip`（21700 版 3MF + STL）
 - `gerber.zip`（① 导出的）
 - `schematic.pdf`
