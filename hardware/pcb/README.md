@@ -108,8 +108,11 @@ hardware/pcb/nrf52840 gps tracker/
 ├── sch/
 │   ├── v1-meshtastic-nrf52840/  # v1 原理图（对照用）
 │   │   └── Sheet_1.esch2
-│   └── TraceveilV2/             # v2.1 原理图（在建）
-│       └── P8.esch2
+│   └── TraceveilV2/             # v2.1 原理图（4 页）
+│       ├── PWR.esch2            # 电源 / 电量采样
+│       ├── AON.esch2            # 常开域（加速度计）
+│       ├── SW.esch2             # 开关域（Flash / GPS）
+│       └── MCU.esch2            # 主控 / OLED / 按键
 ├── pcb/
 │   ├── PCB_meshtastic nrf52840 prototype.epcb2   # v1 PCB
 │   └── PCB1.epcb2                                # v2.1 PCB（待布局）
@@ -131,12 +134,15 @@ hardware/pcb/nrf52840 gps tracker/
 
 | 页 | 内容 | 状态 |
 | --- | --- | --- |
-| PWR | J1、U1 RT9080N（SNS→VOUT）、C1/C2/C9、Q1/Q2 采样、R4-R7 | ✅ 已画并网表验证 |
-| AON | U2A LIS2DW12 + U2B LIS3DHTR 双焊盘、R2/R3、C5/C10/C13 | ✅ 已画并网表验证 |
-| SW | U3 W25Q128 + R10-R12、U4 L76K + R1/C3/C4/C6-C8/C11-C13、ANT1 | ✅ 已画并网表验证 |
-| MCU | M1（26 脚代焊盘）、J2 OLED、SW2/SW3、R8/R9 | ✅ 已画并网表验证 |
+| PWR | J1、U1 RT9080N（SNS→VOUT）、C1/C2（10µF 0805）、R5/R6 **1MΩ 常接分压**、C9 | ✅ 已画并网表验证 |
+| AON | U2A LIS2DW12 + U2B LIS3DHTR 双焊盘（U2A 为 DNP 备选）、R2/R3、C5/C10/C13 | ✅ 已画并网表验证 |
+| SW | U3 W25Q128 + R10-R12、U4 L76K + R1/C3/C4/C6-C8/C11-C13、**R14 1kΩ（UART 跨域串阻）**、ANT1 | ✅ 已画并网表验证 |
+| MCU | M1（真实 ProMicro 器件）、J2 OLED、SW2/SW3（**4 焊盘**）、R8/R9 | ✅ 已画并网表验证 |
 
-全工程 **38 器件 / 27 网络 / 零匿名网络**。已知取舍与首板实测清单见 `docs/design-v2.1-final.md` §9。
+全工程 **35 器件 / 26 网络 / 零匿名网络**，DNP 仅 `U2A`。已知取舍与首板实测清单见 `docs/design-v2.1-final.md` §9。
+
+`PCB1.epcb2` 已从原理图导入全部 35 个元件（封装 / 网络与原理图逐 pad 校验一致，0 不一致），
+`ANT1` 天线孔已由 1.5mm 改为 **0.9mm（焊盘 1.8mm）**，与 v1 实测孔径一致；下一步是按 v1 锚点布局与布线。
 
 画图用 [`scripts/eda-step.js`](scripts/eda-step.js) 单步驱动（见该目录 README），
 每画完一块跑一次网表自检（无匿名网络、无单脚网络）。
@@ -144,5 +150,5 @@ hardware/pcb/nrf52840 gps tracker/
 ### 注意
 
 - 工程目录里若出现 `*_backup/`（EDA 自动备份的快照包），**不要提交**，已在 `.gitignore` 忽略，可随时删除。
-- `BOM.csv` 目前只覆盖 v1；v2.1 的 BOM 在 [docs/design-v2.1-final.md](../../docs/design-v2.1-final.md) §2，
-  且 U7 那一行仍写着 ATGM336H 符号，**改回 L76K 前不要按它下料**。
+- `BOM.csv` **只覆盖 v1**（含 BMP280、TF 卡座、ATGM336H 符号），**不要拿它给 v2.1 下料**；
+  v2.1 的 BOM 见 [docs/design-v2.1-final.md](../../docs/design-v2.1-final.md) §2。
