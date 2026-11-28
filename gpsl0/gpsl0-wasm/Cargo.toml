@@ -1,0 +1,10 @@
+[package]
+name = "gpsl0-wasm"
+version = "0.2.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+gpsl0-core = { path = "../gpsl0-core" }

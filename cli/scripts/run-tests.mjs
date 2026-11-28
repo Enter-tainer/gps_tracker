@@ -26,6 +26,16 @@ const testDir = path.join(cliRoot, "test");
 const outDir = path.join(cliRoot, ".test-dist");
 fs.rmSync(outDir, { recursive: true, force: true });
 fs.mkdirSync(outDir, { recursive: true });
+const wasmSrc = path.resolve(
+  cliRoot,
+  "..",
+  "frontend",
+  "src",
+  "services",
+  "gpsl0",
+  "gpsl0_wasm.wasm",
+);
+fs.copyFileSync(wasmSrc, path.join(outDir, "gpsl0_wasm.wasm"));
 
 const testFiles = fs
   .readdirSync(testDir)

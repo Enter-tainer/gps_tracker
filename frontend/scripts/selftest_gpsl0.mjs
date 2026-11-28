@@ -1,67 +1,14 @@
-// Lead self-test for GPSL0: range coder roundtrip + codec roundtrip on real tracks.
+// Lead self-test for GPSL0: WASM v2 default + v1 backwards-compat codec roundtrip and window slicing.
 import { loadDataset, loadGpzSizes } from "./lib/dataset.mjs";
 import {
   encodeGpsl0,
   decodeGpsl0,
   decodeGpsl0Window,
   inspectGpsl0Header,
+  DEFAULT_VERSION,
   DEFAULT_MODEL_ID,
   getLayout,
 } from "../src/services/gpsl0/index.ts";
-import { RangeEncoder, RangeDecoder } from "../src/services/gpsl0/rangecoder.ts";
-
-function testRangeCoder() {
-  const enc = new RangeEncoder();
-  const probsE = new Uint16Array(16 * 4);
-  probsE.fill(1024);
-  const bits = [];
-  let seed = 12345;
-  const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
-  for (let i = 0; i < 300000; i++) {
-    const ctx = i & 15;
-    const p = rnd();
-    const bit = p < 0.2 + 0.05 * ctx ? 0 : 1;
-    bits.push(bit);
-    enc.encodeBit(probsE, ctx * 4 + (i & 3), bit);
-  }
-  const out = enc.finish();
-  const dec = new RangeDecoder(out);
-  const probsD = new Uint16Array(16 * 4);
-  probsD.fill(1024);
-  let ok = true;
-  for (let i = 0; i < bits.length; i++) {
-    const ctx = i & 15;
-    if (dec.decodeBit(probsD, ctx * 4 + (i & 3)) !== bits[i]) {
-      ok = false;
-      break;
-    }
-  }
-  console.log(`range coder: ${ok ? "PASS" : "FAIL"} (300000 bits, ${out.length} B)`);
-  return ok;
-}
-
-function testDirectBits() {
-  const enc = new RangeEncoder();
-  const bits = [];
-  let seed = 999;
-  const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
-  for (let i = 0; i < 100000; i++) {
-    const b = rnd() < 0.5 ? 0 : 1;
-    bits.push(b);
-    enc.encodeDirect(b);
-  }
-  const out = enc.finish();
-  const dec = new RangeDecoder(out);
-  let ok = true;
-  for (let i = 0; i < bits.length; i++) {
-    if (dec.decodeDirect() !== bits[i]) {
-      ok = false;
-      break;
-    }
-  }
-  console.log(`range coder direct: ${ok ? "PASS" : "FAIL"} (${out.length} B)`);
-  return ok;
-}
 
 function maxDeviation(a, b) {
   let max = 0;
@@ -71,8 +18,6 @@ function maxDeviation(a, b) {
   }
   return max;
 }
-
-const rcOk = testRangeCoder() && testDirectBits();
 
 const tracks = loadDataset({ verbose: true });
 const sizes = loadGpzSizes();
@@ -131,20 +76,35 @@ for (const tr of picks) {
     }
   }
 
+  // v1 compatibility: explicit version=1, modelId=7 lossless roundtrip.
+  const encV1 = encodeGpsl0(tr, { version: 1, modelId: 7, quantum: "auto", altQuantum: 1 });
+  const metaV1 = inspectGpsl0Header(encV1);
+  const decV1 = decodeGpsl0(encV1);
+  const exactV1 =
+    metaV1.version === 1 &&
+    metaV1.modelId === 7 &&
+    maxDeviation(decV1.lat, tr.lat) === 0 &&
+    maxDeviation(decV1.lon, tr.lon) === 0 &&
+    maxDeviation(decV1.alt, tr.alt) === 0 &&
+    maxDeviation(decV1.t, tr.t) === 0;
+
   const gpz = sizes.get(tr.id);
   const meta = inspectGpsl0Header(encExact);
+  const hdrOk = meta.version === DEFAULT_VERSION && meta.modelId === DEFAULT_MODEL_ID;
   const bitsPerPt = (encExact.length * 8) / tr.n;
-  if (!exact || !lossyOk || !winOk) failures++;
+  if (!exact || !lossyOk || !winOk || !exactV1 || !hdrOk) failures++;
   console.log(
     `${tr.id.padEnd(18)} n=${String(tr.n).padStart(6)} gpz=${gpz} B ` +
-      `auto=${encExact.length} B (q=${meta.coordQuantum}, ${bitsPerPt.toFixed(2)} b/pt, ` +
+      `auto=${encExact.length} B (v${meta.version}/m${meta.modelId}, q=${meta.coordQuantum}, ${bitsPerPt.toFixed(2)} b/pt, ` +
       `${((gpz * 8) / tr.n / bitsPerPt).toFixed(2)}x) exact=${exact ? "Y" : "N"} ` +
+      `v1=${encV1.length} B (${exactV1 ? "Y" : "N"}) ` +
       `lossy=${encLossy.length} B dev=${devLat}/${devLon}/${devAlt} ` +
       `win=${winOk ? "Y" : "N"} blocks=${meta.nBlocks}`
   );
 }
 
 console.log(
-  `model_id=${DEFAULT_MODEL_ID} ctx=${layout.nCtx} slots=${layout.nSlot} ` +
-    `rc=${rcOk ? "ok" : "BROKEN"} failures=${failures}`
+  `version=${DEFAULT_VERSION} model_id=${DEFAULT_MODEL_ID} ctx=${layout.nCtx} slots=${layout.nSlot} ` +
+    `failures=${failures}`
 );
+if (failures > 0) process.exitCode = 1;

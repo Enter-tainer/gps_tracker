@@ -23,6 +23,16 @@ async function loadEsbuild() {
 const esbuild = await loadEsbuild();
 const outFile = path.join(cliRoot, "dist", "cli.mjs");
 fs.mkdirSync(path.dirname(outFile), { recursive: true });
+const wasmSrc = path.resolve(
+  cliRoot,
+  "..",
+  "frontend",
+  "src",
+  "services",
+  "gpsl0",
+  "gpsl0_wasm.wasm",
+);
+fs.copyFileSync(wasmSrc, path.join(path.dirname(outFile), "gpsl0_wasm.wasm"));
 
 await esbuild.build({
   entryPoints: [path.join(cliRoot, "src", "cli.ts")],
