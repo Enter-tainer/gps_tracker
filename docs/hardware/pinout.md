@@ -3,7 +3,7 @@
 三份来源，互相印证：
 
 1. **固件**（权威）：[`firmware/src/board.rs`](../../firmware/src/board.rs) 里写死了 MCU 侧引脚；
-2. **PCB 网表**：从 `hardware/pcb/gps-tracker-nrf52840-v1.epro2` 的 PCB 数据中读出「焊盘 → 网络」；
+2. **PCB 网表**：从 `hardware/pcb/nrf52840 gps tracker/pcb/PCB_meshtastic nrf52840 prototype.epcb2` 的 PCB 数据中读出「焊盘 → 网络」；
 3. **原理图**：工程内 `Sheet_1` 页。
 
 ## 1. MCU 侧（nRF52840）
@@ -73,6 +73,6 @@ PCB 网表中 `C2`（模块）的 26 个焊盘对应关系（1 脚位置以 PCB 
 ## 5. 自己核对的方法
 
 - 看固件：`firmware/src/board.rs` 的 `Board::new()`，字段名即功能。
-- 看硬件：用 EasyEDA Pro 打开 `hardware/pcb/gps-tracker-nrf52840-v1.epro2`，PCB 上点焊盘高亮网络；
-  或者解压 `.epro2` → 用文本编辑器搜 `PAD_NET` 记录，`padNet` 字段就是网络名。
+- 看硬件：用 EasyEDA Pro 打开 `hardware/pcb/nrf52840 gps tracker/nrf52840 gps tracker.eprj3` 里的 v1 PCB，点焊盘高亮网络；
+  或者直接用文本编辑器搜 `pcb/PCB_meshtastic nrf52840 prototype.epcb2` 里的 `PAD` 记录，`netName` 字段就是网络名。
 - 改板：如果换了模块或改了引脚，**只改 `board.rs` 的 `Board` 结构体**即可，其余驱动都从 `Board` 取引脚。

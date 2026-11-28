@@ -2,17 +2,17 @@
 
 | 文件 | 说明 |
 | --- | --- |
-| `gps-tracker-nrf52840-v1.epro2` | v1 工程包（ZIP 单文件，含 `.epru` 工程数据 + 预览图）。**v1 已定版**，新的 v2.1 工程见下方 `.eprj3` 目录 |
-| `gps-tracker-nrf52840-v1.step` | 3D PCB 模型（AP214 STEP，含板体、铜皮/焊盘、各器件 3D 装配，用于 CAD 外壳设计与干涉检查） |
-| `BOM.csv` | 13 项物料清单，含型号、封装、备注、已知立创编号 |
-| `preview.webp` | 工程内嵌 2D PCB 布局预览图 |
+| `nrf52840 gps tracker/` | **EasyEDA Pro 工程（`.eprj3` 文件夹格式）**，含 v1 原理图与 PCB（`sch/v1-meshtastic-nrf52840/` + `pcb/PCB_meshtastic nrf52840 prototype.epcb2`）以及 v2.1 四页原理图。用 EDA 直接打开这个目录 |
+| `gps-tracker-nrf52840-v1.step` | v1 的 3D PCB 模型（AP214 STEP，含板体、铜皮/焊盘、各器件 3D 装配，用于 CAD 外壳设计与干涉检查） |
+| `BOM.csv` | **v1 的** 13 项物料清单（v2.1 见 `docs/design-v2.1-final.md` §2） |
+| `preview.webp` | v1 的 2D PCB 布局预览图 |
 | `preview-3d.png` | 由 `gps-tracker-nrf52840-v1.step` 渲染的 3D 装配预览图 |
 
 ## 打开工程
 
 1. 安装 [嘉立创 EDA 专业版 / EasyEDA Pro](https://pro.lceda.cn/)（最新导出由 4.1.105 版本保存，建议 ≥ 4.1.100 版本）。
-2. 「文件 → 打开 → EasyEDA Pro 工程」，选择 `gps-tracker-nrf52840-v1.epro2`。
-   - 该格式是 ZIP 包，也可以自行解压查看其中的 `nrf52840 gps tracker.epru`（逐行 JSON 文本）。
+2. 「文件 → 打开 → EasyEDA Pro 工程」，选择 `nrf52840 gps tracker/nrf52840 gps tracker.eprj3`（文件夹工程）。
+   - v1 工程（原 `.epro2` 单文件包）已完整并入该文件夹工程：原理图见 `sch/v1-meshtastic-nrf52840/Sheet_1.esch2`，PCB 见 `pcb/PCB_meshtastic nrf52840 prototype.epcb2`，**内容一致，不再单独维护 `.epro2`**。
 3. 工程内嵌了全部用到的符号、封装与 3D 模型，**不需要额外安装库**。
 
 ## 需要用到的导出（仓库暂未附带，欢迎 PR 补充）
@@ -85,7 +85,7 @@ SPI ：SCK  MOSI  MISO  CS
 **设计依据：[`docs/design-v2.1-final.md`](../../docs/design-v2.1-final.md)** —— 架构、BOM、逐器件连接、
 网络清单、固件约束、PCB 叠层与天线处理全部在那份文档里，本文件不重复。
 
-v1（`gps-tracker-nrf52840-v1.epro2`，已打样验证）保留作对照，**不再修改**。
+v1（已打样验证）保留作对照，**不再修改**：其原理图与 PCB 就在本 `.eprj3` 工程内（`v1-meshtastic-nrf52840` / `PCB_meshtastic nrf52840 prototype`）。
 
 ### 与 v1 的主要差异
 
@@ -117,8 +117,7 @@ hardware/pcb/nrf52840 gps tracker/
 ```
 
 `.eprj3` 是逐行 JSON 的**文件夹**格式（不是 SQLite 单文件），可与编辑器双向同步、能被 git diff 审阅。
-**注意：内置 CLI 的 `open --path` 不认 v1 用的 `.epro2` 单文件**（只认 `.eprj/.eprj2/.eprj3/.elib`），
-传 `.epro2` 只会静默开出一个空白编辑器。
+**注意：内置 CLI 的 `open --path` 只认 `.eprj/.eprj2/.eprj3/.elib`**，传旧版 `.epro2` 单文件包只会静默开出一个空白编辑器——这也是本工程改用 `.eprj3` 文件夹格式的原因之一。
 
 打开方式（客户端 v4.1.70+，桌面版运行中）：
 
@@ -144,6 +143,6 @@ hardware/pcb/nrf52840 gps tracker/
 
 ### 注意
 
-- 工程目录里若出现 `*_backup/`（EDA 自动备份 `.epro2`），**不要提交**，已在 `.gitignore` 忽略。
+- 工程目录里若出现 `*_backup/`（EDA 自动备份的快照包），**不要提交**，已在 `.gitignore` 忽略，可随时删除。
 - `BOM.csv` 目前只覆盖 v1；v2.1 的 BOM 在 [docs/design-v2.1-final.md](../../docs/design-v2.1-final.md) §2，
   且 U7 那一行仍写着 ATGM336H 符号，**改回 L76K 前不要按它下料**。

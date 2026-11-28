@@ -8,7 +8,7 @@
 
 | 类型 | 说明 |
 | --- | --- |
-| 🌟 **Gerber / 坐标文件 / 原理图 PDF** | 用 EasyEDA Pro 打开 `hardware/pcb/*.epro2` 导出后放进 `hardware/pcb/fabrication/`，是最缺的一块，见 [docs/open-source-release.md](docs/open-source-release.md) |
+| 🌟 **Gerber / 坐标文件 / 原理图 PDF** | 用 EasyEDA Pro 打开 `hardware/pcb/nrf52840 gps tracker/nrf52840 gps tracker.eprj3` 导出后放进 `hardware/pcb/fabrication/`，是最缺的一块，见 [docs/open-source-release.md](docs/open-source-release.md) |
 | 📷 实拍照片 / 装配过程图 | 放到 `docs/images/`，README 和装配文档都很需要 |
 | 📝 文档纠错 | 引脚、参数、命令写错了直接改，不需要讨论 |
 | 🌍 翻译 | 英文 README / 文档随时欢迎 |
